@@ -1,0 +1,7 @@
+# large raw downloads used only to rebuild data/ (see tools/*.py docstrings for URLs)
+tools/raw/
+__pycache__/
+*.pyc
+.claude/
+.DS_Store
+Thumbs.db

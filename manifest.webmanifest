@@ -1,0 +1,12 @@
+{
+  "name": "SoilGuard",
+  "short_name": "SoilGuard",
+  "description": "Wind erosion, soils, soil chemistry maps, drought and model-ready data for any field (Texas first)",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#f3f1ea",
+  "theme_color": "#1f2a24",
+  "icons": [
+    { "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23b4532a'/%3E%3C/svg%3E", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}
