@@ -490,6 +490,7 @@ WG.area = (function () {
     const ringsAll = polys.flat(), bb = bboxOf(ringsAll), km = km2Of(acres), big = km > BIG_KM2;
     current = { polys, name, acres, bb };
     drawLayers();
+    document.dispatchEvent(new Event("wg-boundary")); // the land-cover legend counts the new boundary (js/landcover.js)
     const sheet = $("#areaSheet"), phone = innerWidth < 768; // keep the area clear of the panel
     map.fitBounds([[bb[1], bb[0]], [bb[3], bb[2]]], { maxZoom: 16,
       paddingTopLeft: [phone ? 24 : (sheet.hidden ? 0 : sheet.offsetWidth) + 30, 80],
@@ -734,6 +735,7 @@ WG.area = (function () {
     seq++;
     current = null;
     layer.clearLayers();
+    document.dispatchEvent(new Event("wg-boundary"));
     $("#areaResults").innerHTML = "";
   }
 
@@ -870,5 +872,5 @@ WG.area = (function () {
   // the units table changed: draw the results and the map's tooltips again in the new units
   const rerender = () => { if (current && current.result) { render(); drawLayers(); } };
   UN.on(rerender);
-  return { excludedAt, drawing: () => drawing, open, analyse, rerender, sda, parseFiles, geojsonPolys, bboxOf, inRings, roadHalf: mtfcc => ROAD_HALF[mtfcc] || 4 };
+  return { boundary: () => (current ? { polys: current.polys, name: current.name } : null), excludedAt, drawing: () => drawing, open, analyse, rerender, sda, parseFiles, geojsonPolys, bboxOf, inRings, roadHalf: mtfcc => ROAD_HALF[mtfcc] || 4 };
 })();

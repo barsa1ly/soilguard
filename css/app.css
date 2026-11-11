@@ -226,7 +226,13 @@ svg { display: block; }
 .legend h5 button { border: 0; background: none; color: var(--muted); padding: 0; font-size: 12px; }
 .legend .row { display: flex; align-items: center; gap: 8px; margin: 3px 0; }
 .legend .sw { width: 16px; height: 12px; border-radius: 3px; flex: none; border: 1px solid rgba(0, 0, 0, .1); }
-.legend.min .rows, .legend.min .lnote { display: none; }
+.legend.min .rows, .legend.min .lnote, .legend.min .lc-body { display: none; }
+.legend .lc { margin-top: 8px; padding-top: 6px; border-top: 1px solid rgba(0, 0, 0, .12); }
+.legend .lc:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+.legend .lc small { font-weight: 400; color: #69716a; }
+.legend .lc-what { margin: 0 0 4px; font-weight: 600; }
+.legend .lc-n { flex: 1; }
+.legend .lc-p { font-variant-numeric: tabular-nums; font-weight: 600; }
 .legend .lnote { color: var(--muted); margin: 6px 0 0; font-size: 11px; line-height: 1.35; }
 
 .hint {

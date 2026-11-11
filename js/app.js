@@ -507,7 +507,12 @@
     return { unit: m.unit, labels, note: m.note };
   }
   let legendMin = window.matchMedia("(max-width: 767px)").matches;
+  /* with the NLCD overlay on, its legend and area shares (js/landcover.js) are added under whatever legend the theme has */
   function renderLegend() {
+    drawBaseLegend();
+    if (soilLayers.nlcd.on && WG.landcover) WG.landcover.draw($("#legend"), legendMin, () => { legendMin = !legendMin; renderLegend(); });
+  }
+  function drawBaseLegend() {
     const entry = Object.entries(themes).find(([, t]) => t.on), el = $("#legend");
     const lv = state.theme !== "erosion" && Object.values(live[state.theme] || {}).find(t => t.on);
     if (lv) return (lv.drawLegend || WG.weather.legend)(el, lv, legendMin, () => { legendMin = !legendMin; renderLegend(); }); // a layer may draw its own (the soil maps add their choices)
@@ -541,6 +546,7 @@
     if (set && set[k] && !set[k].on) setToggle("live", k, true);
   }
   WG.timemap.init(map, { setLive, renderLegend });
+  if (WG.landcover) WG.landcover.init({ render: () => soilLayers.nlcd.on && renderLegend() });
   if (WG.soilmaps) WG.soilmaps.init({ setLive, renderLegend }); // the Soil maps tab's "show on the map" links
   setTheme(state.theme); // the theme in the link, or wind erosion: its overlay, legend, hint and tabs
 
