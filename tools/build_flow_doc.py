@@ -609,7 +609,7 @@ def fig_soilmaps():
         s.path([(k.right, k.cy), (R2.x, k.cy)])
     s.text(SX, P[-1].y - 0.3, "Labels: survey (SSURGO, USFS), model (SoilGrids), total (USGS, SoilGrids N: not plant-available), lab (KSSL).",
            fs=9.5, color=MUTED, va="center", limit=W - 0.05)
-    s.text(SX, P[-1].y - 0.55, "No free US map gives soil-test N, P, K, Ca, Mg or S, DTPA micronutrients or boron; the tab says so.",
+    s.text(SX, P[-1].y - 0.55, "No US-wide map of soil-test N, P, K, Ca, Mg or S or DTPA micronutrients; boron and P survey data are limited. The tab says so.",
            fs=9.5, color=MUTED, va="center", limit=W - 0.05)
     return s.save("flow_soilmaps.png")
 
@@ -1100,8 +1100,8 @@ LIMITS = [
      "complete as USA Structures, TIGER and NHD; if one of them does not answer, the panel says it was not removed."),
     ("Statewide layers are fixed.", " The map colours are pre-computed and do not change with the point you pick."),
     ("Soil maps are not a soil test.", " Survey values describe the mapped soil; USGS and SoilGrids values are total, "
-     "not plant-available; KSSL pedons are sparse and often decades old. No free US map gives soil-test N, P, K, Ca, Mg "
-     "or S, DTPA micronutrients or boron."),
+     "not plant-available; KSSL pedons are sparse and often decades old. No map covers the US for soil-test (plant-available) "
+     "N, P, K, Ca, Mg or S, or DTPA micronutrients; boron and phosphorus survey data is also limited for the US."),
     ("Basins are models.", " Mean annual runoff is NHDPlus HR's EROM model (1971–2000 climate), not a gauge; other "
      "models can differ by a factor of two. The curve number is an event method on average wetness. RUSLE gives gross "
      "sheet-and-rill erosion, with LS from survey slopes and C from land-cover classes, not gullies or the sediment that "
@@ -1349,7 +1349,7 @@ def build_docx(figs, commit):
          "Service's 30 m maps of the soil survey, salinity and sodicity pre-built from UC Davis SoilWeb, total elements "
          "from the USGS, and total N from ISRIC SoilGrids. Its tab gives the survey's values by depth with their classes, "
          "the 30 m values, SoilGrids N, and the nearest USGS sites and NRCS lab pedons. USGS and SoilGrids values are "
-         "total, not plant-available; no free US map gives soil-test nutrients or boron.")
+         "total, not plant-available; no map covers the US for soil-test nutrients; boron and phosphorus survey data is limited.")
     figure(figs[6], 5.9, "Figure 7. Soil maps: the map layers and the tab at the point.")
 
     h = doc.add_heading("11. Basins: runoff and soil loss", level=1)

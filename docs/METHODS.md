@@ -451,7 +451,7 @@ The **Soil maps** theme shows one soil-chemistry map at a time; its tab gives wh
 - *SoilGrids:* a model; built-up land and water have no value.
 - *KSSL:* the 8 nearest pedons' surface layer (`hzn_top = 0`) from `lab_combine_nasis_ncss`, `lab_layer` and `lab_chemical_properties`: NH₄OAc pH 7 K, Ca, Mg and Na; Bray-1, Olsen and Mehlich-3 P; total N and S. Sparse, often old, and Ca is inflated in calcareous soils.
 - *Downloads:* every table of the tab as CSV.
-- *Not available:* no free US source gives soil-test N, P, K, Ca, Mg or S, DTPA micronutrients, or boron.
+- *What data is missing:* no map covers the US for soil-test (plant-available) N, P, K, Ca, Mg or S, or DTPA micronutrients; boron and phosphorus survey data is also limited for the US.
 - *Basins and soil moisture:* §12 and §13 add their layers and tab cards to this theme.
 
 ## 12. Basins: runoff and soil loss (Soil maps theme and tab)
