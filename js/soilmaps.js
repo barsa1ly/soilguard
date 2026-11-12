@@ -354,16 +354,40 @@ WG.soilmaps = (function () {
   const OWN = new Set(LAYERS.map(x => x.key));
   const SHORT = { ph: "pH", cec: "CEC", om: "Organic matter", ec: "Salinity (EC)", sar: "Sodicity (SAR)", chem: "Total elements", n: "Total N",
     wbd: "Watersheds", flow: "Streams", smap_sf: "SMAP 0–5 cm", smap_rz: "SMAP 0–100 cm", nwm: "NWM saturation", sport: "Percentile, daily", grace: "Percentile, weekly", stations: "Stations" };
+  const TILE = { ph: "30 m · by depth", cec: "30 m · by depth", om: "30 m · by depth", ec: "800 m · 0–25 cm", sar: "800 m · profile", chem: "USGS sites", n: "250 m · model",
+    wbd: "HU8 to HU12", flow: "NHDPlus HR", smap_sf: "9 km · daily", smap_rz: "9 km · daily", nwm: "1 km · hourly", sport: "3 km · daily", grace: "0.125° · weekly", stations: "SCAN · SNOTEL · USCRN" };
+  const ABOUT = { ph: "Soil pH (1:1 water) from the soil survey, 30 m (USDA Forest Service); pick the depth in the legend.",
+    cec: "Cation exchange capacity at pH 7, cmol(+)/kg, from the soil survey, 30 m (USDA Forest Service); pick the depth in the legend.",
+    om: "Organic matter, % by weight, from the soil survey, 30 m (USDA Forest Service); pick the depth in the legend.",
+    ec: "Salinity: EC of the top 25 cm, dS/m, from the soil survey at 800 m (UC Davis SoilWeb).",
+    sar: "Sodicity: the highest SAR in the profile, from the soil survey at 800 m (UC Davis SoilWeb).",
+    chem: "TOTAL element in soil at USGS sites (about 1 per 1,600 km²), not what a crop can use; pick the element in the legend.",
+    n: "Total nitrogen, g/kg, predicted by ISRIC SoilGrids at 250 m (a model, not nitrate).",
+    wbd: "Watershed boundaries, HU8 to HU12 by zoom (USGS Watershed Boundary Dataset).",
+    flow: "Streams from NHDPlus High Resolution, by stream order, from zoom 12 (USGS).",
+    smap_sf: "Soil moisture of the top 5 cm, m³/m³, NASA SMAP L4 at 9 km; pick the day in the legend.",
+    smap_rz: "Soil moisture of the top 100 cm, m³/m³, NASA SMAP L4 at 9 km; pick the day in the legend.",
+    nwm: "How full the top 40 cm is (% of saturation), the National Water Model at 1 km, latest hour.",
+    sport: "How wet the top 100 cm is against its own record (percentile), NASA SPoRT-LIS, 3 km, daily.",
+    grace: "How wet the root zone is against its own record (percentile), NASA GRACE, weekly.",
+    stations: "The soil moisture stations (USDA SCAN and SNOTEL, NOAA USCRN); tap one to pick its place." };
   const onMap = it => !!(WG.map && it && it.layer && WG.map.hasLayer(it.layer));
   // which: the groups to give, of "chem", "water" and "wet" (the Overview gives all; each tab its own)
   function chips(which) {
     const wet = new Set(WG.soilmoisture ? WG.soilmoisture.layers.map(x => x.key) : []);
     const G = { chem: ["Soil chemistry", x => OWN.has(x.key)], water: ["Water: basins", x => !OWN.has(x.key) && !wet.has(x.key)], wet: ["Soil moisture", x => wet.has(x.key)] };
-    return (which || ["chem", "water", "wet"]).map(k => G[k]).filter(Boolean).map(([g, f]) => { const list = LAYERS.filter(f); return list.length ? `<div class="sm-chips"><span class="sm-chips-k">${esc(g)}</span><div class="seg" role="group" aria-label="${esc(g)} maps">${list.map(x =>
-      `<button type="button" data-sm-show="${x.key}" data-sm-chip class="${onMap(x) ? "on" : ""}" aria-pressed="${onMap(x)}" title="${esc(x.name)}${x.sub ? `: ${esc(x.sub)}` : ""}">${esc(SHORT[x.key] || x.name.split(/[:,(]/)[0].trim())}</button>`).join("")}</div></div>` : ""; }).join("");
+    return (which || ["chem", "water", "wet"]).filter(k => G[k]).map(k => [k, ...G[k]]).map(([k, g, f]) => { const list = LAYERS.filter(f); return list.length ? `<div class="sm-chips"><span class="sm-chips-k">${esc(g)}</span><div class="sm-maptabs" role="group" aria-label="${esc(g)} maps">${list.map(x =>
+      `<button type="button" data-sm-show="${x.key}" data-sm-chip class="${onMap(x) ? "on" : ""}" aria-pressed="${onMap(x)}" title="${esc(x.name)}${x.sub ? `: ${esc(x.sub)}` : ""}"><b>${esc(SHORT[x.key] || x.name.split(/[:,(]/)[0].trim())}</b>${TILE[x.key] ? `<small>${esc(TILE[x.key])}</small>` : ""}</button>`).join("")}</div><p class="sm-chip-note" data-sm-note="${k}">${esc(chipNote(list))}</p></div>` : ""; }).join("");
   }
+  // the one line under a row: what the map on show is (its name and source), or how to get one
+  function chipNote(list) { const x = list.find(onMap); return x ? ABOUT[x.key] || `${x.name}${x.sub ? `: ${x.sub}` : ""}.` : "Tap a map to show it on the map; its legend opens at the side."; }
+  // a card of one group's maps, at the top of its tab
+  const mapCard = (k, title) => `<div class="card sm-mapcard">${head(title, "", "")}${chips([k])}</div>`;
   // the pressed chip follows the map, whichever way the layer changed (a chip, a link, the layer sheet, another theme)
-  function syncChips() { $$("[data-sm-chip]").forEach(b => { const on = onMap(byKey(b.dataset.smShow)); b.classList.toggle("on", on); b.setAttribute("aria-pressed", on); }); }
+  function syncChips() {
+    $$("[data-sm-chip]").forEach(b => { const on = onMap(byKey(b.dataset.smShow)); b.classList.toggle("on", on); b.setAttribute("aria-pressed", on); });
+    $$("[data-sm-note]").forEach(p => { const list = [...p.parentNode.querySelectorAll("[data-sm-chip]")].map(b => byKey(b.dataset.smShow)).filter(Boolean); p.textContent = chipNote(list); });
+  }
   let chipT = 0;
   const chipSoon = e => { if (LAYERS.some(x => x.layer === e.layer)) { clearTimeout(chipT); chipT = setTimeout(syncChips, 0); } };
   document.addEventListener("click", e => {
@@ -473,6 +497,7 @@ WG.soilmaps = (function () {
     const list = partsOf("soilmaps"), P = !!(hooks && hooks.profile);
     const seg = [["phys", "Physical and water"], ["chem", "Chemistry"]];
     el.innerHTML = `${P ? `<div class="card" id="smSoil"><div class="card-h"><h3>Dominant soil</h3><span class="tag" id="profSrcTag">SSURGO</span></div><div id="profSoil" class="soil-summary"><span class="skeleton"></span></div></div>` : ""}
+      ${mapCard("chem", "Soil chemistry on the map")}
       <div id="smSurvey">${Wx.wait("the soil survey's chemistry (SSURGO)")}</div>
       <div class="card" id="smHz"><div class="card-h"><h3>Horizons</h3><div class="card-tools"><button class="dl-btn" data-hz-csv title="Download the view on show (CSV)" aria-label="Download the horizons (CSV)">${DL}</button></div></div>
         ${P ? `<div class="seg sm-hzseg" role="group" aria-label="Horizons: what to show">${seg.map(([k, n]) => `<button type="button" data-hzv-btn="${k}">${esc(n)}</button>`).join("")}</div>
@@ -485,7 +510,7 @@ WG.soilmaps = (function () {
       <div id="smKssl">${Wx.wait("the nearest NRCS lab pedons (KSSL)")}</div>
       ${list.map(p => `<div id="smPart-${p.key}">${Wx.wait(p.wait)}</div>`).join("")}
       ${NO_MAP}
-      <div class="card">${head("Soil chemistry on the map", "", "")}<p class="fine" style="margin-top:0">${SOURCES}</p>${chips(["chem"])}</div>
+      <p class="fine sm-sources">${SOURCES}</p>
       ${allBtn("soilmaps", "all the tables")}`;
     hzView();
     if (P) { try { hooks.profile(); } catch (e) { console.warn("soil profile", e); } }
@@ -606,8 +631,8 @@ WG.soilmaps = (function () {
     const { lat, lon } = WG.state.site, at = id => (live() ? el.querySelector(`#${id}`) : null);
     fresh();
     const list = partsOf("soilbasin");
-    el.innerHTML = `${list.map(p => `<div id="smPart-${p.key}">${Wx.wait(p.wait)}</div>`).join("") || `<div class="card"><p class="fine">No basin results in this page.</p></div>`}
-      <div class="card">${head("Water on the map", "", "")}<p class="fine" style="margin-top:0">The watershed boundaries and streams the cards above use, drawn by the USGS servers.</p>${chips(["water"])}</div>
+    el.innerHTML = `${mapCard("water", "Water on the map")}
+      ${list.map(p => `<div id="smPart-${p.key}">${Wx.wait(p.wait)}</div>`).join("") || `<div class="card"><p class="fine">No basin results in this page.</p></div>`}
       ${allBtn("soilbasin", "all the basin tables")}`;
     await Promise.allSettled(runParts(list, at, live, lat, lon));
   };
@@ -739,7 +764,7 @@ WG.soilmaps = (function () {
   });
 
   return { init(h) { hooks = h; WG.map.on("layeradd layerremove", chipSoon); }, pick, layers: LAYERS, legendOf, choose, tables: () => tables, chemLegend, addPart: p => PARTS.push(p), sda, km, head, grid, th, r1, showBtn, allBtn,
-    on, chips, syncChips, showOnMap, clearPin, landCover: () => hooks && hooks.landCover && hooks.landCover(),
+    on, chips, mapCard, syncChips, showOnMap, clearPin, landCover: () => hooks && hooks.landCover && hooks.landCover(),
     // classes and the depth-weighting the tab uses, and each source at any point (plain async functions of lat, lon)
     PH, CEC, OM, reaction, salinity, sodicity, over, layerOf, surveyAt, usfsSamples, sgNAt, usgsNearAt, ksslAt, DS_COL, DEPTHS, SGD, ELS };
 })();
