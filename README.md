@@ -118,9 +118,9 @@ Calibration uses airports. Other networks were checked in October 2026 (details 
 
 ## Visitor statistics
 
-Off. `js/stats.js` can count visits with **Umami Cloud**'s free Hobby plan (umami.is: up to 100,000 events a month for one site, no cookies; country, region and city, approximately, from the IP address, which it does not keep as a field; 6 months of data), but its website ID is empty, so nothing is loaded or counted.
+On (since 12 November 2026). `js/stats.js` counts visits with **Umami Cloud**'s free Hobby plan (umami.is: up to 100,000 events a month for one site, no cookies; country, region and city, approximately, from the IP address, which it does not keep as a field; 6 months of data), with the website ID `c1caa131-e0b8-40f4-be99-1961dee3cd05` in `UMAMI_WEBSITE_ID`. The dashboard is in Umami Cloud (cloud.umami.is) under the site's account.
 
-To turn it on: add the site in Umami Cloud (Add website, domain `barsa1ly.github.io`), copy the Website ID from its tracking code (`data-website-id`) into `UMAMI_WEBSITE_ID` in `js/stats.js`, and publish. Only the published site is counted, never a local test, and only the page's path is sent (`data-exclude-search`), never the query string, which holds the chosen location's coordinates. For a public dashboard, make a Share URL in Umami (the website's Edit, Share URL, Add) and put it in `UMAMI_SHARE_URL`: a **Visitor statistics** link then appears at the start of the map's bottom bar.
+To change it: put another Website ID from Umami's tracking code (`data-website-id`) into `UMAMI_WEBSITE_ID`, or empty it to stop counting, and publish. Only the published site is counted, never a local test, and only the page's path is sent (`data-exclude-search`), never the query string, which holds the chosen location's coordinates. For a public dashboard, make a Share URL in Umami (the website's Edit, Share URL, Add) and put it in `UMAMI_SHARE_URL`: a **Visitor statistics** link then appears at the start of the map's bottom bar.
 
 ## How the data flows
 
