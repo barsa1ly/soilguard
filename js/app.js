@@ -114,9 +114,9 @@
     labels: { name: "Place, river and county names", sub: "towns, rivers, lakes, landmarks",
       layer: L.tileLayer(esri("Reference/World_Reference_Overlay"), { pane: "labels", maxZoom: 19, attribution: "Labels © Esri" }), on: true },
     roads: { name: "Roads and street names", sub: "highways, county roads, streets",
-      layer: L.tileLayer(esri("Reference/World_Transportation"), { pane: "refs", maxZoom: 19, opacity: 0.95 }), on: true },
+      layer: L.tileLayer(esri("Reference/World_Transportation"), { pane: "refs", maxZoom: 19, opacity: 0.95 }), on: false }, // off at first: a cleaner map; one tap in Layers brings it
     hydro: { name: "Rivers, streams, lakes", sub: "USGS National Hydrography lines",
-      layer: L.tileLayer(usgs("USGSHydroCached"), { pane: "refs", maxZoom: 19, maxNativeZoom: 16, opacity: 0.9 }), on: true },
+      layer: L.tileLayer(usgs("USGSHydroCached"), { pane: "refs", maxZoom: 19, maxNativeZoom: 16, opacity: 0.9 }), on: false }, // off at first, as the roads
     counties: { name: "County lines", sub: "U.S. Census TIGER, exact at every zoom",
       layer: new CensusCounties(TIGER_COUNTIES, { pane: "refs", maxZoom: 19, opacity: 0.85, className: "county-lines", attribution: "Counties: U.S. Census TIGER" }),
       on: true },
