@@ -95,7 +95,8 @@
 
   <!-- ============ RESULTS PANEL ============ -->
   <aside id="panel" class="panel" aria-label="Location analysis">
-    <div class="panel-grip" id="panelGrip" aria-hidden="true"><i></i></div>
+    <!-- phones: tap or swipe to lower the results to a bar at the foot, and to bring them back (js/app.js setLayout) -->
+    <button type="button" class="panel-grip" id="panelGrip" aria-label="Lower the results to a bar and show the map" aria-expanded="true" aria-controls="panelBody"><i></i></button>
     <header class="panel-head">
       <div class="site">
         <div class="site-name" id="siteName">Selected location</div>
@@ -120,6 +121,7 @@
       <button role="tab" data-tab="soil" data-for="erosion">Soil</button>
       <button role="tab" data-tab="practices" data-for="erosion">Practices</button>
       <button role="tab" data-tab="drought" data-for="drought" hidden>Drought</button>
+      <button role="tab" data-tab="soiloverview" data-for="soilmaps" hidden>Overview</button>
       <button role="tab" data-tab="soilmaps" data-for="soilmaps" hidden>Soil maps</button>
       <button role="tab" data-tab="download" data-for="erosion drought soilmaps" class="tab-dl" title="Soil and weather files for crop and watershed models, tables and series" aria-label="Download data for models">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11M7.5 9.5 12 14l4.5-4.5M4 15v4.5h16V15"/></svg><span class="tab-dl-text"><b>DOWNLOAD</b><small>data for models</small></span></button>
@@ -324,7 +326,8 @@
 
       <!-- DROUGHT: filled by js/weather.js when shown -->
       <section class="tab" id="tab-drought" role="tabpanel" hidden></section>
-      <!-- SOIL MAPS: filled by js/soilmaps.js when shown -->
+      <!-- SOIL MAPS: filled by js/soilmaps.js when shown; its Overview draws the Soil maps tab too, hidden, and reads from it -->
+      <section class="tab" id="tab-soiloverview" role="tabpanel" hidden></section>
       <section class="tab" id="tab-soilmaps" role="tabpanel" hidden></section>
 
       <!-- DOWNLOAD MODEL DATA: the data sheet (js/datasheet.js) -->

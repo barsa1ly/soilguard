@@ -717,15 +717,24 @@ table.weg-table .here { display: inline-block; margin-left: 4px; padding: 0 7px;
 @media (max-width: 767px) {
   .app { grid-template-columns: 100%; grid-template-rows: minmax(0, 1fr) 0px; }
   .app.has-site { grid-template-columns: 100%; grid-template-rows: minmax(0, 38fr) minmax(0, 62fr); }
-  .app.has-site.map-big { grid-template-rows: minmax(0, 1fr) 0px; }
+  /* the bigger map (js/app.js setLayout 'peek'): the results drop to a bar at the foot that keeps the grip and the place's
+     name; fr to fr and a length to a length, so the rows can move smoothly between the two */
+  .app.has-site.map-big { grid-template-columns: 100%; grid-template-rows: minmax(0, 100fr) minmax(calc(54px + env(safe-area-inset-bottom)), 0fr); }
+  .app.map-big .panel { visibility: visible; }
+  .app.map-big .tabs, .app.map-big .panel-body { visibility: hidden; }
+  .app.map-big .panel-head { cursor: pointer; padding-bottom: max(6px, env(safe-area-inset-bottom)); }
+  .app.map-big #dataBtn, .app.map-big #expandMapBtn, .app.map-big #siteElev, .map-toggle { display: none; }
   .panel {
     border-left: 0;
     border-radius: 18px 18px 0 0;
     margin-top: -16px;
     box-shadow: 0 -8px 30px rgba(28, 36, 32, .18);
   }
-  .panel-grip { display: flex; justify-content: center; padding: 8px 0 0; }
-  .panel-grip i { width: 40px; height: 4px; border-radius: 2px; background: #cdc9bd; }
+  /* the grip and the head take the swipe (touch-action), the results below still scroll */
+  .panel-grip { display: flex; justify-content: center; width: 100%; border: 0; background: none; padding: 8px 0 4px; margin-bottom: -4px; touch-action: none; }
+  .panel-grip i { width: 40px; height: 4px; border-radius: 2px; background: #cdc9bd; transition: background .2s; }
+  .panel-grip:hover i, .panel-grip:focus-visible i { background: var(--muted); }
+  .panel-head { touch-action: none; }
   .panel-head { padding: 6px 10px 6px 16px; }
   .tabs { padding: 0 10px 8px; }
   .tabs button { padding: 7px 10px; font-size: 13px; }
@@ -740,9 +749,15 @@ table.weg-table .here { display: inline-block; margin-left: 4px; padding: 0 7px;
   .brand span { display: none; }
   .map-tools { top: calc(max(10px, env(safe-area-inset-top)) + 54px); right: 10px; }
   .app.has-site .map-tools { gap: 6px; }
-  .app.has-site .legend { display: none; }
-  .legend { top: calc(max(10px, env(safe-area-inset-top)) + 54px); bottom: auto; left: 10px; max-width: calc(100% - 76px); }
-  .hint { bottom: max(22px, env(safe-area-inset-bottom)); }
+  /* the legend at the foot of the map, at most a quarter of the screen, scrolling inside: shown while the map has the
+     screen (no location, or the results lowered to their bar), hidden while the results take most of it */
+  .app.has-site:not(.map-big) .legend { display: none; }
+  .legend { top: auto; bottom: calc(max(10px, env(safe-area-inset-bottom)) + 16px); left: 10px; max-width: min(320px, calc(100% - 20px));
+    max-height: 25vh; max-height: 25dvh; overflow: auto; overscroll-behavior: contain; }
+  .legend > h5:first-child { position: sticky; top: -10px; z-index: 1; margin: -10px -12px 6px; padding: 10px 12px 2px; background: rgba(255, 255, 255, .97); }
+  .legend > h5:first-child button { padding: 2px 0 2px 8px; }
+  .app.has-site.map-big .legend, .app.has-site.map-big .time-bar { bottom: 28px; } /* the bar's top is 16 px into the map */
+  .hint { display: none; } /* the theme bar and the legend say what the map shows; a tap opens the results */
   .leaflet-control-scale { display: none; }
   .leaflet-control-zoom { display: none; }
   .card { padding: 12px 13px; }
@@ -981,7 +996,8 @@ table.weg-table .here { display: inline-block; margin-left: 4px; padding: 0 7px;
 
 @media (max-width: 767px) {
   .theme-bar { left: 10px; top: calc(max(10px, env(safe-area-inset-top)) + 54px); max-width: calc(100% - 76px); }
-  .legend { top: calc(max(10px, env(safe-area-inset-top)) + 100px); }
+  /* the past-date bar takes the foot of the map: the legend goes up under the theme bar */
+  .map-pane:has(> .time-bar:not([hidden])) .legend { top: calc(max(10px, env(safe-area-inset-top)) + 100px); bottom: auto; max-width: calc(100% - 76px); } /* clear of the map tools on the right */
   .theme-bar button { padding: 6px 8px; font-size: 12px; gap: 4px; }
   .theme-bar .full { display: none; }
   .theme-bar .short { display: inline; }
@@ -1075,3 +1091,32 @@ table.grid.sm-table td small { color: var(--muted); }
 .smm-latest { height: 28px; border: 1px solid var(--line); border-radius: 7px; padding: 0 8px; font: inherit; font-size: 12px; font-weight: 600; background: var(--surface); color: var(--accent-2); cursor: pointer; white-space: nowrap; }
 .smm-latest:disabled { color: var(--muted); cursor: default; }
 .legend.min .smm-ctl-box { display: none; }
+
+/* ---------- the Soil maps theme: its Overview (js/soilmaps.js) and the map's layers as buttons ---------- */
+/* the headline's colour follows the pH group, as the risk card's follows the risk class */
+.so-head.ph1 { background: linear-gradient(135deg, #c8553d, #8a2f1d); }
+.so-head.ph2 { background: linear-gradient(135deg, #c98a2e, #8f5a14); }
+.so-head.ph3 { background: linear-gradient(135deg, #4f9a5a, #2d6236); }
+.so-head.ph4 { background: linear-gradient(135deg, #3a7fa8, #1f4f72); }
+.so-head.ph5 { background: linear-gradient(135deg, #6a5aae, #3b2d73); }
+/* the longer class names ("Strongly alkaline") wrap on a phone rather than end in "…"; the ranges stay in line at the foot */
+.so-head .risk-scale div { display: flex; flex-direction: column; justify-content: space-between; }
+.so-head .risk-scale b { white-space: normal; }
+/* the Overview draws the Soil maps tab while it is hidden: laid out at the panel's width but with no height and unseen, so
+   what is drawn to its box's width (the soil moisture charts) comes out as it would in the open tab */
+#tab-soilmaps[hidden] { display: grid !important; height: 0; overflow: hidden; visibility: hidden; contain: layout paint; }
+.so-tile { display: flex; flex-direction: column; }
+.so-tile .k { display: flex; justify-content: space-between; align-items: flex-start; gap: 6px; line-height: 1.3; }
+.so-tile .k > span:first-child { min-width: 0; }
+.so-tile .k .tag { flex: none; font-size: 10px; padding: 1px 6px; }
+.so-tile .s b { color: var(--ink-2); font-weight: 600; }
+.so-tile .so-go { margin-top: auto; padding-top: 6px; align-self: flex-start; font-size: 12px; }
+.sm-chips { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; margin-top: 8px; }
+.sm-chips-k { font-size: 11.5px; color: var(--muted); font-weight: 600; }
+.sm-chips .seg button { padding: 5px 11px; }
+.sm-all { display: grid; gap: 4px; justify-items: start; }
+.sm-all .btn { display: inline-flex; align-items: center; gap: 6px; }
+.sm-all .btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.sm-all .fine { margin: 0; }
+@keyframes so-flash { from { box-shadow: 0 0 0 3px var(--accent); } to { box-shadow: var(--shadow); } }
+.so-flash { animation: so-flash 1.4s ease-out; }

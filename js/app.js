@@ -731,10 +731,17 @@
 
   /* ============ LAYOUT ============ */
   function setLayout(mode) {
-    // mode: 'none' | 'split' | 'mapbig'
+    /* mode: 'none' | 'split' | 'mapbig' | 'peek'. 'peek' is the bigger map of a phone, where the results drop to a bar at
+       the foot that keeps the place's name and the grip (tap it or swipe it up to bring them back): the same class as
+       'mapbig', which css/app.css draws as that bar on a phone and as the map alone, with the "Show results" pill, on a
+       wider screen */
+    const big = mode === "mapbig" || mode === "peek";
     app.classList.toggle("has-site", mode !== "none");
-    app.classList.toggle("map-big", mode === "mapbig");
-    $("#mapToggle").hidden = mode !== "mapbig";
+    app.classList.toggle("map-big", big);
+    $("#mapToggle").hidden = !big;
+    const g = $("#panelGrip");
+    g.setAttribute("aria-expanded", String(mode === "split"));
+    g.setAttribute("aria-label", mode === "split" ? "Lower the results to a bar and show the map" : "Show the results");
     // follow the grid transition, then settle (timers rather than rAF so background tabs still settle)
     // the map container animates; a ResizeObserver settles it once the size stops changing
     setTimeout(() => { if (pendingView) settleMap(); }, 1200); // fallback if the size never changed
@@ -753,7 +760,30 @@
     if (!map.getBounds().pad(-0.15).contains(p)) map.panTo(p, { animate: true });
   }
   $("#expandMapBtn").addEventListener("click", () => setLayout("mapbig"));
-  $("#mapToggle").addEventListener("click", () => { if (state.site) pendingView = { ll: L.latLng(state.site.lat, state.site.lon), z: map.getZoom() }; setLayout("split"); });
+  const raisePanel = () => { if (state.site) pendingView = { ll: L.latLng(state.site.lat, state.site.lon), z: map.getZoom() }; setLayout("split"); };
+  $("#mapToggle").addEventListener("click", raisePanel);
+  /* the phone's grip and the panel's head: a tap on the grip lowers the results to the bar or brings them back, a tap on
+     the bar brings them back, and a swipe on either (down 40 px or more: the bar; up: the results) does the same. Only
+     these two take the swipe (touch-action: none in css/app.css), so the results scroll as before. */
+  const phone = () => window.matchMedia("(max-width: 767px)").matches, bar = () => app.classList.contains("map-big");
+  let swipe = null, swiped = 0;
+  const lower = () => setLayout("peek");
+  [$("#panelGrip"), $(".panel-head")].forEach(el => el.addEventListener("pointerdown", e => {
+    if (!phone() || !state.site || e.button > 0 || e.target.closest(".head-actions")) return;
+    if (e.pointerType === "mouse" && el !== $("#panelGrip")) e.preventDefault(); // a mouse drag on the head would select the place's name, and the next drag from that selection drags the text (pointercancel) instead
+    swipe = { id: e.pointerId, x: e.clientX, y: e.clientY };
+  }));
+  window.addEventListener("pointerup", e => {
+    if (!swipe || e.pointerId !== swipe.id) return;
+    const dx = e.clientX - swipe.x, dy = e.clientY - swipe.y;
+    swipe = null;
+    if (Math.abs(dy) < 40 || Math.abs(dy) < Math.abs(dx)) return;
+    swiped = Date.now(); // the click that may follow the swipe is not a tap
+    if (dy > 0 && !bar()) lower(); else if (dy < 0 && bar()) raisePanel();
+  });
+  window.addEventListener("pointercancel", () => { swipe = null; });
+  $("#panelGrip").addEventListener("click", () => { if (Date.now() - swiped < 500) return; if (bar()) raisePanel(); else lower(); });
+  $(".panel-head").addEventListener("click", e => { if (Date.now() - swiped < 500 || !phone() || !bar() || e.target.closest(".head-actions")) return; raisePanel(); });
   $("#closePanelBtn").addEventListener("click", () => {
     setLayout("none");
     if (marker) { map.removeLayer(marker); marker = null; }
@@ -768,7 +798,7 @@
     $$(".tab").forEach(t => { t.hidden = t.id !== "tab-" + name; });
     $("#panelBody").scrollTop = 0;
     if (name === "wind" && state.wind) setTimeout(renderWindCharts, 0);
-    if (["drought", "soilmaps"].includes(name) && state.site) WG.weather.show(name, $("#tab-" + name));
+    if (["drought", "soilmaps", "soiloverview"].includes(name) && state.site) WG.weather.show(name, $("#tab-" + name));
     if (name === "download" && state.site) WG.datasheet.show();
   }
   $("#dataBtn").addEventListener("click", () => showTab("download"));
@@ -1865,7 +1895,7 @@
     if (state.wind && !state.wind.error) renderWind();
     renderSoilSummary(); renderSoilDetail(); renderPractices();
     const tab = $(".tabs button.active"); // a weather tab on show is drawn again in the new units, from the data read for this location
-    if (tab && ["drought", "soilmaps"].includes(tab.dataset.tab)) WG.weather.show(tab.dataset.tab, $("#tab-" + tab.dataset.tab));
+    if (tab && ["drought", "soilmaps", "soiloverview"].includes(tab.dataset.tab)) WG.weather.show(tab.dataset.tab, $("#tab-" + tab.dataset.tab));
     const { lat, lon } = state.site;
     try { history.replaceState(null, "", `?lat=${lat.toFixed(5)}&lon=${lon.toFixed(5)}${windQ()}${UN.query()}${KEEP_Q}`); } catch (e) { /* file:// */ }
   });

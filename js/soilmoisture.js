@@ -296,7 +296,7 @@ WG.soilmoisture = (function () {
   const nearAt = (pts, d, k = 2) => { const p = pts.find(q => q[0] >= d && q[0] <= d + k); return p ? p : null; }; // the first value on or just after a day
   const putTable = (live, id, t) => { if (live()) SM.tables()[id] = t; };
   const { head, grid, th, showBtn } = SM;
-  const wid = el => (el.clientWidth || 600) - 30;
+  const wid = el => (el.clientWidth || Math.max(0, ((document.getElementById("panelBody") || {}).clientWidth || 0) - 28) || 600) - 30; // a card in a hidden or still-opening panel has no width yet
   const W8 = Wx.wait;
   const lastOf = R => { const d = R ? R.series.flatMap(s => s.pts.map(p => p[0])) : []; return d.length ? Math.max(...d) : null; };
   const nwmSeen = new Map(), redrawS = new WeakMap(); // NWM reads by point; the SMAP card's redraw by its box
