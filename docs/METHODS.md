@@ -6,7 +6,7 @@ This file lists every calculation the app makes, with its source. `docs/RESEARCH
 
 **Kept for 15 days.** So that a place looked at again loads at once, the answers that stay the same for days are kept in the browser (Cache Storage) for 15 days: Soil Data Access, USGS and Open-Meteo elevation, NLCD and Sentinel-2 land cover, TIGERweb county lines, NASA POWER, Open-Meteo's archive, ACIS (PRISM), NCEI GHCNh and IEM station records, gridMET's past days and the place search. Never kept: live map layers and outlooks, this week's Drought Monitor, and gridMET's day count (its newest day). A POST (Soil Data Access, ACIS) is kept under its address and a hash of its request. Older answers are dropped at the next visit; clearing the site's data in the browser drops them all. The Drought Monitor's past weeks at a point are kept in browser storage for the last 60 locations, as they never change; the dated Drought Monitor maps the area grid reads are kept for 15 days like the rest. The Soil maps' services are asked fresh each visit.
 
-"Direct" means the app downloads from the agency that produces the data. Every default source is direct; Open-Meteo is only a backup (hourly wind after 20 s without an answer from NASA POWER, daily weather when gridMET and NASA POWER both fail, elevation when USGS fails) or the ECMWF option.
+"Direct" means the app downloads from the agency that produces the data. Every default source is direct except the soil moisture models by depth (ERA5-Land and ECMWF IFS, §13), which only Open-Meteo's copy serves without a personal key; otherwise Open-Meteo is only a backup (hourly wind after 20 s without an answer from NASA POWER, daily weather when gridMET and NASA POWER both fail, elevation when USGS fails) or the ECMWF option.
 
 | Data | Producer | How the app reads it | Resolution · period | If it fails |
 |---|---|---|---|---|
@@ -30,6 +30,13 @@ This file lists every calculation the app makes, with its source. `docs/RESEARCH
 | Soil maps: total elements | USGS DS-801 (Smith et al. 2013), public domain | USGS mrdata WMS, WFS and site JSON, direct | about 1 site per 1,600 km² | the tab says why |
 | Soil maps: total nitrogen | ISRIC SoilGrids 2.0, CC BY 4.0 | WMS and REST, direct | 250 m, 6 depths | no value on built-up land and water |
 | Soil maps tab: chemistry by horizon, lab pedons | USDA-NRCS SSURGO and KSSL, public domain | Soil Data Access, direct | map units; points | the tab says why |
+| Soil maps: watershed boundaries, streams | USGS WBD; USGS NHDPlus HR (public domain) | MapServer export tiles, direct (§12) | HU8 to HU12; 1:24,000 flowlines from zoom 12 | — |
+| Soil maps tab: basin runoff | NHDPlus HR EROM step A (a model); USGS NLDI | WBD and NHDPlus_HR MapServer queries, catchments by id; NLDI, direct (§12) | HR catchments (about 0.1–1 km²); HU12 40–250 km² | the card says it could not be read |
+| Soil maps tab: design-storm runoff | NOAA Atlas 14 Vol. 11 (Texas); NLCD 2021; SSURGO | pre-built `atlas14.json`; MRLC WCS; Soil Data Access (§12) | 0.05° cells; 30 m; map units | a typed depth |
+| Soil maps tab: RUSLE soil loss | USGS RF7100 R (Wieczorek & LaMotte 2010); SSURGO; NLCD 2021 | pre-built `rfactor.json` per state, COMID from NLDI (§12) | NHDPlus V2 catchment; R kept to 1% | a typed R |
+| Soil maps: soil moisture maps | NASA SMAP L4; NOAA NWM 3.0; NASA SPoRT-LIS, GRACE-DA | NASA GIBS WMTS; NOAA map services WMS; NOAA NIDIS tiles, direct (§13) | 9 km daily since 2015; 1 km hourly; 3 km daily; 0.125° weekly | — |
+| Soil maps tab: soil moisture at the point | ERA5-Land, ECMWF IFS (Open-Meteo); SMAP L4 (USDA Crop-CASMA); NWM 3.0 (AWS) | Open-Meteo's copy for the models; Crop-CASMA and the NWM files, direct (§13) | 0.1°; 9 km; 9 km; 1 km | the card says which source did not answer |
+| Soil maps tab: soil moisture stations | USDA NRCS SCAN, SNOTEL; NOAA USCRN | station list pre-built (`tools/build_moisture.py`); AWDB REST and NCEI files, direct (§13) | sensors at 2–40 in (5–102 cm) or 5–100 cm; hourly | the station's block says why |
 
 **Checks, 2016–2025:**
 - **NOAA GHCNh vs the Iowa Mesonet:** at Lubbock (LBB) the two give 1,322 and 1,321 erosive h/yr. At Hobbs (HOB) GHCNh covers 97% of hours against 68% for the Iowa Mesonet routine reports. On shared hours the erosive share agrees (10.9% vs 10.8%), but the missing Iowa Mesonet hours were mostly calm, so its annual total read high (959 vs 820 h/yr).
@@ -377,7 +384,7 @@ The data sheet is the panel's **DOWNLOAD data for models** tab, marked with a do
 
 ## 8. Drought: map theme, live layers, tab and downloads
 
-The map shows one theme at a time, chosen on the bar under the search box or in the layer sheet: **Wind erosion**, **Drought** or **Soil maps** (§11). A theme puts its overlay on the map (one at a time, the last one chosen) and gives the panel its tabs: Wind erosion has Overview, Wind, Soil and Practices; Drought has Drought; Soil maps has Soil maps. DOWNLOAD data for models is in all of them. The theme is kept in the link (`&map=drought`, `soilmaps`), so a shared link opens on the same theme; a link naming a theme this app does not have opens on Wind erosion. Code: `js/weather.js` (themes, live layers, the Drought tab) and `js/timemap.js` (the Drought Monitor on a past week); the Methods sheet's *Drought* section lists the same.
+The map shows one theme at a time, chosen on the bar under the search box or in the layer sheet: **Wind erosion**, **Drought** or **Soil maps** (§11; with basins, §12, and soil moisture, §13). A theme puts its overlay on the map (one at a time, the last one chosen) and gives the panel its tabs: Wind erosion has Overview, Wind, Soil and Practices; Drought has Drought; Soil maps has Soil maps. DOWNLOAD data for models is in all of them. The theme is kept in the link (`&map=drought`, `soilmaps`), so a shared link opens on the same theme; a link naming a theme this app does not have opens on Wind erosion. Code: `js/weather.js` (themes, live layers, the Drought tab) and `js/timemap.js` (the Drought Monitor on a past week); the Methods sheet's *Drought* section lists the same.
 
 **Live overlays.** Each is a WMS from the agency that makes it, shown as the producer draws it with the producer's own legend (GetLegendGraphic; `sld_version=1.1.0` is sent because the Drought Monitor's MapServer needs it). Nothing in them is recomputed. All were checked on 9 November 2026 by requesting tiles and legends from a page.
 - *Drought:* the U.S. Drought Monitor from the National Drought Mitigation Center's MapServer (`https://ndmcgeodata.unl.edu/cgi-bin/mapserv.exe?map=/ms4w/apps/usdm/map/usdm_current_wms.map`, layer `usdm_current`); the same week a year and five years before from `usdm_YYYYMMDD_wms.map` (layer `usdmYYYYMMDD`, the Tuesday the map is valid for: this week's date, read from the WMS capabilities' title, minus 52 or 261 weeks). The legend note gives the map's date and the credit the Drought Monitor's terms ask for. NOAA CPC's monthly and seasonal drought outlooks: `…/vector/services/outlooks/cpc_drought_outlk/MapServer/WMSServer`, layers 5 and 2.
@@ -445,7 +452,144 @@ The **Soil maps** theme shows one soil-chemistry map at a time; its tab gives wh
 - *KSSL:* the 8 nearest pedons' surface layer (`hzn_top = 0`) from `lab_combine_nasis_ncss`, `lab_layer` and `lab_chemical_properties`: NH₄OAc pH 7 K, Ca, Mg and Na; Bray-1, Olsen and Mehlich-3 P; total N and S. Sparse, often old, and Ca is inflated in calcareous soils.
 - *Downloads:* every table of the tab as CSV.
 - *Not available:* no free US source gives soil-test N, P, K, Ca, Mg or S, DTPA micronutrients, or boron.
-- *Coming:* runoff and soil loss by basin (NHDPlus HR) and soil moisture.
+- *Basins and soil moisture:* §12 and §13 add their layers and tab cards to this theme.
+
+## 12. Basins: runoff and soil loss (Soil maps theme and tab)
+
+Code: `js/basins.js`. Pre-built lookups come from `tools/build_basins.py`. It adds two map layers to the Soil maps theme and three cards to its tab, all for the 12-digit hydrologic unit (HU12) that holds the point.
+
+**Map layers.**
+
+| Layer | Source | How the app reads it | Shown |
+|---|---|---|---|
+| Watershed boundaries | USGS and USDA-NRCS Watershed Boundary Dataset (public domain) | The National Map `wbd` MapServer `export` as 512 px tiles. dynamicLayers carry the app's own outlines, so the legend matches the map. Zooms 6–8 are asked at a lower dpi so the server draws HU8s there. | HU8 at zoom 6–9, HU10 at 10, HU12 (with its code) from 11 |
+| Streams | USGS NHDPlus High Resolution (1:24,000 NHD with value-added attributes, public domain) | `NHDPlus_HR` MapServer layer 3 `export` tiles, classed by Strahler order (1–2, 3–4, 5–6, 7+) | from zoom 12 |
+
+While the theme is on and the point is unchanged, the map also shows:
+- the HU12's outline;
+- its catchments, coloured by mean annual runoff (< 10, 10–25, 25–50, 50–100, 100–200, 200–400, 400–800, ≥ 800 mm/yr), with sinks grey and dashed;
+- the point's catchment (red) and the catchments upstream of it (orange);
+- the flowlines;
+- the NLDI upstream basin (dashed), when asked for.
+
+**The watershed.**
+- The HU12 is found by a point query on WBD layer 6, its polygon simplified to about 10 m.
+- Inside it, the NHDPlus HR flowlines (layer 3) and sinks (layer 1) are asked by the HU12's polygon. Their catchments are then asked by id from layer 10, 500 ids a POST, in pages of 2,000 and at most 20 pages. No spatial query is ever made on the catchment layer, as it takes 40–100 s or times out.
+- A catchment counts as inside the HU12 when the centroid of its largest ring is.
+- Upstream catchments are traced through the flowlines' `hydroseq`, `dnhydroseq` and `dnminorhyd`, inside this HU12 only. The card says when the stream also gathers water from upstream HU12s (`totdasqkm`).
+- On request, USGS NLDI draws the whole upstream basin of the point's NHDPlus V2 catchment (`basin?simplified=true&splitCatchment=false`). It is not split at the point; its area is computed on the Albers plane.
+
+**Mean annual runoff (model).**
+- Each catchment's runoff is from NHDPlus HR's flow estimates, EROM step A (the McCabe-Wolock monthly water-balance model, 1971–2000 climate): runoff (mm/yr) = 893.6 × qincrama (cfs) ÷ area (km²). One cfs for a year is 893,600 m³.
+- The HU12's runoff is 893.6 × Σ qincrama ÷ Σ area over its catchments that drain to the stream network. Catchments that drain to sinks (playas, stock ponds) have no EROM runoff and are reported apart.
+- The card also gives the point's reach mean annual flow (`qama`, cfs and m³/s) and drainage area.
+- It is a model, not a measurement; other models (EPA StreamCat on NHDPlus V2) can differ by a factor of two.
+
+**Design-storm runoff (SCS curve number, NRCS TR-55 1986).**
+- Storm: the 2-, 10- or 100-year 24-hour depth.
+  - In Texas it comes from NOAA Atlas 14 Volume 11 (partial-duration series): the point's 0.05° cell (the mean of its 6 × 6 30″ cells), or the nearest of its 8 neighbours that has all three depths.
+  - Elsewhere the depth is typed, with a link to NOAA's PFDS at the point (PFDS sends no CORS header).
+- Soil groups: SSURGO hydrologic groups, area-weighted inside the HU12. Soil Data Access intersects the HU12 with the map-unit polygons on its own server, and each component is weighted by its map unit's area × comppct. Dual groups (A/D, B/D, C/D) are taken as undrained (D). Area with no group is left out and its share stated.
+- Land cover: NLCD 2021, counted in 30 m cells inside the HU12 from the MRLC WCS (`js/landcover.js`). Open water and ice are left out.
+- Curve numbers come from TR-55 Table 2-2, at average wetness (AMC II):
+
+| NLCD class | Treated as | CN for A / B / C / D |
+|---|---|---|
+| 21 | open space, fair | 49/69/79/84 |
+| 22 | residential, 1/4 ac lots | 61/75/83/87 |
+| 23 | residential, 1/8 ac lots | 77/85/90/92 |
+| 24 | commercial | 89/92/94/95 |
+| 31 | fallow, bare soil | 77/86/91/94 |
+| 41–43 | woods, fair | 36/60/73/79 |
+| 52 | brush, fair | 35/56/70/77 |
+| 71 | pasture or range, fair | 49/69/79/84 |
+| 81 | pasture, good | 39/61/74/80 |
+| 82 | row crops, straight row, good | 67/78/85/89 |
+| 90, 95 | wetlands (not in TR-55) | 78 for every group (assumed) |
+
+- Runoff: Q = (P − Ia)² ÷ (P − Ia + S) for P > Ia, else 0, with S = 25400/CN − 254 mm and Ia = 0.2 S. Q is computed for each land cover and soil group, then averaged by their shares, because Q is not linear in CN. The card also shows Q at the mean CN, and the area-weighted CN.
+- Volume = Q × the HU12's land area (ac-ft and m³).
+- Land cover and soils are taken as independent inside the HU12; there is no cell-by-cell overlay.
+- Limits: an event method for one storm on average wetness, not a forecast or a yearly total. It is crude for cracking clays (the Blackland Prairie's Vertisols) and for frozen or very wet ground.
+
+**Soil loss (RUSLE, USDA Agriculture Handbook 703).** A = R × K × LS × C × P, in short tons per acre per year (× 2.2417 = t/ha/yr).
+- **R:** USGS RF7100 (Wieczorek & LaMotte 2010, from the PRISM-based 1971–2000 R of Daly & Taylor), the mean R of the point's NHDPlus V2 catchment, whose COMID comes from USGS NLDI `comid/position`. Units are hundreds ft·tonf·in/(ac·h·yr); × 17.02 = MJ·mm/(ha·h·yr). It is pre-built per state and kept to 1%. In DC it is read from Maryland's and Virginia's files. R can be typed.
+- **K:** the surface horizon's (hzdept_r = 0) Kw, or Kf where Kw is blank, from SSURGO. × 0.1317 = SI.
+- **LS:** from each component's representative slope s (%) and USLE slope length λ (m). S follows McCool et al. (1987): S = 10.8 sin θ + 0.03 for s < 9%, and 16.8 sin θ − 0.5 for s ≥ 9%. L = (λ / 22.13)^m, with m = 0.2 (s < 1%), 0.3 (1–3.5%), 0.4 (3.5–5%) or 0.5 (≥ 5%).
+- **K × LS** is formed for each component and then averaged with the component weights (map-unit area × comppct). The card states how much of the HU12's area each factor covers.
+- **C:** the NLCD classes' mid-literature values, area-weighted over the land: 21 0.005; 22 0.003; 23 0.001; 24 0; 31 0.45; 41–43 0.003; 52 0.025; 71 0.03; 81 0.035; 90 and 95 0.003. Cropland (82) takes the user's C, 0.24 by default. A cropland-only A is shown as well.
+- **P:** the user's, 1 by default (no contouring, strips or terraces).
+- **T:** SSURGO's tfact, weighted the same way. A / T is shown.
+- **Soil moved each year** = A × land area (km²) × 247.105 ac/km², in short tons (× 0.90718 = t).
+- Limits: gross sheet and rill erosion on the slopes, a long-term yearly average. It does not cover gullies, stream banks or channels, or the sediment that leaves the HU12. LS comes from survey slopes, not a DEM. C from land-cover classes is coarse (crops, residue and tillage change it ten-fold). RUSLE fits rangeland, urban land and wetlands poorly.
+
+**Tables (CSV):**
+- `basin`: the summary, with every value, unit and source;
+- `basin_catchments`: each catchment's id, name, area, qincrama, runoff, qama, order, drainage area, hydroseq, sink or stream, and whether it is in the HU12, at the point or upstream;
+- `basin_landcover`: classes, shares, TR-55 cover, CN A–D, CN here, Q, C;
+- `basin_soils`: components with group, K, slope, slope length, L, S, LS, T;
+- `basin_rusle`: the factors in US and SI units, A, T, and soil moved.
+
+The storm's return period, cropland's C and P are kept on the device; a typed depth is not.
+
+**Rebuilding.**
+- `python tools/build_basins.py rfactor all` (or `TX OK`) fetches, once, into `tools/raw/basins`:
+  - `RF7100_CONUS.txt` (ScienceBase item 573b6028e4b0dae0d5e3ae16; ScienceBase sends no CORS header);
+  - the NHDPlus V2 COMIDs that EPA StreamCat lists in each state.
+- It writes `data/states/XX/rfactor.json`:
+  - the COMIDs, sorted and delta-coded;
+  - q = round(100 ln R), delta- and zigzag-coded;
+  - both written in a base-32 text code, about 2 characters a COMID (5.7 MB for the 48 states).
+- `python tools/build_basins.py atlas14 TX` writes the 0.05° grid from NOAA's 30″ ASCII grids (`xx{2,10,100}yr24ha.zip`). Add a newly built state's code to `A14` in `js/basins.js`.
+
+**Credits.** USGS and USDA-NRCS Watershed Boundary Dataset; USGS NHDPlus High Resolution and NLDI; USGS RF7100 (Wieczorek & LaMotte 2010); NOAA Atlas 14 Volume 11 (Perica et al. 2018); USDA-NRCS SSURGO through Soil Data Access; MRLC NLCD 2021; NRCS TR-55 (1986); Renard et al. (1997), AH 703; McCool et al. (1987). All public domain.
+
+## 13. Soil moisture by depth (Soil maps theme and tab)
+
+Code: `js/soilmoisture.js`. The station list comes from `tools/build_moisture.py`. All values are volumetric, m³/m³ (volume of water per volume of soil; 0.25 = 25% by volume). Every source is free, answers a browser and needs no key.
+
+**Map layers.**
+
+| Layer | Source | How the app reads it | Depth · resolution · time | Legend |
+|---|---|---|---|---|
+| Soil moisture, surface | NASA SMAP Level-4 analysis (GMAO, SPL4SMAU): SMAP's L-band readings assimilated into the Catchment land model | NASA GIBS WMTS (`SMAP_L4_Analyzed_Surface_Soil_Moisture`); a day chosen under the legend, or "Latest". GIBS's DescribeDomains lists the days it holds. | 0–5 cm · 9 km · the day's 12:00 UTC value, any day since 31 March 2015, about 3 days behind | GIBS colormap, 35 colours at 0.02 from 0 to 0.70 m³/m³ |
+| Soil moisture, root zone | the same (`…Root_Zone…`) | the same | 0–100 cm (the model's, steered by the surface) | the same |
+| Soil saturation | NOAA National Water Model 3.0 hourly land analysis (Noah-MP; public domain) | NOAA map services `NWM_Land_Analysis` WMS layer 3. The valid time is read from REST layer 2; tiles are asked again each half hour while the layer is on. | 0–40 cm · 1 km · latest hour only | the service's 11 classes, % of saturation |
+| Soil moisture percentile | NASA SPoRT-LIS (Noah, 3 km), against its 1981–2013 record | NOAA NIDIS drought.gov tiles; date from `info.json` | 0–100 cm · 3 km · latest day | percentile classes; the dry ones match D4–D0 |
+| Root-zone moisture percentile | NASA GRACE-DA (GRACE-FO gravity assimilated into the Catchment model; NASA GSFC, NDMC), against 1948–2012 | the same | root zone · 0.125° · latest week | the same; 30–70 not coloured |
+| Stations | USDA NRCS SCAN, CSCAN, SNOTEL, SNOTEL-lite (AWDB); NOAA USCRN | `data/soilmoisture_stations.json`; a tap picks that point | 697 NRCS stations (193 SCAN, 482 SNOTEL, 16 CSCAN, 6 SNOTEL-lite) and 103 USCRN; list made 2026-11-11 | network colours |
+
+**The tab: three cards, each labelled model, satellite or station.**
+
+- **Models by depth.**
+  - ERA5-Land (Copernicus C3S, ECMWF; Muñoz-Sabater et al. 2021; 0.1°) daily means of the local day. About 5 days behind, so the last 42 days are asked to have 30. Solid lines.
+  - ECMWF IFS (9 km) hourly values for the past 31 days and today, averaged by local day: each past day from that day's runs, today partly forecast. Dashed lines.
+  - Both through Open-Meteo (CC BY 4.0), at 0–7, 7–28, 28–100 and 100–255 cm, with one retry. The ERA5 answer is kept in the browser under its dated URL.
+  - Table columns: today (IFS), ERA5-Land's latest, 30 days before, and the 30-day range.
+- **SMAP L4 and the National Water Model.**
+  - SMAP L4 daily averages of the 3-hourly analyses at the point's 9 km cell, top 0–5 cm and 0–100 cm. Source: USDA NASS Crop-CASMA (George Mason University) WPS `GetProfileByDate`, products `SMAP-9KM-DAILY-TOP` and `-SUB`, the cell asked in EPSG:5070 metres, GET only.
+  - On request, the National Water Model's latest hourly land analysis (`analysis_assim.land` on `noaa-nwm-pds`, AWS; the last 6 hours are tried). The ~118 MB NetCDF-4 file is read in place by byte ranges (`js/h5range.js`, about 2.5 MB). It gives SOIL_M at 0–10, 10–40, 40–100 and 100–200 cm, and SOILSAT_TOP (the fraction of saturation over 0–40 cm, not m³/m³). The cell comes from the model's Lambert conformal conic grid: sphere of 6,370 km, standard parallels 30° and 60° N, origin 40° N 97° W, 1 km; the first cell and the step are read from the file's x and y.
+- **Nearest stations.** The 3 nearest within 400 km, with distance and direction, the latest hourly reading and 30 days of daily means at each sensor depth.
+  - NRCS AWDB REST: daily SMV (the daily mean), or SMS (start of day) where a sensor has no mean, and hourly SMS for the latest reading, in % by volume ÷ 100. Depths are mostly 2, 4, 8, 20 and 40 in (× 2.54 = 5, 10, 20, 51, 102 cm; a few stations have others between 2 and 40 in), in station local standard time.
+  - NOAA USCRN: the year's daily file (`daily01/CRND0103`) and the last 30 KB of the hourly file (`hourly02/CRNH0203`, by byte range after a HEAD for its size), in m³/m³ at 5, 10, 20, 50 and 100 cm; −99 is missing.
+  - SNOTEL sites are in the mountains and often under snow. A flat or stepped line may be a sensor fault.
+
+**Tables (CSV):**
+- `moisture_models`: source, kind, top and bottom (cm), date, value, note;
+- `moisture_smap`: SMAP and the NWM;
+- `moisture_stations`: station, network, id, distance, sensor depth, date or time, m³/m³ and % by volume, daily mean or latest reading.
+
+The charts are inline SVG; hovering over a day lists each line's value.
+
+**Labels and limits.** Models (ERA5-Land, IFS, NWM, SPoRT-LIS) use their own soils and rain. SMAP L4 is a satellite-and-model analysis whose satellite sees only the top 5 cm. Stations measure their own soil, often tens of km away. Levels often differ by 0.1 m³/m³ or more, so compare changes over the month more than levels. Percentiles rank wetness against each model's own record; they do not give an amount of water.
+
+**Rebuilding.** `python tools/build_moisture.py` takes about 2 minutes and writes `data/soilmoisture_stations.json` (60 KB):
+- the AWDB stations (SCAN, SNTL, CSCAN, SNTLT) that report hourly SMS, with the depths of the sensors still reporting;
+- the commissioned USCRN stations whose current daily file holds soil moisture in the last 60 days, with each file's name.
+
+Readings are always read live.
+
+**Credits.** NASA GMAO SMAP L4 through NASA GIBS (NASA open data); USDA NASS Crop-CASMA (George Mason University); NOAA Office of Water Prediction National Water Model 3.0 (NOAA map services; NOAA Open Data Dissemination on AWS); NASA SPoRT-LIS and NASA GRACE-DA (NASA GSFC, NDMC) through NOAA NIDIS drought.gov; ERA5-Land (Copernicus C3S) and ECMWF IFS through Open-Meteo (CC BY 4.0); USDA NRCS Air and Water Database (SCAN, SNOTEL); NOAA NCEI USCRN. All public domain except where a license is named.
 
 ## Known gaps
 

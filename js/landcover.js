@@ -170,5 +170,5 @@ WG.landcover = (function () {
   }
   // a boundary drawn, uploaded or cleared: the legend follows (app.js draws it only while the layer is on)
   document.addEventListener("wg-boundary", () => redraw());
-  return { draw, CLASSES, albers, readTiff, count, init: o => { redraw = o.render; } };
+  return { draw, CLASSES, albers, readTiff, count, boundaryShares, init: o => { redraw = o.render; } };
 })();

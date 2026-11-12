@@ -243,7 +243,7 @@ def fig_overview():
     x = s.legend_swatch(x, 0.24, "panel", "dashed border: re-hosted copy", dashed=True)
     s.text(x, 0.35, "Pre-built offline: state maps, county C, practice profiles. Also: area tool and boundary uploads Fig. 4 ·",
            fs=9.5, color=MUTED, va="center")
-    s.text(x, 0.14, "model files and your files Fig. 5 · drought and Soil maps Fig. 6.",
+    s.text(x, 0.14, "model files and your files Fig. 5 · drought and Soil maps Fig. 6 · Soil maps in detail Figs. 7–9.",
            fs=9.5, color=MUTED, va="center")
     return s.save("flow_overview.png")
 
@@ -546,11 +546,194 @@ def fig_drought():
         s.path([(gx, k.cy), (k.x, k.cy)])
         s.path([(k.right, k.cy), (r.x, k.cy)])
 
-    s.text(SX, S[-1].y - 0.28, "Each part reads only the sources it needs. The Wind erosion theme is in Figures 1–4. Survey",
+    s.text(SX, S[-1].y - 0.28, "Each part reads only the sources it needs. Wind erosion is in Figures 1–4; the Soil maps, in detail,",
            fs=9.5, color=MUTED, va="center", limit=W - 0.05)
-    s.text(SX, S[-1].y - 0.52, "values describe typical soil, not a soil test; total elements are not plant-available.",
+    s.text(SX, S[-1].y - 0.52, "in Figures 7–9. Survey values describe typical soil, not a soil test; total elements are not plant-available.",
            fs=9.5, color=MUTED, va="center", limit=W - 0.05)
     return s.save("flow_drought.png")
+
+
+# --------------------------------------------------------------------------------------------
+# Figure 7: the Soil maps theme and tab
+# --------------------------------------------------------------------------------------------
+def fig_soilmaps():
+    W, H = 8.6, 7.1
+    T = H - 0.25  # the column titles; every height below is measured down from them
+    s = Sheet(W, H)
+    kw = dict(fs=9.5, tfs=10.5, lh=0.19)
+    SX, SW, KX, KW, RX, RW = 0.1, 2.75, 3.0, 2.6, 5.75, 2.75
+    gx = (SX + SW + KX) / 2  # the gap between the first two columns
+    for x, t in [(SX, "WHERE IT COMES FROM"), (KX, "IN YOUR BROWSER"), (RX, "WHAT YOU SEE")]:
+        s.text(x, T, t, fs=10, color=INK, weight="bold")
+
+    s.text(SX, T - 0.27, "Map layers: one at a time", fs=9, color=MUTED, weight="semibold")
+    src = [("soil", "USFS gNATSGO 30 m (CC0)", "pH, CEC, OM; 4 depths to 100 cm"),
+           ("built", "Salinity, sodicity (built in)", "SoilWeb 800 m EC, SAR → state PNGs"),
+           ("soil", "USGS DS-801 soils WMS", "total P, K, Ca … Na; top 5 cm, A, C"),
+           ("soil", "ISRIC SoilGrids 2.0 WMS", "total N, 250 m, 6 depths (model)")]
+    L = [s.box(SX, T - 0.5 - i * 0.6, SW, 0.5, k, t, [l], **kw) for i, (k, t, l) in enumerate(src)]
+    K1 = s.box(KX, T - 0.9, KW, 1.5, "calc", "Layer, depth, legend",
+               ["one layer at a time; depth,", "element and horizon chosen", "(kept on the device); classes",
+                "drawn by the USFS server or", "from soilchem_legend.json"], module="soilmaps.js", **kw)
+    R1 = s.box(RX, T - 0.9, RW, 1.5, "out", "Soil maps theme",
+               ["pH, CEC, organic matter,", "salinity, sodicity, total", "nutrients, total N; each with", "its legend, units, depth", "and credit"], lw=2, **kw)
+    s.path([(gx, L[0].cy), (gx, L[-1].cy)], head=False)
+    for b in L:
+        s.path([(b.right, b.cy), (gx, b.cy)], head=False, lw=1.2)
+    s.path([(gx, K1.cy), (K1.x, K1.cy)])
+    s.path([(K1.right, K1.cy), (R1.x, K1.cy)])
+
+    s.text(SX, T - 3.02, "The Soil maps tab, at the point", fs=9, color=MUTED, weight="semibold")
+    tab = [("SSURGO by Soil Data Access", "the major components' horizons"),
+           ("USFS gNATSGO getSamples", "pH, CEC, OM at the 4 depths"),
+           ("ISRIC SoilGrids REST", "total N: mean, 5–95 % range"),
+           ("USGS DS-801 sites", "WFS, then site JSON: 3 nearest"),
+           ("NRCS KSSL lab data", "SDA lab tables: 8 nearest pedons")]
+    P = [s.box(SX, T - 3.25 - i * 0.6, SW, 0.5, "soil", t, [l], **kw) for i, (t, l) in enumerate(tab)]
+    K2 = s.box(KX, T - 3.25, KW, 1.1, "calc", "Depth-weighting, classes",
+               ["0–15, 0–30 cm by thickness; map", "unit by component share; reaction,", "salinity, sodic or saline"],
+               module="soilmaps.js · over, reaction", **kw)
+    K3 = s.box(KX, T - 4.55, KW, 1.6, "calc", "Values at the point",
+               ["the 30 m values; SoilGrids N;", "USGS sites: distance, direction,", "totals beside the US median;",
+                "KSSL pedons: Ca * where", "calcareous"], module="soilmaps.js", **kw)
+    R2 = s.box(RX, T - 3.25, RW, 2.9, "out", "Soil maps tab",
+               ["at a glance: reaction, salinity,", "sodic or saline at 0–15 cm;", "tables by depth and horizon;",
+                "the 30 m values; SoilGrids N;", "the 3 nearest USGS sites;", "the 8 nearest lab pedons;",
+                "a CSV of each table, or all"], lw=2, **kw)
+    s.path([(P[0].right, P[0].cy), (K2.x, P[0].cy)])
+    s.path([(gx, P[1].cy), (gx, P[-1].cy)], head=False)
+    for b in P[1:]:
+        s.path([(b.right, b.cy), (gx, b.cy)], head=False, lw=1.2)
+    s.path([(gx, K3.cy), (K3.x, K3.cy)])
+    for k in (K2, K3):
+        s.path([(k.right, k.cy), (R2.x, k.cy)])
+    s.text(SX, P[-1].y - 0.3, "Labels: survey (SSURGO, USFS), model (SoilGrids), total (USGS, SoilGrids N: not plant-available), lab (KSSL).",
+           fs=9.5, color=MUTED, va="center", limit=W - 0.05)
+    s.text(SX, P[-1].y - 0.55, "No free US map gives soil-test N, P, K, Ca, Mg or S, DTPA micronutrients or boron; the tab says so.",
+           fs=9.5, color=MUTED, va="center", limit=W - 0.05)
+    return s.save("flow_soilmaps.png")
+
+
+# --------------------------------------------------------------------------------------------
+# Figure 8: basins in the Soil maps theme and tab: runoff and soil loss for the HU12 at the point
+# --------------------------------------------------------------------------------------------
+def fig_basins():
+    W, H = 8.6, 5.85
+    T = H - 0.25  # the column titles; every height below is measured down from them
+    s = Sheet(W, H)
+    kw = dict(fs=9.5, tfs=10.5, lh=0.19)
+    SX, SW, KX, KW, RX, RW = 0.1, 2.75, 3.0, 2.6, 5.75, 2.75
+    gx = (SX + SW + KX) / 2  # the gap between the first two columns
+    for x, t in [(SX, "WHERE IT COMES FROM"), (KX, "IN YOUR BROWSER"), (RX, "WHAT YOU SEE")]:
+        s.text(x, T, t, fs=10, color=INK, weight="bold")
+
+    s.text(SX, T - 0.27, "For the HU12 that holds the point", fs=9, color=MUTED, weight="semibold")
+    src = [(0.5, "soil", "USGS WBD MapServer", "HU12 at the point; HU8–HU12 map"),
+           (1.1, "soil", "USGS NHDPlus HR MapServer", "flowlines, sinks; catchments by id"),
+           (1.85, "built", "Atlas 14 (built in, Texas)", "2-, 10-, 100-yr 24 h → atlas14.json"),
+           (2.45, "soil", "MRLC NLCD 2021 WCS", "30 m classes in the HU12"),
+           (3.05, "soil", "SSURGO by Soil Data Access", "groups, K, slope, λ, T in the HU12"),
+           (3.8, "built", "R factor (built in)", "RF7100 per COMID → rfactor.json"),
+           (4.4, "soil", "USGS NLDI", "COMID at the point; upstream basin")]
+    S = [s.box(SX, T - d, SW, 0.5, k, t, [l], **kw) for d, k, t, l in src]
+    K1 = s.box(KX, T - 0.5, KW, 1.3, "calc", "Catchments and runoff",
+               ["893.6 × qincrama ÷ area,", "each catchment; HU12 mean;", "upstream by hydroseq; the", "NLDI basin on request"],
+               module="basins.js · network", **kw)
+    K2 = s.box(KX, T - 1.9, KW, 1.1, "calc", "Curve number",
+               ["TR-55 CN by class and soil", "group; Q per pair, averaged;", "volume over the land"], module="basins.js · cnModel", **kw)
+    K3 = s.box(KX, T - 3.1, KW, 1.8, "calc", "RUSLE",
+               ["A = R K LS C P; K × LS per", "component; McCool S, L by", "slope class; C by land cover;", "A against T, tons a year"],
+               module="basins.js · drawRusle", **kw)
+    R1 = s.box(RX, T - 0.5, RW, 0.92, "out", "Soil maps theme",
+               ["watershed boundaries; streams;", "HU12 catchments coloured by", "runoff; the point's, upstream"], lw=2, **kw)
+    R2 = s.box(RX, T - 1.52, RW, 3.38, "out", "Soil maps tab",
+               ["HU12 runoff and the point's", "catchment, flow, drainage area;", "storm runoff and volume;",
+                "soil loss against T, tons a", "year; a CSV of each table"], lw=2, **kw)
+    # WBD and NHDPlus HR feed the network; Atlas 14 the storm; NLCD and SSURGO both methods; R and the COMID RUSLE
+    s.path([(gx, S[0].cy), (gx, S[1].cy)], head=False)
+    for b in S[:2]:
+        s.path([(b.right, b.cy), (gx, b.cy)], head=False, lw=1.2)
+    s.path([(gx, K1.cy), (K1.x, K1.cy)])
+    s.path([(S[2].right, S[2].cy), (K2.x, S[2].cy)])
+    s.path([(gx, S[3].cy), (gx, S[4].cy)], head=False)
+    for b in S[3:5]:
+        s.path([(b.right, b.cy), (gx, b.cy)], head=False, lw=1.2)
+    s.path([(gx, K2.y + 0.15), (K2.x, K2.y + 0.15)])
+    s.path([(gx, K3.top - 0.15), (K3.x, K3.top - 0.15)])
+    for b in S[5:]:
+        s.path([(b.right, b.cy), (K3.x, b.cy)])
+    s.path([(K1.right, R1.cy), (R1.x, R1.cy)])
+    s.path([(K1.right, K1.y + 0.13), (R2.x, K1.y + 0.13)])
+    for k in (K2, K3):
+        s.path([(k.right, k.cy), (R2.x, k.cy)])
+    s.text(SX, S[-1].y - 0.3, "Labels: model (EROM runoff, the curve number, RUSLE), survey (SSURGO), map (NLCD 2021).",
+           fs=9.5, color=MUTED, va="center", limit=W - 0.05)
+    s.text(SX, S[-1].y - 0.55, "NOAA Atlas 14 depths are built for Texas only; elsewhere the 24-hour depth is typed.",
+           fs=9.5, color=MUTED, va="center", limit=W - 0.05)
+    return s.save("flow_basins.png")
+
+
+# --------------------------------------------------------------------------------------------
+# Figure 9: soil moisture by depth in the Soil maps theme and tab
+# --------------------------------------------------------------------------------------------
+def fig_moisture():
+    W, H = 8.6, 7.0
+    T = H - 0.25  # the column titles; every height below is measured down from them
+    s = Sheet(W, H)
+    kw = dict(fs=9.5, tfs=10.5, lh=0.19)
+    SX, SW, KX, KW, RX, RW = 0.1, 2.75, 3.0, 2.6, 5.75, 2.75
+    gx = (SX + SW + KX) / 2  # the gap between the first two columns
+    for x, t in [(SX, "WHERE IT COMES FROM"), (KX, "IN YOUR BROWSER"), (RX, "WHAT YOU SEE")]:
+        s.text(x, T, t, fs=10, color=INK, weight="bold")
+
+    def group(top, title, items):
+        s.text(SX, T - top + 0.23, title, fs=9, color=MUTED, weight="semibold")
+        return [s.box(SX, T - top - i * 0.6, SW, 0.5, k, t, [l], dashed=d, **kw) for i, (k, t, l, d) in enumerate(items)]
+
+    def bus(boxes, k, y=None):
+        s.path([(gx, boxes[0].cy), (gx, boxes[-1].cy)], head=False)
+        for b in boxes:
+            s.path([(b.right, b.cy), (gx, b.cy)], head=False, lw=1.2)
+        s.path([(gx, k.cy if y is None else y), (k.x, k.cy if y is None else y)])
+
+    G1 = group(0.5, "Map layers: one at a time",
+               [("soil", "NASA GIBS: SMAP L4", "0–5, 0–100 cm; any day since 2015", False),
+                ("soil", "NOAA NWM WMS", "0–40 cm saturation, latest hour", False),
+                ("soil", "NOAA NIDIS tiles", "SPoRT-LIS, GRACE-DA percentiles", False)])
+    G2 = group(2.65, "Stations: on the map and in the tab",
+               [("built", "Station list (built in)", "SCAN, SNOTEL, USCRN → JSON", False),
+                ("soil", "NRCS AWDB, NCEI USCRN", "hourly and daily readings", False)])
+    G3 = group(4.35, "The Soil maps tab, at the point",
+               [("soil", "Open-Meteo (a copy)", "ERA5-Land, ECMWF IFS, 4 depths", True),
+                ("soil", "USDA Crop-CASMA", "SMAP L4 at the 9 km cell", False),
+                ("soil", "NWM files on AWS", "4 layers, on request (byte ranges)", False)])
+    K1 = s.box(KX, T - 0.5, KW, 1.7, "calc", "Layer, day, legend",
+               ["one layer at a time; SMAP's", "day chosen under the legend", "(GIBS lists the days it has);",
+                "NWM tiles asked again each", "half hour while it is on"], module="soilmoisture.js · LAYERS", **kw)
+    K3 = s.box(KX, T - 2.6, KW, 1.3, "calc", "Nearest stations",
+               ["dots from the list; the 3", "nearest within 400 km; % ÷ 100;", "latest hour, 30 daily means"],
+               module="soilmoisture.js · readStations", **kw)
+    K2 = s.box(KX, T - 4.35, KW, 1.7, "calc", "Series by depth",
+               ["ERA5-Land and IFS at 4 depths,", "local-day means; SMAP at its", "9 km cell; the NWM's 1 km", "cell by byte ranges; m³/m³"],
+               module="soilmoisture.js · era5At, ifsAt", **kw)
+    R1 = s.box(RX, T - 0.5, RW, 2.55, "out", "Soil maps theme",
+               ["SMAP surface or root zone on", "any day since 2015; NWM", "saturation this hour; SPoRT", "and GRACE percentiles;",
+                "station dots: tap one"], lw=2, **kw)
+    R2 = s.box(RX, T - 3.15, RW, 2.9, "out", "Soil maps tab",
+               ["models by depth: today and", "30 days; SMAP and the NWM", "at the point; the 3 nearest",
+                "stations' latest readings and", "daily means; 30-day charts;", "a CSV of each table"], lw=2, **kw)
+    bus(G1, K1)
+    bus(G2, K3)
+    bus(G3, K2)
+    s.path([(K1.right, K1.cy), (R1.x, K1.cy)])
+    s.path([(K3.right, K3.top - 0.18), (R1.x, K3.top - 0.18)])
+    s.path([(K3.right, K3.y + 0.25), (R2.x, K3.y + 0.25)])
+    s.path([(K2.right, K2.cy), (R2.x, K2.cy)])
+    s.text(SX, G3[-1].y - 0.3, "Labels: model (ERA5-Land, IFS, NWM, SPoRT), satellite + model (SMAP L4, GRACE-DA), station (SCAN, SNOTEL, USCRN).",
+           fs=9.5, color=MUTED, va="center", limit=W - 0.05)
+    s.text(SX, G3[-1].y - 0.55, "Compare changes more than levels: a model's soil is not the field's. Dashed: a re-hosted copy.",
+           fs=9.5, color=MUTED, va="center", limit=W - 0.05)
+    return s.save("flow_moisture.png")
 
 
 # --------------------------------------------------------------------------------------------
@@ -621,6 +804,23 @@ SOURCES = [
      "no value on built-up land and water"),
     ("Soil maps tab: chemistry by horizon, lab pedons", "USDA-NRCS SSURGO and KSSL", "Soil Data Access (direct)",
      "map units; points", "the tab says why"),
+    ("Soil maps: watershed boundaries, streams", "USGS WBD; USGS NHDPlus HR (public domain)", "MapServer export tiles, "
+     "the app's own symbols (direct)", "HU8–HU12; flowlines from zoom 12", "—"),
+    ("Soil maps tab: basin runoff", "NHDPlus HR EROM step A (a model); USGS NLDI", "HU12 by point query; flowlines and "
+     "sinks by its polygon; catchments by id, 500 a request (direct)", "HR catchments; HU12 40–250 km²",
+     "the card says it could not be read"),
+    ("Soil maps tab: design-storm runoff", "NOAA Atlas 14 Vol. 11 (Texas); NLCD 2021; SSURGO", "pre-built atlas14.json "
+     "(tools/build_basins.py); MRLC WCS; Soil Data Access", "0.05°; 30 m; map units", "a typed depth"),
+    ("Soil maps tab: soil loss (RUSLE)", "USGS RF7100 (Wieczorek & LaMotte 2010); SSURGO; NLCD 2021", "pre-built "
+     "rfactor.json per state (tools/build_basins.py); COMID from NLDI", "NHDPlus V2 catchment", "a typed R"),
+    ("Soil maps: soil moisture maps", "NASA SMAP L4; NOAA NWM 3.0; NASA SPoRT-LIS, GRACE-DA", "NASA GIBS WMTS; NOAA WMS; "
+     "NOAA NIDIS tiles (direct)", "9 km daily since 2015; 1 km hourly; 3 km; 0.125° weekly", "—"),
+    ("Soil maps tab: soil moisture at the point", "ERA5-Land, ECMWF IFS (Open-Meteo, CC BY 4.0); SMAP L4 (Crop-CASMA); "
+     "NWM (AWS)", "Open-Meteo APIs (re-hosted copy), one retry; Crop-CASMA WPS GET and NWM NetCDF by byte ranges, on "
+     "request (direct)", "0.1°; 9 km; 1 km", "the card names a source that did not answer"),
+    ("Soil maps tab: soil moisture stations", "USDA NRCS SCAN, SNOTEL; NOAA USCRN", "list pre-built "
+     "(tools/build_moisture.py); AWDB REST, NCEI USCRN files (direct)", "the 3 nearest within 400 km, hourly",
+     "the station's block says why"),
     ("Atmospheric CO₂ (APSIM files)", "NOAA GML Mauna Loa annual means", "built into the app", "1959–2025, +2.5 ppm a year after, the 1959 value before",
      "—"),
     ("Your soil profile (data sheet)", "your lab results or edits", "typed into the sheet or read from a CSV in the browser",
@@ -723,6 +923,51 @@ AREA_CALC = [
      "accepted if the services take > 3.5 s", "click → accept or refuse", "area.js · `excludedAt`; app.js · `pickSite`"),
 ]
 
+SOILMAP_CALC = [
+    ("Map layer", "USFS exportImage for the view at the chosen depth, the classes drawn by the server; the state PNGs "
+     "near the view; the USGS and SoilGrids WMS", "choice → image and legend", "soilmaps.js · `layers`, `legendOf`"),
+    ("Survey at the point", "the map unit's major components and horizons from Soil Data Access", "lat, lon → horizons",
+     "soilmaps.js · `surveyAt`"),
+    ("Depth-weighting", "thickness-weighted mean over 0–15 and 0–30 cm of the horizons with a value; map unit by "
+     "component share", "horizons → pH, EC, SAR, ESP, CEC, base saturation, OM, CaCO₃, gypsum", "soilmaps.js · `over`"),
+    ("Classes", "reaction and salinity by the Soil Survey Manual; sodic at SAR ≥ 13 or ESP ≥ 15, saline at EC ≥ 4 "
+     "(Handbook 60)", "values → classes", "soilmaps.js · `reaction`, `salinity`, `sodicity`"),
+    ("Nearest sites and pedons", "USGS DS-801: 3 nearest by WFS, then site JSON; KSSL: 8 nearest surface layers from the "
+     "lab tables; boxes widened once", "lat, lon → sites, pedons with distance", "soilmaps.js · `usgsNearAt`, `ksslAt`"),
+    ("USGS legend (offline)", "the national deciles of the DS-801 site values, censored values at their detection limit",
+     "DS-801 CSV → data/soilchem_legend.json", "tools/build_soilmaps.py"),
+]
+
+BASIN_CALC = [
+    ("HU12 and its network", "WBD point query; NHDPlus HR flowlines and sinks by the HU12 polygon; catchments by id; "
+     "inside = centroid of the largest ring", "lat, lon → HU12, catchments", "basins.js · `hu12At`, `hrIn`"),
+    ("EROM runoff, upstream", "893.6 × qincrama / area; HU12 = 893.6 Σq / ΣA; upstream by hydroseq inside the HU12",
+     "catchments → mm/yr, upstream set", "basins.js · `network`"),
+    ("Soils and land cover in the HU12", "SDA intersects the HU12 with map units on its server; NLCD 2021 counted in 30 m "
+     "cells from the MRLC WCS", "HU12 → components, class areas", "basins.js · `soilsIn`; landcover.js · `boundaryShares`"),
+    ("Curve number runoff", "TR-55 Table 2-2 CN per class and group; Q = (P − 0.2S)²/(P + 0.8S) per pair, averaged; "
+     "P from Atlas 14 (TX) or typed", "groups, classes, P → CN, Q, volume", "basins.js · `cnModel`, `a14At`, `scsQ`"),
+    ("RUSLE", "R from rfactor.json by NLDI COMID; K, LS (McCool S, L by slope class), T per component; C by class; "
+     "A = R K LS C P", "→ t/ac/yr, t/ha/yr, × T, tons/yr", "basins.js · `rAt`, `ls`, `drawRusle`"),
+    ("R and Atlas 14 lookups (offline)", "RF7100 split by state with StreamCat COMIDs, delta and base-32 coded; Atlas 14 "
+     "30″ grids to 0.05° means", "national files → rfactor.json, atlas14.json", "tools/build_basins.py"),
+]
+
+MOISTURE_CALC = [
+    ("Map layers", "GIBS WMTS by day (DescribeDomains lists the days); NWM WMS asked again each half hour while on; "
+     "NIDIS tiles; station dots from the list", "choice, day → tiles and legend", "soilmoisture.js · `LAYERS`, `drawLegend`"),
+    ("Models by depth", "ERA5-Land daily means (42 days asked); IFS hourly → local-day means; four layers to 255 cm; "
+     "one retry", "lat, lon → 30-day series", "soilmoisture.js · `era5At`, `ifsAt`"),
+    ("SMAP at the cell", "Crop-CASMA GetProfileByDate at the EPSG:5070 cell, TOP and SUB", "lat, lon → daily m³/m³",
+     "soilmoisture.js · `smapAt`"),
+    ("NWM on request", "latest analysis_assim land file on AWS; LCC cell; SOIL_M (4 layers), SOILSAT_TOP read by byte "
+     "ranges", "lat, lon → 4 layers + saturation", "soilmoisture.js · `nwmAt`; h5range.js"),
+    ("Nearest stations", "3 nearest within 400 km; AWDB daily SMV/SMS and hourly SMS (% ÷ 100); USCRN daily file and "
+     "hourly tail", "lat, lon → latest and 30 daily means per depth", "soilmoisture.js · `nearest`, `readStations`"),
+    ("Station list (offline)", "AWDB stations reporting hourly SMS with live sensor depths; USCRN stations with recent "
+     "soil moisture", "→ data/soilmoisture_stations.json", "tools/build_moisture.py"),
+]
+
 RESULTS = [
     ("Risk class and E (Overview)", "E = I × C / 100", "SSURGO: WEG → I; climatic factor C (SSURGO or the state's county table)"),
     ("Erodibility index EI", "E / T", "SSURGO soil-loss tolerance T"),
@@ -741,6 +986,16 @@ RESULTS = [
     ("Statewide map colours", "pre-computed offline", "SSURGO WEG/I (UC Davis SoilWeb rasters), NRCS C, NASA POWER monthly wind"),
     ("Model files (data sheet zip)", "each model's layout, gaps filled where the model needs it",
      "gridMET, PRISM, NASA POWER or your file; the survey soil or yours"),
+    ("Soil maps layers", "drawn by the source; classes from the survey manual or the USGS deciles",
+     "USFS gNATSGO, SoilWeb, USGS DS-801, SoilGrids"),
+    ("Soil maps tab", "depth-weighted means and classes; nearest sites and pedons",
+     "SSURGO, USFS getSamples, SoilGrids, USGS DS-801, NRCS KSSL"),
+    ("Basin: HU12 and catchment runoff", "893.6 × qincrama ÷ area (EROM step A, a model); upstream by hydroseq",
+     "NHDPlus HR, WBD, USGS NLDI"),
+    ("Design-storm runoff, soil loss", "TR-55 curve number; RUSLE A = R K LS C P",
+     "NOAA Atlas 14 (Texas) or your depth; NLCD 2021; SSURGO; USGS RF7100"),
+    ("Soil moisture by depth", "daily means in m³/m³; the 3 nearest stations",
+     "ERA5-Land, ECMWF IFS (Open-Meteo); SMAP L4 (Crop-CASMA); National Water Model; SCAN, SNOTEL, USCRN"),
     ("Figure and table downloads", "charts redrawn at the chosen size and DPI; CSV with units", "the results above, in the "
      "units chosen"),
 ]
@@ -767,6 +1022,10 @@ CODE = [
     ("js/weather.js", "the map themes and the Drought theme: live layers, the Drought tab, the Drought Monitor at a point and by week"),
     ("js/timemap.js", "the Drought Monitor on a past week: the week bar on the map, play"),
     ("js/soilmaps.js", "the Soil maps theme and tab: layers, legends, SSURGO chemistry by depth, nearby sites and pedons"),
+    ("js/basins.js", "basins in the Soil maps theme and tab: WBD and NHDPlus HR layers, the HU12 and its catchments, EROM "
+     "runoff, curve-number storm runoff, RUSLE soil loss, CSV"),
+    ("js/soilmoisture.js", "soil moisture in the Soil maps theme and tab: SMAP, NWM, SPoRT and GRACE layers, stations, "
+     "models by depth, SMAP at the cell, NWM on request, nearest stations, charts, CSV"),
     ("js/config.js", "the app's name and the states a visitor can choose (Texas for now)"),
     ("js/daycent.js", "DayCent weather and site files"),
     ("js/stats.js", "visitor counting (Umami Cloud), off until a website ID is added"),
@@ -778,6 +1037,9 @@ CODE = [
     ("data/states.js, data/states/XX.json, data/states/XX/*.png", "the state list; each state's outline, airports, "
      "statewide layers and county C (made by tools/build_states.py and tools/build_layers.py)"),
     ("data/practices/XX.json", "each state's practice profile (made by tools/fetch_efotg.py and tools/build_practices.py)"),
+    ("data/states/XX/rfactor.json, data/states/TX/atlas14.json", "the R factor per NHDPlus V2 catchment and Texas's "
+     "Atlas 14 depths (made by tools/build_basins.py)"),
+    ("data/soilmoisture_stations.json", "the soil moisture stations and their sensor depths (made by tools/build_moisture.py)"),
     ("tools/*.py", "offline builders, run by hand, never by the app; tools/build_flow_doc.py makes this document"),
 ]
 
@@ -816,7 +1078,8 @@ LIMITS = [
      "only). The outline is the Census 1:5,000,000 boundary, kept within about 0.2 km of that source; a point a few hundred "
      "metres from a state line can land on the wrong side. The statewide C is an estimate where SSURGO gives a county none, "
      "and the practice profiles outside Texas and Kansas are lighter than Texas's."),
-    ("Open-Meteo is only a backup.", " Every default source is direct. Open-Meteo steps in for wind when NASA POWER "
+    ("Open-Meteo is a backup.", " Every default source is direct, except the soil moisture models by depth (ERA5-Land, "
+     "ECMWF IFS), which only Open-Meteo's copy serves without a personal key. Otherwise Open-Meteo steps in for wind when NASA POWER "
      "errors or has not answered within 20 s, for daily weather when gridMET and NASA POWER both fail, for elevation when "
      "USGS fails, and when you choose ECMWF (Copernicus's own store needs each user's key and a queued job). After "
      "calibration both models give 1,291–1,295 erosive h/yr at Lubbock."),
@@ -835,6 +1098,15 @@ LIMITS = [
      "from SSURGO components, which are not mapped separately inside a map unit. Buildings, roads and water are only as "
      "complete as USA Structures, TIGER and NHD; if one of them does not answer, the panel says it was not removed."),
     ("Statewide layers are fixed.", " The map colours are pre-computed and do not change with the point you pick."),
+    ("Soil maps are not a soil test.", " Survey values describe the mapped soil; USGS and SoilGrids values are total, "
+     "not plant-available; KSSL pedons are sparse and often decades old. No free US map gives soil-test N, P, K, Ca, Mg "
+     "or S, DTPA micronutrients or boron."),
+    ("Basins are models.", " Mean annual runoff is NHDPlus HR's EROM model (1971–2000 climate), not a gauge; other "
+     "models can differ by a factor of two. The curve number is an event method on average wetness. RUSLE gives gross "
+     "sheet-and-rill erosion, with LS from survey slopes and C from land-cover classes, not gullies or the sediment that "
+     "leaves the HU12. NOAA Atlas 14 depths are built for Texas only; elsewhere the depth is typed."),
+    ("Soil moisture sources differ.", " Models, SMAP L4 and stations often differ by 0.1 m³/m³ or more, as a model's "
+     "soil is not the field's; compare changes more than levels. A station reads its own soil, often tens of km away."),
     ("No SoilGuard server.", " GitHub Pages only delivers the files. Your browser sends the point's coordinates (and any "
      "place name you search for) straight to each service listed above; nothing is stored."),
 ]
@@ -1006,7 +1278,8 @@ def build_docx(figs, commit):
          "survey gives the erodibility (I) and the climatic factor (C), which combine into the bare-soil erosion "
          "potential E = I × C / 100. Hourly wind, calibrated to the nearest airport and weighted by how dry each month "
          "is, decides which months are risky. The practice planner turns both into a plan. The Drought and Soil maps "
-         "themes (section 9) show drought now and since 2000, and the soil's chemistry by depth.")
+         "themes (sections 9–12) show drought now and since 2000, the soil's chemistry by depth, runoff and soil loss in "
+         "the small watershed around the point, and soil moisture by depth.")
 
     doc.add_heading("2. How to read the diagrams", level=1)
     lead_list([
@@ -1065,10 +1338,38 @@ def build_docx(figs, commit):
          "Monitor's weekly classes at the point come from Esri's Living Atlas copy, with NDMC's own maps for any week it lacks; "
          "the data sheet and the area grid can add them to a download. The Soil maps read the soil survey (as USFS 30 m "
          "images and through Soil Data Access), UC Davis SoilWeb grids built per state, USGS total elements and SoilGrids "
-         "total nitrogen.")
+         "total nitrogen; sections 10–12 show them in detail.")
     figure(figs[5], 5.9, "Figure 6. Drought and Soil maps: live layers, tabs and downloads.")
 
-    h = doc.add_heading("10. Calculations, step by step", level=1)
+    h = doc.add_heading("10. Soil maps theme and tab", level=1)
+    h.paragraph_format.page_break_before, h.paragraph_format.space_before = True, Pt(0)
+    para("The Soil maps theme shows one soil chemistry layer at a time: pH, CEC and organic matter from the USDA Forest "
+         "Service's 30 m maps of the soil survey, salinity and sodicity pre-built from UC Davis SoilWeb, total elements "
+         "from the USGS, and total N from ISRIC SoilGrids. Its tab gives the survey's values by depth with their classes, "
+         "the 30 m values, SoilGrids N, and the nearest USGS sites and NRCS lab pedons. USGS and SoilGrids values are "
+         "total, not plant-available; no free US map gives soil-test nutrients or boron.")
+    figure(figs[6], 5.9, "Figure 7. Soil maps: the map layers and the tab at the point.")
+
+    h = doc.add_heading("11. Basins: runoff and soil loss", level=1)
+    h.paragraph_format.page_break_before, h.paragraph_format.space_before = True, Pt(0)
+    para("The Soil maps theme and tab also work on the small watershed (HU12) that holds the point. USGS map servers give "
+         "its outline and its NHDPlus High Resolution catchments; their mean annual runoff comes from NHDPlus HR's EROM "
+         "model. A design storm's runoff is worked out by the curve number (TR-55) from the HU12's land cover and soil "
+         "groups, with NOAA Atlas 14 depths built in for Texas, and the long-term soil loss by RUSLE, with R built in "
+         "from USGS RF7100 for every NHDPlus V2 catchment. All three are models, and the tab says so.")
+    figure(figs[7], 5.9, "Figure 8. Basins: the HU12 and its catchments, runoff by EROM and by the curve number, and "
+                         "RUSLE soil loss.")
+
+    h = doc.add_heading("12. Soil moisture by depth", level=1)
+    h.paragraph_format.page_break_before, h.paragraph_format.space_before = True, Pt(0)
+    para("Soil moisture comes from three kinds of source, each labelled: models (ERA5-Land and ECMWF IFS through "
+         "Open-Meteo, the National Water Model), a satellite analysis (NASA SMAP L4, merged into a model) and stations "
+         "(USDA SCAN and SNOTEL, NOAA USCRN). The map shows SMAP on any day since 2015, the National Water Model's "
+         "saturation this hour, drought.gov's percentiles and the stations; the tab gives each source by depth at the "
+         "point, with 30 days of daily means. Values are in m³/m³; compare their changes more than their levels.")
+    figure(figs[8], 5.9, "Figure 9. Soil moisture: the map layers and the tab at the point.")
+
+    h = doc.add_heading("13. Calculations, step by step", level=1)
     h.paragraph_format.page_break_before, h.paragraph_format.space_before = True, Pt(0)
     para("“Where” names the file and function in the app's code, so each step can be checked against the source. "
          "The same equations, with their terms and references, are in the app's Methods sheet and in docs/METHODS.md.")
@@ -1080,18 +1381,24 @@ def build_docx(figs, commit):
     table(["Step", "Rule or equation", "Inputs → output", "Where"], AREA_CALC, [1.35, 3.0, 1.55, 1.1])
     doc.add_heading("Model files (data sheet)", level=2)
     table(["Step", "Rule or equation", "Inputs → output", "Where"], MODEL_CALC, [1.35, 3.0, 1.55, 1.1])
+    doc.add_heading("Soil maps (Figure 7)", level=2)
+    table(["Step", "Rule or equation", "Inputs → output", "Where"], SOILMAP_CALC, [1.35, 3.0, 1.55, 1.1])
+    doc.add_heading("Basins (Figure 8)", level=2)
+    table(["Step", "Rule or equation", "Inputs → output", "Where"], BASIN_CALC, [1.35, 3.0, 1.55, 1.1])
+    doc.add_heading("Soil moisture (Figure 9)", level=2)
+    table(["Step", "Rule or equation", "Inputs → output", "Where"], MOISTURE_CALC, [1.35, 3.0, 1.55, 1.1])
 
-    doc.add_heading("11. Data sources", level=1)
+    doc.add_heading("14. Data sources", level=1)
     table(["Data", "Producer", "How the app reads it", "Resolution", "If it fails"], SOURCES, [1.6, 1.45, 1.45, 1.2, 1.3],
           size=8.5)
 
-    doc.add_heading("12. Where each number on screen comes from", level=1)
+    doc.add_heading("15. Where each number on screen comes from", level=1)
     table(["Result on screen", "Calculation", "Data behind it"], RESULTS, [2.0, 2.2, 2.8])
 
-    doc.add_heading("13. Fallbacks, limits and checks", level=1)
+    doc.add_heading("16. Fallbacks, limits and checks", level=1)
     lead_list(LIMITS, "List Bullet")
 
-    doc.add_heading("14. Code map", level=1)
+    doc.add_heading("17. Code map", level=1)
     end = table(["File", "What it does"], CODE, [1.9, 5.1])
     end.paragraph_format.space_after = Pt(0)  # Word needs a paragraph after the last table; keep it 1 pt tall
     mark = OxmlElement("w:rPr")
@@ -1115,4 +1422,5 @@ if __name__ == "__main__":
 
     commit = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"], capture_output=True,
                             text=True).stdout.strip() or "unknown"
-    build_docx([fig_overview(), fig_wind(), fig_soil(), fig_area(), fig_models(), fig_drought()], commit)
+    build_docx([fig_overview(), fig_wind(), fig_soil(), fig_area(), fig_models(), fig_drought(), fig_soilmaps(),
+                fig_basins(), fig_moisture()], commit)

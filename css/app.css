@@ -1051,3 +1051,27 @@ details.more li { margin: 3px 0; }
 .sm-h { margin: 12px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
 table.grid.sm-table td.l { white-space: normal; min-width: 120px; }
 table.grid.sm-table td small { color: var(--muted); }
+
+/* ---------- basins: runoff and soil loss (js/basins.js) ---------- */
+/* the key to the catchments drawn on the map: runoff classes, sinks, the point's catchment and those upstream */
+.bs-leg { display: flex; flex-wrap: wrap; gap: 3px 10px; margin: 8px 0 2px; font-size: 11px; color: var(--ink-2); }
+.bs-leg span { display: inline-flex; align-items: center; gap: 4px; }
+.bs-leg i { display: inline-block; width: 14px; height: 10px; border: 1px solid rgba(0, 0, 0, .25); border-radius: 2px; }
+.bs-leg i.sink { background: #d9d9d9; border: 1px dashed #4d4d4d; }
+.bs-leg i.here { background: transparent; border: 2px solid #d7301f; }
+.bs-leg i.up { background: transparent; border: 2px solid #e6550d; }
+.bs-sw { display: inline-block; width: 10px; height: 10px; margin-right: 6px; border-radius: 2px; vertical-align: -1px; border: 1px solid rgba(0, 0, 0, .2); }
+
+/* ---------- soil moisture by depth (js/soilmoisture.js) ---------- */
+/* the tab's small line charts: one line a depth, a hover column a day (its title is the tooltip), and their key */
+.smm-chart { display: block; width: 100%; height: auto; margin: 8px 0 2px; }
+.smm-chart .hv rect:hover { fill: rgba(28, 36, 32, .07); }
+.smm-key { display: flex; flex-wrap: wrap; gap: 3px 12px; margin: 2px 0 8px; font-size: 11px; color: var(--ink-2); }
+.smm-key span { display: inline-flex; align-items: center; gap: 5px; }
+.smm-key i { display: inline-block; width: 16px; border-top: 2px solid; }
+.smm-key i.d { border-top-style: dashed; }
+/* the SMAP maps' day, under the legend's title */
+.smm-ctl input[type="date"] { height: 28px; min-width: 0; border: 1px solid var(--line); border-radius: 7px; padding: 0 6px; font: inherit; font-size: 12px; font-weight: 500; background: var(--surface); color: var(--ink); }
+.smm-latest { height: 28px; border: 1px solid var(--line); border-radius: 7px; padding: 0 8px; font: inherit; font-size: 12px; font-weight: 600; background: var(--surface); color: var(--accent-2); cursor: pointer; white-space: nowrap; }
+.smm-latest:disabled { color: var(--muted); cursor: default; }
+.legend.min .smm-ctl-box { display: none; }

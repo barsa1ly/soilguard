@@ -335,6 +335,8 @@ WG.soilmaps = (function () {
   const SOURCES = `Each part comes from its own source and says what it measures: <b>survey</b> values describe the soil mapped here (not a test of a field); <b>model</b> values are predictions; <b>total</b> elements include what is locked in minerals (not plant-available); <b>lab</b> values were measured on samples at a pedon, often decades ago.`;
   const NO_MAP = `<div class="card">${head("What no free map gives", "")}<p class="fine" style="margin-top:0">There is no free US map of <b>soil-test (plant-available)</b> nitrogen (nitrate), phosphorus (Bray, Olsen or Mehlich-3), potassium, calcium, magnesium or sulfur, nor of DTPA zinc, iron, manganese or copper; and <b>boron</b> has no free US data at all (neither DS-801 nor the soil lab's pedons near most points). The soil survey's phosphorus columns are almost all empty. For a field's fertility, a current soil test is the only source; the totals and lab pedons here are context, not a recommendation.</p></div>`;
 
+  // more parts of the tab from other files (js/basins.js, js/soilmoisture.js): {key, wait, render(el, live, lat, lon)}, each in its own box
+  const PARTS = [];
   Wx.RENDER.soilmaps = async (el, live) => {
     const { lat, lon } = WG.state.site, at = id => (live() ? el.querySelector(`#${id}`) : null);
     tables = {};
@@ -345,6 +347,7 @@ WG.soilmaps = (function () {
       <div id="smN">${Wx.wait("SoilGrids' total nitrogen")}</div>
       <div id="smUsgs">${Wx.wait("the nearest USGS soil geochemistry sites")}</div>
       <div id="smKssl">${Wx.wait("the nearest NRCS lab pedons (KSSL)")}</div>
+      ${PARTS.map(p => `<div id="smPart-${p.key}">${Wx.wait(p.wait)}</div>`).join("")}
       ${NO_MAP}`;
     const fail = (id, what) => e => { console.warn(id, e); const x = at(id); if (x) x.innerHTML = Wx.failed(what, e); };
     const D = (a, b) => UN.range("depth", a, b);
@@ -451,10 +454,11 @@ WG.soilmaps = (function () {
         <p class="fine">Measured at the USDA-NRCS Kellogg Soil Survey Laboratory on each pedon's surface layer (public domain, through Soil Data Access): K, Ca, Mg and Na exchangeable by ammonium acetate at pH 7 (1 cmol(+)/kg K = 391 mg/kg; Ca 200; Mg 122), P by the Bray-1, Olsen or Mehlich-3 extraction where run, total N and S by combustion. <b>Caveats:</b> pedons are sparse and often old (the year is the sampling date), sampled to describe the soil series rather than a field's fertility; blank cells were not measured. *Ammonium acetate dissolves carbonates, so Ca reads high in calcareous soils (CaCO₃ 1% or more, or pH 7.8 or more).</p></div>`;
     }, fail("smKssl", "the NRCS soil lab's pedons"));
 
-    await Promise.allSettled([pSurvey, pUsfs, pN, pUsgs, pKssl]);
+    const pParts = PARTS.map(p => Promise.resolve().then(() => { const x = at(`smPart-${p.key}`); return x && p.render(x, live, lat, lon); }).catch(fail(`smPart-${p.key}`, p.wait)));
+    await Promise.allSettled([pSurvey, pUsfs, pN, pUsgs, pKssl, ...pParts]);
   };
 
-  return { init(h) { hooks = h; }, pick, layers: LAYERS, legendOf, choose, tables: () => tables, chemLegend,
+  return { init(h) { hooks = h; }, pick, layers: LAYERS, legendOf, choose, tables: () => tables, chemLegend, addPart: p => PARTS.push(p), sda, km, head, grid, th, r1, showBtn,
     // classes and the depth-weighting the tab uses, and each source at any point (plain async functions of lat, lon)
     PH, CEC, OM, reaction, salinity, sodicity, over, layerOf, surveyAt, usfsSamples, sgNAt, usgsNearAt, ksslAt, DS_COL, DEPTHS, SGD, ELS };
 })();
