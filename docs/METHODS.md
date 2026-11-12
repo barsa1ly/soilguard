@@ -577,6 +577,8 @@ While the theme is on and the point is unchanged, the map also shows:
   - L = (λ / 22.13)^m, with m = 0.2 (s < 1%), 0.3 (1–3.5%), 0.4 (3.5–5%) or 0.5 (≥ 5%).
 - **K × LS** is formed for each component and then averaged with the component weights (map-unit area × comppct). The card states how much of the HU12's area each factor covers.
 - **C:** the NLCD classes' mid-literature values, area-weighted over the land: 21 0.005; 22 0.003; 23 0.001; 24 0; 31 0.45; 41–43 0.003; 52 0.025; 71 0.03; 81 0.035; 90 and 95 0.003. Cropland (82) takes the user's C, 0.24 by default.
+  - *The C box* takes a value above 0 and at most 1: C = soil lost under the crop and its tillage ÷ soil lost from tilled bare fallow, so 1 = bare tilled soil and 0.24 = 76% less. Next to it are rough typical ranges (conventional-till row crops about 0.2–0.5, conservation or mulch tillage about 0.1–0.25, no-till about 0.02–0.15, small grain about 0.05–0.2, hay or meadow under about 0.02; a field's own C depends on its rotation, yields and residue, and NRCS RUSLE2 gives it). Under the box: "C 0.24: 76% less than bare tilled soil".
+  - A value outside 0–1 (0, 1.5, 100) is refused: the box is marked invalid, a note says why, and the last valid C is kept.
 - **P: the support practice, chosen in a list and applied to cropland (NLCD 82) only; other land takes P = 1.** It is worked out for each soil component from its slope s and USLE slope length λ (× 3.2808 = ft):
   - *None* (up and down the slope): P = 1.
   - *Contour farming* (AH 537, Table 13): Pc by slope class, with the longest slope it holds for:
@@ -600,7 +602,8 @@ While the theme is on and the point is unchanged, the map also shows:
     - Pt credits the soil that settles in the terrace channels.
     - The app keeps the survey's slope length rather than cutting it to the spacing, so A with terraces is on the high side.
     - AH 537's own Table 15 for terraced fields goes by slope only; the spacing values are not from it.
-  - *Your own P:* 0–1.
+  - *Your own P:* above 0 and at most 1 (P = soil lost with the practice ÷ soil lost farming up and down the slope: 1 = no saving, 0.85 = 15% less, 0.5 = half). A value outside that (0, 1.5, 100) is refused with a note, and the last valid P is kept.
+  - The list shows each practice with its P range and its P over this HU12's soils (weighted by K × LS, as A takes it) and the share of soil loss it saves, e.g. "Contour farming · P 0.5–0.9 by slope · here P 0.55, 45% less soil loss".
   - RUSLE proper works P out from ridge height, storm erosivity and furrow grade; these are the classic table values.
 - **A over the HU12:** A = R × [⟨K·LS⟩ × (C − a82 C82) + ⟨K·LS·P⟩ × a82 C82].
   - ⟨ ⟩ is the component-weighted mean; a82 is cropland's share of the land; C82 is cropland's C.
@@ -664,7 +667,7 @@ The storm's return period, cropland's C and the support practice (with your own 
 
 ## 13. Soil moisture by depth (Soil maps theme, Soil moisture tab)
 
-Code: `js/soilmoisture.js`. The station list comes from `tools/build_moisture.py`. All values are volumetric, m³/m³ (volume of water per volume of soil; 0.25 = 25% by volume). Every source is free, answers a browser and needs no key.
+Code: `js/soilmoisture.js`. The station list comes from `tools/build_moisture.py`. All values are volumetric, m³/m³ (volume of water per volume of soil; 0.25 = 25% by volume). The Today card and the Overview tile also give the value as % water by volume and, for comparison, the dominant soil's surface wilting point (15 bar) and field capacity (⅓ bar) from the soil survey already read (no request of its own); before the survey is in, a rough guide (under 0.10 dry, 0.20–0.35 moist, 0.40–0.50 near saturation; clays hold more). Every source is free, answers a browser and needs no key.
 
 **Map layers.**
 
