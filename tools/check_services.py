@@ -225,7 +225,6 @@ def checks():
           json_list, headers={"Accept-Language": "en"}),
         C("Esri World Imagery (base map)", "one tile", "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/6/26/14", ctype("image/"), cors=False),
         C("USGS National Map (base map)", "one tile", "https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/6/26/14", ctype("image/"), cors=False),
-        C("OpenStreetMap tiles (base map)", "one tile", "https://tile.openstreetmap.org/6/14/26.png", ctype("image/png"), cors=False),
     ]
 
 

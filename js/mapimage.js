@@ -1,13 +1,15 @@
-/* The map as an image (PNG), from the map tools' button; js/app.js loads this file the first time it is used.
+/* The map as an image, from the map tools' button; js/app.js loads this file the first time it is used. The button
+   opens the save dialog (js/downloads.js), with a preview drawn here once, its footer's texts to edit there, and the
+   size, resolution and format (PNG, JPEG, TIFF) chosen there; the file is drawn here again at that size.
    The map pane is drawn onto a canvas at its size on the screen, in the order the browser paints it: the base map's
    tiles, the overlays (each at its opacity, a layer's tiles faded together as on the screen), the reference lines and
    names, the outline and cover of the chosen states, the vector layers (watersheds, catchments, stations, a drawn
    field) and the pins. Under it a footer, laid out in the page off the screen and drawn the same way: the legend on
    show with its choices as text, the app's name, the place, when the image was made, a scale bar and the data
-   credits. A picture from another server can go into an image only when that server allows it (a CORS header): each
-   is asked for again in that mode, and a layer whose server does not allow it is left out and named in the footer and
-   the message. No library: the few kinds of things the map holds (pictures, canvases, SVG, boxes and text) are drawn
-   here. */
+   credits, each of which can be changed or left out in the dialog. A picture from another server can go into an image
+   only when that server allows it (a CORS header): each is asked for again in that mode, and a layer whose server does
+   not allow it is left out and named in the footer and the message. No library: the few kinds of things the map holds
+   (pictures, canvases, SVG, boxes and text) are drawn here. */
 (function () {
   const U = WG.util, { esc } = U;
   const NS = "http://www.w3.org/2000/svg";
@@ -308,25 +310,37 @@
     while (busy() && Date.now() < end) { waited = true; await nap(200); }
     if (waited) await nap(250);
   }
-  /* o.shown: () => [{ name, layer }], the layers on show by the app's names. Resolves to { blob, name, miss, width, height }. */
-  async function make(o = {}) {
+  /* The map drawn once for the save dialog's preview, its footer built, and what makes the file later: the map drawn
+     again at the scale chosen (its pictures, already copied, drawn sharper only where they are vector: the outlines and
+     pins) with the footer as edited in the dialog under it. o.shown: () => [{ name, layer }], the layers on show by the
+     app's names. Resolves to the dialog's job (js/downloads.js openSave). */
+  async function prepare(o = {}) {
     const map = WG.map, el = map.getContainer();
     await settle(map);
     try { await document.fonts.ready; } catch (e) { /* no font loading API */ }
     const box0 = el.getBoundingClientRect(), W = Math.round(box0.width), H = Math.round(box0.height);
     if (W < 20 || H < 20) throw new Error("the map is not on the screen");
-    const phone = window.matchMedia("(max-width: 767px)").matches;
-    // a phone's image at twice its CSS pixels, for sharp text and lines; at most about 16 million pixels in all (some phones' canvas limit)
-    const k = Math.min(phone ? 2 : Math.min(2, Math.max(1, window.devicePixelRatio || 1)), Math.sqrt(16e6 / (W * (H + 420))));
+    // at most about 16 million pixels on a phone (some phones' canvas limit), 40 million elsewhere
+    const phone = window.matchMedia("(max-width: 767px)").matches, maxPx = phone ? 16e6 : 40e6;
+    // the preview's map at the screen's sharpness: twice its CSS pixels on a phone, for sharp text and lines
+    const kp = Math.min(phone ? 2 : Math.min(2, Math.max(1, window.devicePixelRatio || 1)), Math.sqrt(maxPx / (W * (H + 420))));
     const copy = copier(), miss = new Set(), nameOf = namer(map, o.shown ? o.shown() : []);
     const mp = map.getPane("mapPane"), skip = new Set([map.getPane("tooltipPane"), map.getPane("popupPane")].filter(Boolean));
     const inView = i => { const r = i.getBoundingClientRect(); return r.right > box0.left && r.left < box0.right && r.bottom > box0.top && r.top < box0.bottom; };
     // every picture asked for at once, before the drawing waits on each in turn
     mp.querySelectorAll("img").forEach(i => { if (i.complete && i.naturalWidth && ![...skip].some(p => p.contains(i)) && inView(i)) copy(i); });
-    const mg = surface(W, H, k);
-    mg.fillStyle = getComputedStyle(el).backgroundColor || "#ffffff";
-    mg.fillRect(0, 0, W, H);
-    await paint(mg, mp, 1, { ox: box0.left, oy: box0.top, W, H, k, copy, miss, nameOf, skip });
+    // the map at k pixels per CSS pixel, from where it is on the page now (a phone's panel may have moved it)
+    const drawMap = async k => {
+      const b = el.getBoundingClientRect(), g = surface(W, H, k);
+      g.fillStyle = getComputedStyle(el).backgroundColor || "#ffffff";
+      g.fillRect(0, 0, W, H);
+      await paint(g, mp, 1, { ox: b.left, oy: b.top, W, H, k, copy, miss, nameOf, skip });
+      return g.canvas;
+    };
+    const pv = await drawMap(kp), c0 = map.getCenter(), z0 = map.getZoom();
+    // the map as it was drawn for the preview: not when the page moved or resized it since (a panel opening as it loads)
+    const same = () => { const b = el.getBoundingClientRect(); return Math.abs(b.width - W) < 1 && Math.abs(b.height - H) < 1 && map.getZoom() === z0 && map.getCenter().equals(c0); };
+    let moved = false;
 
     // the footer's facts
     const st = WG.state || {}, site = st.site, recs = WG.region ? WG.region.recs() : [], app = (WG.config && WG.config.name) || "Map";
@@ -350,34 +364,66 @@
       const imgs = [...host.querySelectorAll("img")];
       await Promise.all(imgs.map(loaded));
       imgs.forEach(i => { if (!i.naturalWidth) i.replaceWith(keyNote(KEY_GONE)); });
-      const f = host.firstElementChild, fr = f.getBoundingClientRect(), FH = Math.ceil(fr.height);
-      const g = surface(W, H + FH, k);
-      g.save(); g.setTransform(1, 0, 0, 1, 0, 0); g.drawImage(mg.canvas, 0, 0); g.restore();
-      g.translate(0, H);
-      await paint(g, f, 1, { ox: fr.left, oy: fr.top, W, H: FH, k, copy, miss: new Set(), nameOf: () => "the legend's colour key", skip: null });
-      const slug = (site ? (st.place ? st.place.split(",")[0] : `${site.lat.toFixed(4)}_${site.lon.toFixed(4)}`) : recs.length === 1 ? recs[0].name : `${recs.length}-states`)
-        .toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "map";
-      const name = `${app.toLowerCase().replace(/[^a-z0-9]+/g, "")}-map-${slug}-${made.slice(0, 10)}.png`;
-      const blob = await new Promise((res, rej) => {
-        try { g.canvas.toBlob(b => (b ? res(b) : rej(new Error("the browser could not make the PNG (the map may be too large)"))), "image/png"); }
-        catch (e) { rej(new Error(`the browser would not copy a picture into it (${e.name})`)); }
-      });
-      return { blob, name, miss: [...miss], width: g.canvas.width, height: g.canvas.height };
     } finally { host.remove(); }
+    const f0 = host.firstElementChild;
+    const slug = (site ? (st.place ? st.place.split(",")[0] : `${site.lat.toFixed(4)}_${site.lon.toFixed(4)}`) : recs.length === 1 ? recs[0].name : `${recs.length}-states`)
+      .toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "map";
+    const stem = `${app.toLowerCase().replace(/[^a-z0-9]+/g, "")}-map-${slug}-${made.slice(0, 10)}`;
+
+    /* the file: the map at k (the preview's own drawing when the same k, or when the map is no longer as it was then) and
+       under it the footer f, laid out off the screen at the map's width and drawn the same way */
+    async function compose(k, f) {
+      moved = !same();
+      const m = Math.abs(k - kp) < 1e-3 || moved ? pv : await drawMap(k), h = document.createElement("div");
+      h.className = "mi-host"; h.style.width = `${W}px`;
+      h.appendChild(f);
+      document.body.appendChild(h);
+      try {
+        const imgs = [...h.querySelectorAll("img")];
+        await Promise.all(imgs.map(loaded));
+        const fr = f.getBoundingClientRect(), FH = Math.ceil(fr.height), g = surface(W, H + FH, k);
+        g.save(); g.setTransform(1, 0, 0, 1, 0, 0); g.drawImage(m, 0, 0, Math.round(W * k), Math.round(H * k)); g.restore();
+        g.translate(0, H);
+        await paint(g, f, 1, { ox: fr.left, oy: fr.top, W, H: FH, k, copy, miss: new Set(), nameOf: () => "the legend's colour key", skip: null });
+        return g.canvas;
+      } finally { h.remove(); if (m !== pv) m.width = 0; }
+    }
+    const left = [...miss];
+    return { kind: "map", head: "Save the map as an image", W, H, kp, pv, maxPx, miss: left, compose,
+      foot: () => f0.cloneNode(true), name: ext => `${stem}.${ext}`,
+      // said when the file is saved
+      get note() {
+        return (moved ? " The map moved on the screen while this was open, so its picture is the preview's, at the screen's sharpness." : "")
+          + (left.length ? ` Not in this image: ${left.join("; ")}. ${missWhy(left)}` : "");
+      },
+      release: () => { pv.width = 0; } }; // its memory let go when the dialog closes
   }
 
+  /* the map button (js/app.js): the map drawn, then the save dialog for its size, resolution, format and texts */
   let busy = false;
   async function save(o) {
     if (busy) return null;
     busy = true;
-    U.toast("Making the map image…", 30000);
+    U.toast("Making the map's preview…", 30000);
     try {
-      const r = await make(o);
-      U.download(r.name, r.blob, "image/png");
-      U.toast(`Saved ${r.name}.${r.miss.length ? ` Not in this image: ${r.miss.join("; ")}. ${missWhy(r.miss)}` : ""}`, r.miss.length ? 9000 : 4000);
-      return r;
+      const j = await prepare(o), t = document.getElementById("toast");
+      if (t) t.hidden = true;
+      WG.downloads.openSave(j, document.getElementById("saveMapBtn"));
+      return j;
     } finally { busy = false; }
   }
+  /* the image straight away, as on screen with its footer as built: { blob (PNG), name, miss, width, height } */
+  async function make(o = {}) {
+    const j = await prepare(o);
+    try {
+      const c = await j.compose(j.kp, j.foot());
+      const blob = await new Promise((res, rej) => {
+        try { c.toBlob(b => (b ? res(b) : rej(new Error("the browser could not make the PNG (the map may be too large)"))), "image/png"); }
+        catch (e) { rej(new Error(`the browser would not copy a picture into it (${e.name})`)); }
+      });
+      return { blob, name: j.name("png"), miss: j.miss, width: c.width, height: c.height };
+    } finally { j.release(); }
+  }
 
-  WG.mapimage = { save, make };
+  WG.mapimage = { save, make, prepare };
 })();

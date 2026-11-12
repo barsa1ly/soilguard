@@ -780,7 +780,7 @@ SOURCES = [
      "the map unit's county with the most acres"),
     ("Practice profiles", "each state's NRCS Field Office Technical Guide (+ extension pages for a few states)",
      "data/practices/XX.json, loaded with the Practices tab", "state, by region", "Texas: rules built into practices.js"),
-    ("Base maps; county lines", "Esri, USGS, OpenStreetMap; U.S. Census TIGER (county lines)", "map tiles; TIGERweb map "
+    ("Base maps; county lines", "Esri, USGS; U.S. Census TIGER (county lines)", "map tiles; TIGERweb map "
      "service drawn per tile", "—", "switch base map"),
     ("Daily weather for model files (data sheet)", "University of Idaho gridMET; PRISM (Oregon State University); NASA POWER; or your own daily file",
      "THREDDS OPeNDAP, 9 variables (direct); PRISM's rain and temperature through ACIS GridData (NOAA RCC), the rest from gridMET; POWER daily API (direct); your CSV, text or Excel file read in the browser",

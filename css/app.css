@@ -227,13 +227,15 @@ svg { display: block; }
 .legend h5 button { border: 0; background: none; color: var(--muted); padding: 0; font-size: 12px; }
 .legend .row { display: flex; align-items: center; gap: 8px; margin: 3px 0; }
 .legend .sw { width: 16px; height: 12px; border-radius: 3px; flex: none; border: 1px solid rgba(0, 0, 0, .1); }
-.legend.min .rows, .legend.min .lnote, .legend.min .lc-body { display: none; }
+.legend.min .rows, .legend.min .lnote { display: none; }
 .legend .lc { margin-top: 8px; padding-top: 6px; border-top: 1px solid rgba(0, 0, 0, .12); }
 .legend .lc:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
 .legend .lc small { font-weight: 400; color: #69716a; }
-.legend .lc-what { margin: 0 0 4px; font-weight: 600; }
-.legend .lc-n { flex: 1; }
-.legend .lc-p { font-variant-numeric: tabular-nums; font-weight: 600; }
+/* the land cover's colour key (js/landcover.js): two columns of small rows, so its 16 classes stay short */
+.legend .lc-key { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 10px; font-size: 11px; line-height: 1.25; }
+.legend .lc-key .row { gap: 5px; margin: 2px 0; align-items: flex-start; }
+.legend .lc-key .sw { width: 12px; height: 10px; margin-top: 1px; }
+.legend .lc-go { font-size: 11px; text-align: left; }
 .legend .lnote { color: var(--muted); margin: 6px 0 0; font-size: 11px; line-height: 1.35; }
 /* a wide screen: the legend keeps below the theme bar (and the past-date bar under it), scrolling inside when it is longer
    (the land cover's curve numbers, open, run past the screen), its title and hide button held at its top */
@@ -1117,17 +1119,10 @@ table.grid.sm-table small.bs-mean { display: block; font-weight: 400; white-spac
 .leaflet-tooltip.sm-pin-tip { font-size: 12px; line-height: 1.35; padding: 5px 8px; width: max-content; max-width: 220px; white-space: normal; }
 .sm-pin-btn { font-size: inherit; text-align: left; }
 
-/* the land cover legend's curve numbers (js/landcover.js): shut until tapped, a compact table */
-.legend .lc-cn { margin-top: 6px; }
-.legend .lc-cn summary { cursor: pointer; color: var(--accent-2); font-weight: 600; font-size: 11.5px; }
-.legend .lc-cnt { width: 100%; border-collapse: collapse; margin-top: 4px; font-size: 11px; font-variant-numeric: tabular-nums; }
-.legend .lc-cnt th { font-weight: 600; text-align: center; color: var(--ink-2); padding: 2px 3px; border-bottom: 1px solid rgba(0, 0, 0, .12); }
-.legend .lc-cnt th:first-child { text-align: left; }
-.legend .lc-cnt td { text-align: center; padding: 2px 3px; border-bottom: 1px solid rgba(0, 0, 0, .05); }
-.legend .lc-cnt td:first-child { text-align: left; display: flex; align-items: flex-start; gap: 5px; }
-.legend .lc-cnt td:first-child .sw { width: 10px; height: 10px; margin-top: 2px; }
-.legend .lc-cnt td small { display: block; color: var(--muted); font-size: 10px; line-height: 1.25; }
-.legend.min .lc-cn { display: none; }
+/* the Land cover card of Soil maps › Soil (js/landcover.js): each class with its colour, its TR-55 cover under its name */
+.lc-card .lc-what { margin: 0 0 8px; font-weight: 600; color: var(--ink-2); }
+.lc-card .lc-sw { display: inline-block; width: 11px; height: 11px; margin-right: 6px; border-radius: 2px; vertical-align: -1px; border: 1px solid rgba(0, 0, 0, .2); }
+.lc-card table.grid.sm-table td.l small { display: block; margin-left: 17px; font-size: 11px; line-height: 1.25; }
 
 /* ---------- soil moisture by depth (js/soilmoisture.js) ---------- */
 /* the Soil moisture tab (Wx.RENDER.soilmoist): the period's rows of checkboxes (depths, sources, sensors), each depth's
@@ -1223,3 +1218,47 @@ table.grid.sm-table small.bs-mean { display: block; font-weight: 400; white-spac
 .mi-scale { display: flex; flex-direction: column; align-items: flex-start; margin: 3px 0 2px; font-size: 10.5px; line-height: 1.2; color: var(--ink-2); }
 .mi-scale span { border: 2px solid #4b524d; border-top: 0; padding: 1px 4px 0; white-space: nowrap; }
 .mi-scale span + span { border-top: 2px solid #4b524d; border-bottom: 0; margin-top: -2px; }
+
+/* save dialog */
+/* ---------- the save dialog (js/downloads.js): a chart, the wind rose or the map as a file; its preview's texts are changed in place ---------- */
+.sheet.sv { left: 12px; right: 12px; margin: 0 auto; width: min(1040px, calc(100% - 24px)); }
+.sv-body { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 14px 18px; align-items: start; }
+.sv-main { min-width: 0; }
+.sv-bar { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin: 2px 0 8px; }
+.sv-bar .fine { margin: 0; }
+.sv-zoom { flex: none; flex-wrap: nowrap; gap: 4px; }
+.sv-zoom button { padding: 4px 10px; font-size: 12px; }
+/* the file on a grey ground, scrolling when it is larger than the box (the gutter kept, so fitting it does not change its width) */
+.sv-pv { position: relative; overflow: auto; scrollbar-gutter: stable; max-height: min(62vh, 640px); padding: 10px; border-radius: 10px; background: #e7e5de; overscroll-behavior: contain; }
+.sv-pv:focus { outline: none; }
+.sv-pv:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+.sv-pv.off .sv-stage { opacity: .45; }
+.sv-stage { position: relative; margin: 0 auto; background: #fff; box-shadow: 0 1px 4px rgba(28, 36, 32, .25); }
+.sv-stage > .sv-art { display: block; }
+.sv-map { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+/* the footer's legend is not the map's: the rules that hide that one (on a phone under the results) do not apply */
+#svStage .mi-foot .legend { display: block; }
+/* a chart's text box: over the drawn text in its font, its letters showing only while typed in */
+.sv-ed { position: absolute; z-index: 1; white-space: pre; text-align: center; color: transparent; caret-color: var(--ink); min-width: .5em; border-radius: 2px; cursor: text; outline: none; transform-origin: 50% 50%; }
+.sv-ed:focus { color: var(--ink); background: rgba(255, 255, 255, .94); box-shadow: 0 0 0 1.5px var(--accent); }
+/* a text of the map's footer: the footer itself, so only an outline (no box that would move its lines) */
+.sv-in { cursor: text; border-radius: 2px; outline: none; }
+.sv-in:focus { box-shadow: 0 0 0 1.5px var(--accent); background: rgba(246, 230, 220, .5); }
+.sv-ed:hover, .sv-in:hover { box-shadow: 0 0 0 1px rgba(180, 83, 42, .65); }
+.sv-x { position: absolute; z-index: 3; width: 22px; height: 22px; margin: -11px 0 0; padding: 0; border: 0; border-radius: 50%; background: var(--ink); color: #fff; font-size: 15px; line-height: 22px; text-align: center; box-shadow: 0 1px 3px rgba(0, 0, 0, .3); cursor: pointer; }
+.sv-x:hover { background: var(--accent); }
+.sv-gone { margin: 8px 0 0; font-size: 12px; color: var(--muted); line-height: 2; }
+.sv-gone button { margin: 0 0 0 6px; padding: 2px 9px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--ink-2); font-size: 12px; font-weight: 500; line-height: 1.4; }
+.sv-gone button:hover, .sv-gone button:focus-visible { border-color: var(--accent); color: var(--accent-2); }
+.sv-side .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 0; }
+.sv-side .form-grid label[hidden] { display: none; }
+.sv-foot { flex: none; display: flex; justify-content: flex-end; gap: 8px; padding: 10px 18px 14px; border-top: 1px solid var(--line); }
+@media (max-width: 767px) {
+  .sheet.sv { left: 0; right: 0; margin: 0; width: 100%; max-height: 94%; }
+  .sv-body { grid-template-columns: minmax(0, 1fr); padding: 0 14px 14px; }
+  .sv-bar .fine { font-size: 11.5px; }
+  .sv-pv { max-height: 50vh; padding: 8px; }
+  .sv-x { width: 30px; height: 30px; margin: -15px 0 0; line-height: 30px; font-size: 18px; }
+  .sv-foot { padding: 8px 14px max(12px, env(safe-area-inset-bottom)); }
+  .sv-foot .btn { flex: 1; }
+}

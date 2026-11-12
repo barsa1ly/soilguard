@@ -1,14 +1,14 @@
-/* Land cover legend: when the NLCD 2021 overlay is on, the map legend lists its classes (official colours) with each class's
-   share of the area: of your boundary (area tool) when one is drawn or uploaded, else of the chosen state(s). State shares
-   are pre-built (tools/build_landcover.py: MRLC WCS 2.0.1, class counts inside each state's outline, in km2, to
+/* Land cover (NLCD 2021). With the overlay on, the map legend gives its classes' official colours, and a link to the Land
+   cover card of Soil maps › Soil. That card gives each class's share of the area, in % and km2: of your boundary (area
+   tool) when one is drawn or uploaded, else of the states on the map; with each class's runoff curve numbers (NRCS TR-55
+   Table 2-2, hydrologic soil groups A-D, js/basins.js's table, where the page has it) and its CSV. State shares are
+   pre-built (tools/build_landcover.py: MRLC WCS 2.0.1, class counts inside each state's outline, in km2, to
    data/states/landcover.json). A boundary is counted live from the same WCS: its box as an uncompressed GeoTIFF in EPSG:5070
    (Albers equal area, so every cell has the same area), at 30 m, or coarser (nearest neighbour, class codes kept) when that
    would pass about 4 million cells; the boundary is rasterised on that grid by cell centre. Kept per boundary for the visit.
-   Under the shares, a block to open gives each listed class's runoff curve numbers (NRCS TR-55 Table 2-2, hydrologic soil
-   groups A-D, js/basins.js's table, where the page has it), and the CSV has them too. classAt gives one point's class,
-   from the same WCS. */
+   classAt gives one point's class, from the same WCS. */
 WG.landcover = (function () {
-  const { esc, fetchJSON, download } = WG.util;
+  const { esc, fmt, fetchJSON } = WG.util;
   const V = ((document.querySelector('script[src*="data/states.js"]') || {}).src || "").split("v=")[1] || "1";
   const WCS = "https://www.mrlc.gov/geoserver/mrlc_download/NLCD_2021_Land_Cover_L48/wcs";
   const MAX_CELLS = 3.6e6;
@@ -17,7 +17,6 @@ WG.landcover = (function () {
     [23, "Developed, medium intensity", "#eb0000"], [24, "Developed, high intensity", "#ab0000"], [31, "Barren land", "#b3ac9f"], [41, "Deciduous forest", "#68ab5f"],
     [42, "Evergreen forest", "#1c5f2c"], [43, "Mixed forest", "#b5c58f"], [52, "Shrub/scrub", "#ccb879"], [71, "Grassland/herbaceous", "#dfdfc2"],
     [81, "Pasture/hay", "#dcd939"], [82, "Cultivated crops", "#ab6c28"], [90, "Woody wetlands", "#b8d9eb"], [95, "Emergent herbaceous wetlands", "#6c9fb8"]];
-  let redraw = () => {};
 
   /* ---------- EPSG:5070 (NAD83 / Conus Albers), forward only ---------- */
   const A = 6378137, E2 = 0.00669438002290, E = Math.sqrt(E2), R = Math.PI / 180;
@@ -131,70 +130,75 @@ WG.landcover = (function () {
     return p;
   }
 
-  /* ---------- the legend ---------- */
-  let model = null; // what the table shows now, for the CSV
-  let cnOpen = false; // the curve-number block, open or shut, kept as the legend is drawn again
-  const cnOf = () => (WG.basins && WG.basins.CN ? WG.basins : null); // TR-55 by NLCD class: { CN: code -> [A, B, C, D], CN_AS: code -> cover }
-  const cur = () => (WG.area && WG.area.boundary && WG.area.boundary()) || null;
-  function draw(el, min, toggle) {
-    const b = cur(), recs = WG.region ? WG.region.recs() : [];
-    const key = b ? "b" : recs.map(r => r.code).join(",");
+  /* ---------- the map legend: the classes' colours, and the way to their shares ----------
+     Added under the theme's legend (app.js renderLegend); alone, it has its own hide button. Its link opens Soil maps › Soil
+     at the Land cover card (app.js); a saved map image leaves the link out, as it does every button (js/mapimage.js). */
+  function legend(el, min, toggle) {
+    const old = el.querySelector(".lc"), host = document.createElement("div"), alone = !el.querySelector("#legendMin");
+    if (old) old.remove();
     el.hidden = false;
     el.classList.toggle("min", min);
-    let host = el.querySelector(".lc");
-    if (!host) { host = document.createElement("div"); host.className = "lc"; el.appendChild(host); }
-    host.dataset.key = key;
-    const head = sub => `<h5><span>Land cover <small>NLCD 2021</small></span>${el.querySelector("#legendMin") ? "" : `<button class="lcMin">${min ? "show" : "hide"}</button>`}</h5>${sub}`;
-    const set = (sub, body) => {
-      host.innerHTML = `${head(sub)}<div class="lc-body">${body}</div>`;
-      const t = host.querySelector(".lcMin"), c = host.querySelector(".lcCsv");
-      if (t) t.onclick = toggle;
-      if (c) c.onclick = ev => { ev.preventDefault(); csv(); };
-    };
+    host.className = "lc";
+    host.innerHTML = `<h5><span>Land cover <small>NLCD 2021</small></span>${alone ? `<button class="lcMin">${min ? "show" : "hide"}</button>` : ""}</h5>
+      <div class="rows lc-key">${CLASSES.map(c => `<div class="row"><i class="sw" style="background:${c[2]}"></i><span>${esc(c[1])}</span></div>`).join("")}</div>
+      <p class="lnote"><button class="link lc-go" data-lc-go>Shares and curve numbers: Soil maps › Soil</button></p>`;
+    el.appendChild(host);
+    if (alone) host.querySelector(".lcMin").onclick = toggle;
+  }
+
+  /* ---------- the Land cover card of Soil maps › Soil ----------
+     Each class's share of your boundary when one is drawn or uploaded, else of the states on the map, with its curve
+     numbers; drawn again when the boundary or the states change. Its table is the tab's "landcover" (js/soilmaps.js): the
+     card's CSV, and part of the tab's file of all its tables. */
+  const cnOf = () => (WG.basins && WG.basins.CN ? WG.basins : null); // TR-55 by NLCD class: { CN: code -> [A, B, C, D], CN_AS: code -> cover }
+  const cur = () => (WG.area && WG.area.boundary && WG.area.boundary()) || null;
+  const HSG_TIP = { A: "Hydrologic soil group A: deep sand or gravel, least runoff", B: "B: loams", C: "C: finer soils or a slowly permeable layer", D: "D: clays, shallow or wet soils, most runoff" };
+  const km2Txt = v => fmt(v, v >= 100 ? 0 : v >= 10 ? 1 : v >= 1 ? 2 : 3);
+  let box = null, cseq = 0; // the card's box while the Soil tab holds it, and the drawing that counts (a later one wins)
+  function card(el) { box = el || null; drawCard(); }
+  function drawCard() {
+    if (box && !box.isConnected) box = null;
+    const el = box, SM = WG.soilmaps;
+    if (!el || !SM) return;
+    const my = ++cseq, live = () => my === cseq && el === box, b = cur(), recs = WG.region ? WG.region.recs() : [];
+    const put = (csv, what, body) => { if (live()) el.innerHTML = `<div class="card lc-card">${SM.head("Land cover", csv, "NLCD 2021")}${what ? `<p class="fine lc-what">${what}</p>` : ""}${body}</div>`; };
+    const onMap = `<button class="link" data-sm-lc>Show the land cover on the map</button>`;
+    const how = b ? "Your boundary, from the area tool: clear it there for the states on the map." : "For a field or any area of your own, draw or upload its boundary with the area tool (in the map tools): this card then counts it.";
     const paint = (res, what, src, note) => {
-      const tot = res.km2.reduce((s, v) => s + v, 0) || 1;
-      model = { rows: CLASSES.map((c, i) => [c[0], c[1], 100 * res.km2[i] / tot, res.km2[i]]), what, src };
-      const rows = model.rows.filter(r => r[2] >= 0.05), T = cnOf();
-      // the classes' curve numbers: a compact table under the shares, open on a tap, so the legend stays short on a phone
-      const cn = T ? `<details class="lc-cn"${cnOpen ? " open" : ""}><summary>Runoff curve numbers (TR-55)</summary><table class="lc-cnt"><thead><tr><th>Land cover <small>treated as</small></th><th title="Hydrologic soil group A: deep sand or gravel, least runoff">A</th><th title="B: loams">B</th><th title="C: finer soils or a slowly permeable layer">C</th><th title="D: clays, shallow or wet soils, most runoff">D</th></tr></thead><tbody>${rows.map(r => {
-        const c = CLASSES.find(x => x[0] === r[0]), v = T.CN[r[0]];
-        return `<tr><td><i class="sw" style="background:${c[2]}"></i><span>${esc(c[1])}<small>${esc(v ? T.CN_AS[r[0]] : "no curve number")}</small></span></td>${v ? v.map(n => `<td>${n}</td>`).join("") : `<td colspan="4">—</td>`}</tr>`;
-      }).join("")}</tbody></table><p class="lnote">NRCS TR-55 (1986) Table 2-2, average wetness before a storm (AMC II): the higher, the more of the rain runs off. A–D: the hydrologic soil groups, deep sands (A, least runoff) to clays and shallow or wet soils (D). Each class as the TR-55 cover under its name; wetlands 78 (assumed: not in TR-55). The Basin tab gives a storm's runoff at the point and in its watershed.</p></details>` : "";
-      set(`<p class="lc-what">% of ${esc(what)}</p>`, `<div class="rows">${rows.map(r => {
-        const c = CLASSES.find(x => x[0] === r[0]);
-        return `<div class="row"><i class="sw" style="background:${c[2]}"></i><span class="lc-n">${esc(c[1])}</span><b class="lc-p">${r[2].toFixed(1)}%</b></div>`;
-      }).join("")}</div>${cn}<p class="lnote">${esc(src)}${note ? ` ${esc(note)}` : ""} Classes under 0.05% are not listed. <a href="#" class="lcCsv">CSV</a></p>`);
-      const d = host.querySelector(".lc-cn");
-      if (d) d.addEventListener("toggle", () => { cnOpen = d.open; });
+      if (!live()) return;
+      const tot = res.km2.reduce((s, v) => s + v, 0) || 1, T = cnOf(), HSG = ["A", "B", "C", "D"];
+      const all = CLASSES.map((c, i) => ({ code: c[0], name: c[1], color: c[2], pct: (100 * res.km2[i]) / tot, km2: res.km2[i], cn: T && T.CN[c[0]], as: T && T.CN_AS[c[0]] }));
+      SM.tables().landcover = { title: `Land cover of ${what} (NLCD 2021${T ? "; TR-55 Table 2-2 curve numbers" : ""})`,
+        header: ["NLCD code", "NLCD class", "Share (%)", "Area (km2)", ...(T ? ["TR-55 cover type", "CN A", "CN B", "CN C", "CN D"] : []), "Area counted", "Source"],
+        rows: all.map(r => [r.code, r.name, +r.pct.toFixed(2), +r.km2.toFixed(3), ...(T ? [r.as || "no curve number (water or ice)", ...(r.cn || ["", "", "", ""])] : []), what, src]) };
+      const cols = [SM.th("Land cover", T ? "as TR-55 cover" : ""), SM.th("Share", "%"), SM.th("Area", "km²"), ...(T ? HSG.map(g => `<span title="${HSG_TIP[g]}">CN ${g}</span>`) : [])];
+      const rows = all.filter(r => r.pct >= 0.05).map(r => [`<i class="lc-sw" style="background:${r.color}"></i>${esc(r.name)}${T ? `<small>${esc(r.as || "no curve number")}</small>` : ""}`,
+        fmt(r.pct, 1), km2Txt(r.km2), ...(T ? (r.cn ? r.cn.map(String) : ["—", "—", "—", "—"]) : [])]);
+      put("landcover", `% of ${esc(what)}`, `${SM.grid(cols, rows)}
+        <p class="fine">${esc(src)}${note ? ` ${esc(note)}` : ""} Classes under 0.05% are not listed (the CSV has them all). ${esc(how)} ${onMap}.</p>
+        ${T ? `<p class="fine">Curve numbers: NRCS TR-55 (1986) Table 2-2, for average wetness before a storm (AMC II): the higher, the more of the rain runs off. A–D: the hydrologic soil groups, from deep sands (A, least runoff) to clays and shallow or wet soils (D). Each class is taken as the TR-55 cover under its name; wetlands 78 (assumed: not in TR-55). The Basin tab gives a storm's runoff at the point and in its watershed.</p>` : ""}`);
     };
-    const none = () => set("", `<p class="lnote">Land-cover shares are not available.</p>`);
+    const none = e => put("", "", `<p class="fine">Land-cover shares are not available${e && e.message ? ` (${esc(e.message)})` : ""}. ${onMap}.</p>`);
     const states = () => stateData().then(d => {
       const have = recs.filter(r => d.states[r.code]);
-      if (!have.length) throw new Error("no state shares");
+      if (!have.length) throw new Error("no shares for the states on the map");
       const km2 = CLASSES.map((_, i) => have.reduce((s, r) => s + d.states[r.code].km2[i], 0)), res = have.map(r => d.states[r.code].res);
       const nm = have.length === 1 ? have[0].name : have.length >= 48 ? "the 48 contiguous states and DC" : `the ${have.length} chosen states, combined`;
       const rr = Math.min(...res) === Math.max(...res) ? `${res[0]} m` : `${Math.min(...res)}–${Math.max(...res)} m`;
       return [{ km2 }, nm, `NLCD 2021 Land Cover (MRLC), counted inside each state's outline in ${rr} cells (equal area), pre-built.`];
     });
     if (b) {
-      set(`<p class="lc-what">% of your boundary</p>`, `<p class="lnote">reading land cover…</p>`);
-      const mine = b.polys, same = () => host.dataset.key === "b" && cur() && cur().polys === mine;
-      boundaryShares(mine).then(res => { if (same()) paint(res, "your boundary", `NLCD 2021 Land Cover (MRLC WCS), ${res.res} m cells (equal area), ${res.cells.toLocaleString("en-US")} inside the boundary.`); },
-        () => { if (same()) states().then(([res, nm, src]) => paint(res, nm, src, "Your boundary could not be read from MRLC, so this is the state."), none); });
+      const mine = `your boundary${b.name ? ` (${b.name})` : ""}`;
+      put("", `% of ${esc(mine)}`, `<p class="fine">Reading the land cover inside your boundary from MRLC…</p>`);
+      boundaryShares(b.polys).then(res => paint(res, mine, `NLCD 2021 Land Cover (MRLC WCS), ${res.res} m cells (equal area), ${res.cells.toLocaleString("en-US")} inside the boundary.`),
+        () => states().then(([res, nm, src]) => paint(res, nm, src, "Your boundary could not be read from MRLC, so these are the states on the map."), none));
     } else if (!recs.length) none();
     else {
-      set(`<p class="lc-what">% of ${esc(recs.length === 1 ? recs[0].name : "the chosen states")}</p>`, `<p class="lnote">reading land cover…</p>`);
-      states().then(([res, nm, src]) => { if (host.dataset.key === key) paint(res, nm, src); }, none);
+      put("", `% of ${esc(recs.length === 1 ? recs[0].name : "the chosen states")}`, `<p class="fine">Reading the land cover…</p>`);
+      states().then(([res, nm, src]) => paint(res, nm, src), none);
     }
   }
-  function csv() {
-    if (!model) return;
-    const q = s => `"${String(s).replace(/"/g, '""')}"`;
-    const T = cnOf(), cn = c => (T && T.CN[c] ? [q(T.CN_AS[c]), ...T.CN[c]] : ["", "", "", "", ""]);
-    download("land_cover_shares.csv", [`class_code,class_name,percent,area_km2,area,source${T ? ",tr55_cover_type,cn_a,cn_b,cn_c,cn_d" : ""}`,
-      ...model.rows.map(r => [r[0], q(r[1]), r[2].toFixed(2), r[3].toFixed(2), q(model.what), q(model.src), ...(T ? cn(r[0]) : [])].join(","))].join("\n"), "text/csv");
-  }
-  // a boundary drawn, uploaded or cleared: the legend follows (app.js draws it only while the layer is on)
-  document.addEventListener("wg-boundary", () => redraw());
-  return { draw, CLASSES, albers, readTiff, count, boundaryShares, classAt, init: o => { redraw = o.render; } };
+  // a boundary drawn, uploaded or cleared (js/area.js), or other states on the map (app.js): the card counts them
+  ["wg-boundary", "wg-states"].forEach(ev => document.addEventListener(ev, drawCard));
+  return { legend, card, CLASSES, albers, readTiff, count, boundaryShares, classAt };
 })();

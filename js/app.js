@@ -93,9 +93,6 @@
     usgsimg: { name: "USGS imagery + topo", thumb: "#56604a",
       layer: L.tileLayer(usgs("USGSImageryTopo"), { maxZoom: 19, maxNativeZoom: 16, attribution: "USGS The National Map" }),
       labels: false },
-    streets: { name: "Streets", thumb: "#e9e5dc",
-      layer: L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap contributors" }),
-      labels: false },
     topo: { name: "Topographic", thumb: "#dfe3cf",
       layer: L.tileLayer(usgs("USGSTopo"), { maxZoom: 19, maxNativeZoom: 16, attribution: "USGS The National Map" }),
       labels: false },
@@ -309,6 +306,7 @@
     $("#regionBtn").title = `States on the map: ${all ? "the 48 contiguous states and DC" : recs.map(r => r.name).join(", ")}`;
     $("#hintWhere").textContent = `Tap anywhere in ${regionName()}`;
     renderLegend();
+    document.dispatchEvent(new Event("wg-states")); // the Soil tab's Land cover card counts the new states (js/landcover.js)
     try { localStorage.setItem("fg.states", statesQ(codes)); } catch (e) { /* storage off */ }
     if (state.site && !stateAt(state.site.lat, state.site.lon)) $("#closePanelBtn").click(); // the location's state was taken off
     if (state.site) { try { history.replaceState(null, "", `?lat=${state.site.lat.toFixed(5)}&lon=${state.site.lon.toFixed(5)}${windQ()}${UN.query()}${KEEP_Q}`); } catch (e) { /* file:// */ } }
@@ -463,6 +461,9 @@
     const item = groups[group][key], show = showItem;
     item.on = on;
     show(item, on);
+    // a switch from elsewhere (the Soil tab's tile, the Basin tab, the legend's link) ticks or unticks the sheet's box too, so the next tap there does the opposite
+    const cb = $(`#layerSheet input[data-group="${group}"][data-key="${key}"]`);
+    if (cb) cb.checked = on;
     if (group === "themes") choice.erosion = on ? key : null;
     if (group === "live") choice[state.theme] = on ? key : null;
     const set = group === "themes" ? themes : group === "live" ? live[state.theme] : null;
@@ -539,16 +540,21 @@
     return { unit: m.unit, labels, note: m.note };
   }
   let legendMin = window.matchMedia("(max-width: 767px)").matches;
-  /* with the NLCD overlay on, its legend and area shares (js/landcover.js) are added under whatever legend the theme has */
+  /* with the NLCD overlay on, its colour key (js/landcover.js) is added under whatever legend the theme has */
+  const lcKey = () => { if (soilLayers.nlcd.on && WG.landcover) WG.landcover.legend($("#legend"), legendMin, () => { legendMin = !legendMin; renderLegend(); }); };
   function renderLegend() {
     drawBaseLegend();
-    if (soilLayers.nlcd.on && WG.landcover) WG.landcover.draw($("#legend"), legendMin, () => { legendMin = !legendMin; renderLegend(); });
+    lcKey();
   }
+  /* a layer's legend drawn again by its own file (a depth or a day chosen, its colour scale read: js/soilmaps.js,
+     js/soilmoisture.js, js/weather.js) fills the whole box: the land cover key goes back under it while that overlay is on */
+  new MutationObserver(() => { if (!$("#legend .lc")) lcKey(); }).observe($("#legend"), { childList: true });
   function drawBaseLegend() {
     const entry = Object.entries(themes).find(([, t]) => t.on), el = $("#legend");
     const lv = state.theme !== "erosion" && Object.values(live[state.theme] || {}).find(t => t.on);
     if (lv) return (lv.drawLegend || WG.weather.legend)(el, lv, legendMin, () => { legendMin = !legendMin; renderLegend(); }); // a layer may draw its own (the soil maps add their choices)
-    if (!entry) { el.hidden = true; return; }
+    // no layer of the theme on: the box is emptied too, so the land cover key (or the next legend) is not added to the last one's
+    if (!entry) { el.innerHTML = ""; el.hidden = true; return; }
     const [key, { meta: m }] = entry, L = legendText(key, m);
     el.hidden = false;
     el.classList.toggle("min", legendMin);
@@ -578,11 +584,29 @@
     if (set && set[k] && !set[k].on) setToggle("live", k, true);
   }
   WG.timemap.init(map, { setLive, renderLegend });
-  if (WG.landcover) WG.landcover.init({ render: () => soilLayers.nlcd.on && renderLegend() });
   /* the Soil maps theme's tabs: their "show on the map" links, the dominant soil drawn into the Soil tab, a phone's results
-     lowered so a place shown on the map can be seen, and the land cover layer turned on from the Basin tab */
+     lowered so a place shown on the map can be seen, and the land cover overlay switched from the Soil tab's tile and the
+     Basin tab: the same overlay as the layer sheet's (so never a second one), with the theme's own map taken off (liveOff)
+     where the land cover takes its place */
   if (WG.soilmaps) WG.soilmaps.init({ setLive, renderLegend, profile: () => renderSoilDetail(), lower: () => { if (phone() && state.site) setLayout("peek"); },
-    landCover: () => { if (!soilLayers.nlcd.on) setToggle("soilLayers", "nlcd", true); if (phone() && state.site) setLayout("peek"); } });
+    lcLayer: soilLayers.nlcd.layer, landCover: on => { if (soilLayers.nlcd.on !== on) setToggle("soilLayers", "nlcd", on); },
+    liveOff: key => { const it = (live[state.theme] || {})[key]; if (it && it.on) setToggle("live", key, false); } });
+  /* the land cover key's link: Soil maps › Soil, scrolled to its Land cover card. The land cover stays the map there (the
+     theme's own map is not put over it). The tab is a place's: without one, it says so. */
+  $("#legend").addEventListener("click", e => {
+    if (!e.target.closest("[data-lc-go]")) return;
+    if (!state.site) { U.toast("Tap a place on the map, then open Soil maps › Soil: its Land cover card gives each class's share and curve numbers.", 6000); return; }
+    const big = app.classList.contains("map-big");
+    if (state.theme !== "soilmaps") { choice.soilmaps = null; setTheme("soilmaps", "soilmaps"); } else showTab("soilmaps");
+    if (big) raisePanel();
+    // once lowered results have opened to their size (a .35 s transition): measured earlier, the card's place is wrong
+    setTimeout(() => {
+      const c = $("#smLc .card"), pb = $("#panelBody");
+      if (!c || $("#tab-soilmaps").hidden) return;
+      pb.scrollTo({ top: Math.max(0, c.getBoundingClientRect().top - pb.getBoundingClientRect().top + pb.scrollTop - 8), behavior: "smooth" });
+      c.classList.remove("so-flash"); void c.offsetWidth; c.classList.add("so-flash");
+    }, big ? 450 : 0);
+  });
   setTheme(state.theme); // the theme in the link, or wind erosion: its overlay, legend, hint and tabs
 
   /* ============ SEARCH / COORDINATES ============ */

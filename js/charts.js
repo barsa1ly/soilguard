@@ -160,8 +160,9 @@ WG.charts = (function () {
 
   /* SVG wind rose: erosive winds by direction (where wind comes FROM), stacked by speed above threshold.
      Fonts and colours are attributes so the SVG also stands alone as a downloaded file. 300 units wide and, unless
-     the legend under the S label needs more than two rows, 300 tall. */
-  function roseSVG(a) {
+     the legend under the S label needs more than two rows, 300 tall. lab: the legend's labels as typed in the save
+     dialog, by item (0-2 the speed bins, 3 the arrow; null leaves the item out); each label carries its item's data-k. */
+  function roseSVG(a, lab) {
     const size = 300, cx = 150, cy = 135, R = 112;
     const tot = a.rose.map(r => r.bins.reduce((x, y) => x + y, 0));
     const max = Math.max(...tot, 0.01);
@@ -208,10 +209,11 @@ WG.charts = (function () {
     // legend: keys sized from their text, in centred rows that wrap at the width; its top is 6 below the S label
     const F = 9.5, GAP = 12, LINE = 13, y0 = cy + R + 18 + 15, u = W.sym("wind");
     const items = [`${wlab(thr)}–${wlab(thr + 2)}`, `${wlab(thr + 2)}–${wlab(thr + 4)}`, `> ${wlab(thr + 4)}`]
-      .map((b, i) => ({ text: `${b} ${u}`, dx: 14, key: `<rect x="0" y="-9" width="10" height="10" rx="2" fill="${cols[i]}"/>` }));
-    if (arrow) items.push({ text: "resultant soil-transport direction", dx: 22, key: `<line x1="0" y1="-3" x2="18" y2="-3" stroke="#1c2420" stroke-width="2.5" stroke-dasharray="4 3"/>` });
+      .map((b, i) => ({ n: i, text: `${b} ${u}`, dx: 14, key: `<rect x="0" y="-9" width="10" height="10" rx="2" fill="${cols[i]}"/>` }));
+    if (arrow) items.push({ n: 3, text: "resultant soil-transport direction", dx: 22, key: `<line x1="0" y1="-3" x2="18" y2="-3" stroke="#1c2420" stroke-width="2.5" stroke-dasharray="4 3"/>` });
     const rows = [];
-    items.forEach(it => {
+    items.filter(it => !lab || lab[it.n] !== null).forEach(it => {
+      if (lab && typeof lab[it.n] === "string") it.text = lab[it.n];
       it.w = it.dx + textWidth(it.text, F);
       const row = rows[rows.length - 1];
       if (row && row.w + GAP + it.w <= size - 12) { row.items.push(it); row.w += GAP + it.w; } else rows.push({ items: [it], w: it.w });
@@ -219,7 +221,7 @@ WG.charts = (function () {
     s += `<g font-size="${F}" fill="#39423c">`;
     rows.forEach((row, r) => {
       let x = (size - row.w) / 2;
-      row.items.forEach(it => { s += `<g transform="translate(${x.toFixed(1)},${y0 + r * LINE})">${it.key}<text x="${it.dx}" y="0">${esc(it.text)}</text></g>`; x += it.w + GAP; });
+      row.items.forEach(it => { s += `<g transform="translate(${x.toFixed(1)},${y0 + r * LINE})">${it.key}<text x="${it.dx}" y="0" data-k="legend:${it.n}">${esc(it.text)}</text></g>`; x += it.w + GAP; });
     });
     s += `</g>`;
     const H = Math.max(size, y0 + (rows.length - 1) * LINE + 7); // 7: descenders and a margin
@@ -267,8 +269,9 @@ WG.charts = (function () {
   }
 
   /* Draw chart `id` again on `canvas` at w x h CSS pixels and pixel ratio `ratio`, on white, without animation.
-     fontPx overrides the base font size; title/subtitle are added above the plot. Returns the Chart (destroy it). */
-  function render(id, canvas, { w, h, ratio, fontPx, title, subtitle }) {
+     fontPx overrides the base font size; title/subtitle are added above the plot; edit(cfg) changes the configuration
+     last (the save dialog's typed texts). Returns the Chart (destroy it). */
+  function render(id, canvas, { w, h, ratio, fontPx, title, subtitle, edit }) {
     if (!builders[id] || !window.Chart) return null;
     const cfg = builders[id]();
     const o = cfg.options = cfg.options || {};
@@ -277,6 +280,7 @@ WG.charts = (function () {
       title: { display: !!title, text: title || "", color: C.ink, font: { size: Math.round((fontPx || 11) * 1.25), weight: "600" }, padding: { top: 2, bottom: subtitle ? 2 : 10 } },
       subtitle: { display: !!subtitle, text: subtitle || "", color: C.muted, font: { size: Math.round((fontPx || 11) * 0.95) }, padding: { bottom: 10 } } };
     cfg.plugins = [...(cfg.plugins || []), { id: "whiteBg", beforeDraw: c => { const x = c.ctx; x.save(); x.globalCompositeOperation = "destination-over"; x.fillStyle = "#fff"; x.fillRect(0, 0, c.width, c.height); x.restore(); } }];
+    if (edit) edit(cfg);
     // a detached canvas: Chart.js takes its width/height as the display size and multiplies by the pixel ratio itself.
     // It keeps whole display pixels and floors their product, so the file is then set to the exact size asked for
     canvas.width = Math.round(w); canvas.height = Math.round(h);

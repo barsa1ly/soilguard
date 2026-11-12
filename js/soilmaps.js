@@ -4,7 +4,8 @@
    geochemistry WMS from Data Series 801, one element at a time) and total nitrogen (the ISRIC SoilGrids WMS, a model).
    The panel's tabs: Overview (the soil at a glance, a tile per source), Soil (the dominant soil and its horizons, drawn
    with js/app.js's profile from the survey read for the wind erosion, then the survey's chemistry by depth through Soil
-   Data Access, the Forest Service values, SoilGrids' total N, the nearest USGS sites and NRCS lab pedons (KSSL), each
+   Data Access, the land cover of the states on the map or of your boundary (js/landcover.js's card, whose tile joins the
+   soil maps' row), the Forest Service values, SoilGrids' total N, the nearest USGS sites and NRCS lab pedons (KSSL), each
    labelled for what it measures) and Basin (js/basins.js's parts); Moisture is js/soilmoisture.js's. No map covers the
    US for soil-test (plant-available) N, P, K, Ca, Mg or S, nor for boron: the Soil tab says so. Loaded after weather.js,
    whose THEMES, layers and RENDER it joins, and before app.js, which builds the theme bar, the layer sheet and the
@@ -192,9 +193,9 @@ WG.soilmaps = (function () {
   const ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8c2.2-1.5 4.3-1.5 6.5 0s4.3 1.5 6.5 0 3.6-1.2 5-.5M3 13h18M3 18h18"/><path d="M7 15.5h.01M12.5 15.5h.01M17 15.5h.01M9.5 20.5h.01M15 20.5h.01"/></svg>`;
   // second in the theme bar and the layer sheet, right after wind erosion: both list THEMES in order
   Wx.THEMES.splice(Wx.THEMES.findIndex(t => t.key === "erosion") + 1, 0, { key: "soilmaps", name: "Soil maps", short: "Soil", icon: ICON, layersTitle: "Soil maps",
-    title: "Soil maps: pH, salinity, sodicity, CEC, organic matter, and total nutrients and nitrogen",
+    title: "Soil maps: pH, salinity, sodicity, CEC, organic matter, total nutrients and nitrogen, and land cover",
     hint: "to see the soil's chemistry by depth: pH, salinity, sodicity, CEC and organic matter from the soil survey, total nutrients from USGS sites, and nutrients measured at nearby NRCS lab pedons.",
-    note: "Soil survey maps (pH, CEC and organic matter at 30 m; salinity and sodicity at 800 m), USGS total elements and SoilGrids total nitrogen. The panel shows Overview (the soil, its water and its moisture at a glance), Soil (the dominant soil, its horizons and chemistry by depth, classification and site, the 30 m values, nearby USGS sites and NRCS lab pedons), Basin (the watershed, design-storm runoff and soil loss) and Moisture (soil moisture by depth).",
+    note: "Soil survey maps (pH, CEC and organic matter at 30 m; salinity and sodicity at 800 m), USGS total elements and SoilGrids total nitrogen. The panel shows Overview (the soil, its water and its moisture at a glance), Soil (the dominant soil, its horizons and chemistry by depth, classification and site, the land cover of the states or of your boundary with its curve numbers, the 30 m values, nearby USGS sites and NRCS lab pedons), Basin (the watershed, design-storm runoff and soil loss) and Moisture (soil moisture by depth).",
     layersNote: "Survey and model values describe typical soil, not a soil test. Total elements are not plant-available. No map covers the US for soil-test (plant-available) N, P, K, Ca, Mg or S, or for boron.",
     controls: sheetControls });
   Wx.layers.soilmaps = LAYERS;
@@ -337,8 +338,20 @@ WG.soilmaps = (function () {
   }
 
   /* app.js: setLive(theme, key); profile() draws the dominant soil into the Soil tab's boxes (renderSoilDetail); lower()
-     drops a phone's results to their bar so the map shows; landCover() puts the NLCD layer on the map */
+     drops a phone's results to their bar so the map shows; lcLayer, the land cover overlay (NLCD 2021, the layer sheet's),
+     landCover(on) switches it, and liveOff(key) takes a map of the theme off */
   let hooks = null;
+  /* On these tabs the land cover is one of the maps: a map that colours the whole view takes its place, and it takes theirs
+     (stacked, neither reads); the maps of lines and points are drawn over it. The layer sheet stacks them as asked. */
+  const LINES = new Set(["wbd", "flow", "stations"]);
+  const lcOn = () => !!(hooks && hooks.lcLayer && WG.map && WG.map.hasLayer(hooks.lcLayer));
+  function showLand(lower) {
+    if (!hooks || !hooks.landCover) return;
+    LAYERS.forEach(x => { if (!LINES.has(x.key) && onMap(x)) hooks.liveOff(x.key); });
+    hooks.landCover(true);
+    if (lower && hooks.lower) hooks.lower();
+    syncChips();
+  }
   function showMap(key, d) {
     if (d.depth) pick.depth = +d.depth;
     if (d.el) pick.el = d.el;
@@ -346,6 +359,7 @@ WG.soilmaps = (function () {
     if (d.nd) pick.nd = d.nd;
     apply();
     if (hooks) hooks.setLive("soilmaps", key);
+    if (!LINES.has(key) && lcOn()) hooks.landCover(false);
     redrawLegend();
     syncChips();
   }
@@ -372,29 +386,38 @@ WG.soilmaps = (function () {
     grace: "How wet the root zone is against its own record (percentile), NASA GRACE, weekly.",
     stations: "The soil moisture stations (USDA SCAN and SNOTEL, NOAA USCRN); tap one to pick its place." };
   const onMap = it => !!(WG.map && it && it.layer && WG.map.hasLayer(it.layer));
+  // the land cover's tile, at the end of the soil row: it switches app.js's overlay (pressed while that is on), never a layer of its own
+  const LC_ABOUT = "Land cover, NLCD 2021 (MRLC), 30 m: Soil › Land cover gives each class's share and curve numbers.";
+  const lcTile = () => `<button type="button" data-sm-lc class="${lcOn() ? "on" : ""}" aria-pressed="${lcOn()}" title="Land cover (NLCD 2021): MRLC, 30 m"><b>Land cover</b><small>NLCD 2021 · 30 m</small></button>`;
   // which: the groups to give, of "chem", "water" and "wet" (the Overview gives all; each tab its own)
   function chips(which) {
-    const wet = new Set(WG.soilmoisture ? WG.soilmoisture.layers.map(x => x.key) : []);
-    const G = { chem: ["Soil chemistry", x => OWN.has(x.key)], water: ["Water: basins", x => !OWN.has(x.key) && !wet.has(x.key)], wet: ["Soil moisture", x => wet.has(x.key)] };
-    return (which || ["chem", "water", "wet"]).filter(k => G[k]).map(k => [k, ...G[k]]).map(([k, g, f]) => { const list = LAYERS.filter(f); return list.length ? `<div class="sm-chips"><span class="sm-chips-k">${esc(g)}</span><div class="sm-maptabs" role="group" aria-label="${esc(g)} maps">${list.map(x =>
-      `<button type="button" data-sm-show="${x.key}" data-sm-chip class="${onMap(x) ? "on" : ""}" aria-pressed="${onMap(x)}" title="${esc(x.name)}${x.sub ? `: ${esc(x.sub)}` : ""}"><b>${esc(SHORT[x.key] || x.name.split(/[:,(]/)[0].trim())}</b>${TILE[x.key] ? `<small>${esc(TILE[x.key])}</small>` : ""}</button>`).join("")}</div><p class="sm-chip-note" data-sm-note="${k}">${esc(chipNote(list))}</p></div>` : ""; }).join("");
+    const wet = new Set(WG.soilmoisture ? WG.soilmoisture.layers.map(x => x.key) : []), lc = !!(hooks && hooks.lcLayer);
+    const G = { chem: [lc ? "Soil and land" : "Soil chemistry", x => OWN.has(x.key)], water: ["Water: basins", x => !OWN.has(x.key) && !wet.has(x.key)], wet: ["Soil moisture", x => wet.has(x.key)] };
+    return (which || ["chem", "water", "wet"]).filter(k => G[k]).map(k => [k, ...G[k]]).map(([k, g, f]) => { const list = LAYERS.filter(f), withLc = lc && k === "chem"; return list.length ? `<div class="sm-chips"><span class="sm-chips-k">${esc(g)}</span><div class="sm-maptabs" role="group" aria-label="${esc(g)} maps">${list.map(x =>
+      `<button type="button" data-sm-show="${x.key}" data-sm-chip class="${onMap(x) ? "on" : ""}" aria-pressed="${onMap(x)}" title="${esc(x.name)}${x.sub ? `: ${esc(x.sub)}` : ""}"><b>${esc(SHORT[x.key] || x.name.split(/[:,(]/)[0].trim())}</b>${TILE[x.key] ? `<small>${esc(TILE[x.key])}</small>` : ""}</button>`).join("")}${withLc ? lcTile() : ""}</div><p class="sm-chip-note" data-sm-note="${k}">${esc(chipNote(list, withLc))}</p></div>` : ""; }).join("");
   }
   // the one line under a row: what the map on show is (its name and source), or how to get one
-  function chipNote(list) { const x = list.find(onMap); return x ? ABOUT[x.key] || `${x.name}${x.sub ? `: ${x.sub}` : ""}.` : "Tap a map to show it on the map; its legend opens at the side."; }
+  function chipNote(list, lc) {
+    const x = list.find(onMap), t = [x && (ABOUT[x.key] || `${x.name}${x.sub ? `: ${x.sub}` : ""}.`), lc && lcOn() && LC_ABOUT].filter(Boolean);
+    return t.length ? t.join(" ") : "Tap a map to show it on the map; its legend opens at the side.";
+  }
   // a card of one group's maps, at the top of its tab
   const mapCard = (k, title) => `<div class="card sm-mapcard">${head(title, "", "")}${chips([k])}</div>`;
   // the pressed chip follows the map, whichever way the layer changed (a chip, a link, the layer sheet, another theme)
   function syncChips() {
     $$("[data-sm-chip]").forEach(b => { const on = onMap(byKey(b.dataset.smShow)); b.classList.toggle("on", on); b.setAttribute("aria-pressed", on); });
-    $$("[data-sm-note]").forEach(p => { const list = [...p.parentNode.querySelectorAll("[data-sm-chip]")].map(b => byKey(b.dataset.smShow)).filter(Boolean); p.textContent = chipNote(list); });
+    $$(".sm-maptabs [data-sm-lc]").forEach(b => { b.classList.toggle("on", lcOn()); b.setAttribute("aria-pressed", lcOn()); });
+    $$("[data-sm-note]").forEach(p => { const list = [...p.parentNode.querySelectorAll("[data-sm-chip]")].map(b => byKey(b.dataset.smShow)).filter(Boolean); p.textContent = chipNote(list, !!p.parentNode.querySelector("[data-sm-lc]")); });
   }
   let chipT = 0;
-  const chipSoon = e => { if (LAYERS.some(x => x.layer === e.layer)) { clearTimeout(chipT); chipT = setTimeout(syncChips, 0); } };
+  const chipSoon = e => { if (LAYERS.some(x => x.layer === e.layer) || (hooks && e.layer === hooks.lcLayer)) { clearTimeout(chipT); chipT = setTimeout(syncChips, 0); } };
   document.addEventListener("click", e => {
     const c = e.target.closest && e.target.closest("[data-sm-csv]");
     if (c) { e.preventDefault(); csv(c.dataset.smCsv); }
     const m = e.target.closest && e.target.closest("[data-sm-show]");
     if (m) { e.preventDefault(); showMap(m.dataset.smShow, m.dataset); }
+    // the land cover tile, and the Land cover card's link (js/landcover.js): the land cover on the map
+    if (e.target.closest && e.target.closest("[data-sm-lc]")) { e.preventDefault(); showLand(false); }
     const p = e.target.closest && e.target.closest("[data-sm-pin]"), q = p && pins.get(p.dataset.smPin);
     if (q) { e.preventDefault(); showOnMap(q.lat, q.lon, q.label, q.sub); }
     // the Horizons card's two views, and its download: the CSV of the view on show (the profile's is app.js's #dlCsv)
@@ -497,13 +520,14 @@ WG.soilmaps = (function () {
     const list = partsOf("soilmaps"), P = !!(hooks && hooks.profile);
     const seg = [["phys", "Physical and water"], ["chem", "Chemistry"]];
     el.innerHTML = `${P ? `<div class="card" id="smSoil"><div class="card-h"><h3>Dominant soil</h3><span class="tag" id="profSrcTag">SSURGO</span></div><div id="profSoil" class="soil-summary"><span class="skeleton"></span></div></div>` : ""}
-      ${mapCard("chem", "Soil chemistry on the map")}
+      ${mapCard("chem", hooks && hooks.lcLayer ? "Soil and land on the map" : "Soil chemistry on the map")}
       <div id="smSurvey">${Wx.wait("the soil survey's chemistry (SSURGO)")}</div>
       <div class="card" id="smHz"><div class="card-h"><h3>Horizons</h3><div class="card-tools"><button class="dl-btn" data-hz-csv title="Download the view on show (CSV)" aria-label="Download the horizons (CSV)">${DL}</button></div></div>
         ${P ? `<div class="seg sm-hzseg" role="group" aria-label="Horizons: what to show">${seg.map(([k, n]) => `<button type="button" data-hzv-btn="${k}">${esc(n)}</button>`).join("")}</div>
         <div data-hzv="phys" id="profHz"><p class="fine"><span class="skeleton" style="width:60%"></span></p><p class="fine">Reading the soil survey…</p></div>` : ""}
         <div data-hzv="chem" id="smHzChem"><p class="fine"><span class="skeleton" style="width:60%"></span></p><p class="fine">Reading the soil survey's chemistry by horizon…</p></div></div>
       ${P ? `<div id="profPh"></div><div id="profMore"></div><p class="source" id="profSource"></p>` : ""}
+      ${WG.landcover ? `<div id="smLc"></div>` : ""}
       <div id="smUsfs">${Wx.wait("the Forest Service's 30 m maps at this cell")}</div>
       <div id="smN">${Wx.wait("SoilGrids' total nitrogen")}</div>
       <div id="smUsgs">${Wx.wait("the nearest USGS soil geochemistry sites")}</div>
@@ -514,6 +538,8 @@ WG.soilmaps = (function () {
       ${allBtn("soilmaps", "all the tables")}`;
     hzView();
     if (P) { try { hooks.profile(); } catch (e) { console.warn("soil profile", e); } }
+    // the land cover of the states on the map or of your boundary, not of the point (js/landcover.js draws it again as they change)
+    if (WG.landcover) WG.landcover.card(at("smLc"));
     const fail = (id, what) => e => { console.warn(id, e); const x = at(id); if (x) x.innerHTML = Wx.failed(what, e); };
     const D = (a, b) => UN.range("depth", a, b);
 
@@ -668,7 +694,7 @@ WG.soilmaps = (function () {
       <div class="card">${head("At a glance", "", "")}<div class="stat-grid so-tiles">${tiles.map(t => `<div class="stat so-tile" id="so-${t[0]}"></div>`).join("")}</div>
         <p class="fine">Survey and model values describe typical soil here, not a test of a field; each tile's source is named on its card.</p></div>
       <div class="card">${head("On the map", "", "")}${chips()}</div>
-      <div class="card cta"><div><h3>The soil in depth</h3><p class="fine">Soil: the dominant soil's horizons, its chemistry by depth, the 30 m maps, total nitrogen, USGS sites and NRCS lab pedons. Basin: the watershed, design-storm runoff and soil loss. Moisture: soil moisture by depth. Each with its tables (CSV).</p></div>
+      <div class="card cta"><div><h3>The soil in depth</h3><p class="fine">Soil: the dominant soil's horizons, its chemistry by depth, the land cover's shares and curve numbers, the 30 m maps, total nitrogen, USGS sites and NRCS lab pedons. Basin: the watershed, design-storm runoff and soil loss. Moisture: soil moisture by depth. Each with its tables (CSV).</p></div>
         <button class="btn primary" data-goto="soilmaps">Open Soil</button></div>`;
     const box = id => (live() ? el.querySelector(`#${id}`) : null);
     let S, N, MS; // each: undefined while read, the value, or an Error
@@ -764,7 +790,7 @@ WG.soilmaps = (function () {
   });
 
   return { init(h) { hooks = h; WG.map.on("layeradd layerremove", chipSoon); }, pick, layers: LAYERS, legendOf, choose, tables: () => tables, chemLegend, addPart: p => PARTS.push(p), sda, km, head, grid, th, r1, showBtn, allBtn,
-    on, chips, mapCard, syncChips, showOnMap, clearPin, landCover: () => hooks && hooks.landCover && hooks.landCover(),
+    on, chips, mapCard, syncChips, showOnMap, clearPin, landCover: (lower = true) => showLand(lower), // the Basin tab's link: the land cover on the map, a phone's results lowered
     // classes and the depth-weighting the tab uses, and each source at any point (plain async functions of lat, lon)
     PH, CEC, OM, reaction, salinity, sodicity, over, layerOf, surveyAt, usfsSamples, sgNAt, usgsNearAt, ksslAt, DS_COL, DEPTHS, SGD, ELS };
 })();

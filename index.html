@@ -364,7 +364,7 @@
       <div class="toggles" id="refToggles"></div>
       <h4>Soils and land cover</h4>
       <div class="toggles" id="soilToggles"></div>
-      <p class="fine">Soil map-unit lines appear at zoom 13+. Statewide overlays fade automatically as you zoom in. Imagery and labels: Esri, USGS The National Map; streets: © OpenStreetMap. Plain: no base map, only the state outlines and the layers on show, a clean map to save with the map tools' image button.</p>
+      <p class="fine">Soil map-unit lines appear at zoom 13+. Statewide overlays fade automatically as you zoom in. Imagery and labels: Esri, USGS The National Map. Plain: no base map, only the state outlines and the layers on show, a clean map to save with the map tools' image button.</p>
     </div>
   </div>
 
@@ -396,31 +396,34 @@
     </div>
   </div>
 
-  <!-- ============ FIGURE DOWNLOAD SHEET ============ -->
-  <div id="figSheet" class="sheet" role="dialog" aria-label="Download figure" hidden>
+  <!-- ============ SAVE DIALOG: a chart, the wind rose or the map as a file, with a preview whose texts are changed in place
+       (js/downloads.js; the map's drawing in js/mapimage.js). The size presets and formats are filled in for each. ============ -->
+  <div id="figSheet" class="sheet sv" role="dialog" aria-modal="true" aria-labelledby="figTitle" hidden>
     <div class="sheet-h"><h3 id="figTitle">Download figure</h3><button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
-    <div class="sheet-body">
-      <div class="form-grid">
-        <label>Format<select id="figFormat"></select></label>
-        <label>Size preset<select id="figPreset">
-          <option value="screen">As on screen</option>
-          <option value="3.5x2.6">Journal, 1 column (3.5 in / 89 mm)</option>
-          <option value="5.5x3.6">Journal, 1.5 column (5.5 in / 140 mm)</option>
-          <option value="7.2x4.2">Journal, 2 columns (7.2 in / 183 mm)</option>
-          <option value="10x5.6">Slide (10 in / 254 mm)</option>
-          <option value="custom">Custom</option>
-        </select></label>
-        <label>Width<input id="figW" type="number" min="0.5" step="0.1"></label>
-        <label>Height<input id="figH" type="number" min="0.5" step="0.1"></label>
-        <label>Size unit<select id="figUnit"><option value="in">inches</option><option value="cm">cm</option><option value="mm">mm</option><option value="px">pixels at the DPI</option></select></label>
-        <label>Resolution (DPI)<select id="figDpi"><option>72</option><option>96</option><option>150</option><option selected>300</option><option>600</option><option>1200</option></select></label>
-        <label>Font size (pt)<input id="figFont" type="number" min="5" max="24" step="0.5" value="8"></label>
-        <label class="check"><input type="checkbox" id="figTitleOn" checked> Title</label>
-        <label class="check"><input type="checkbox" id="figSubOn" checked> Location and period line</label>
+    <div class="sheet-body sv-body">
+      <div class="sv-main">
+        <div class="sv-bar"><p class="fine" id="svHint">Click or tap a text on the preview to change it; empty it, or use its ×, to leave it out.</p>
+          <div class="seg sv-zoom" id="svZoom" role="group" aria-label="Preview size"><button type="button" data-z="fit" class="on" aria-pressed="true">Fit</button><button type="button" data-z="1" aria-pressed="false">Actual size</button></div></div>
+        <div class="sv-pv" id="svPv" tabindex="-1" role="region" aria-label="Preview of the file">
+          <div class="sv-stage" id="svStage"></div>
+          <button type="button" class="sv-x" id="svX" tabindex="-1" aria-label="Leave this text out" title="Leave this text out" hidden>×</button>
+        </div>
+        <p class="sv-gone" id="svGone" hidden></p>
       </div>
-      <p class="fine" id="figInfo"></p>
-      <div class="area-actions"><button class="btn primary" id="figGo">Download</button></div>
+      <div class="sv-side">
+        <div class="form-grid">
+          <label>Format<select id="figFormat"></select></label>
+          <label>Size<select id="figPreset"></select></label>
+          <label>Width<input id="figW" type="number" min="0.5" step="0.1" inputmode="decimal"></label>
+          <label>Height<input id="figH" type="number" min="0.5" step="0.1" inputmode="decimal"></label>
+          <label>Size unit<select id="figUnit"><option value="in">inches</option><option value="cm">cm</option><option value="mm">mm</option><option value="px">pixels at the DPI</option></select></label>
+          <label>Resolution (DPI)<select id="figDpi"><option>72</option><option>96</option><option>150</option><option selected>300</option><option>600</option><option>1200</option></select></label>
+          <label id="figFontBox">Font size (pt)<input id="figFont" type="number" min="5" max="24" step="0.5" value="8"></label>
+        </div>
+        <p class="fine" id="figInfo"></p>
+      </div>
     </div>
+    <div class="sv-foot"><button type="button" class="btn" id="svReset">Reset texts</button><button type="button" class="btn primary" id="figGo">Download</button></div>
   </div>
 
   <!-- ============ AREA GRID SHEET ============ -->
