@@ -324,6 +324,7 @@ body:not(.leaflet-dragging) .leaflet-container.off-tx { cursor: not-allowed; } /
   color: var(--muted);
 }
 .tabs button.active { background: var(--ink); color: #fff; }
+.tabs .short { display: none; } /* a tab's phone label (the phone layout below) */
 .tabs button:not(.active):hover { background: rgba(28, 36, 32, .06); color: var(--ink); }
 
 .panel-body {
@@ -568,7 +569,7 @@ input[type=range] { accent-color: var(--accent); width: 100%; }
 .soil-summary .nm { font-size: 17px; font-weight: 700; }
 .soil-summary .sub { color: var(--muted); font-size: 12.5px; }
 .soil-edit { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-@container (min-width: 560px) { .soil-edit { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
+@container (min-width: 560px) { .soil-edit { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
 .soil-edit label { display: grid; gap: 3px; font-size: 11.5px; color: var(--muted); font-weight: 500; }
 .soil-edit input { height: 38px; border: 1px solid var(--line); border-radius: 9px; padding: 0 8px; font-size: 15px; width: 100%; background: var(--surface-2); font-variant-numeric: tabular-nums; }
 .soil-edit input.edited { border-color: var(--accent); background: var(--accent-soft); }
@@ -579,14 +580,10 @@ input[type=range] { accent-color: var(--accent); width: 100%; }
 .derived b { font-weight: 650; font-variant-numeric: tabular-nums; }
 .derived b.chg { color: var(--accent); }
 
-.expander { display: flex; align-items: center; gap: 12px; width: 100%; border: 0; background: none; text-align: left; padding: 2px 0; }
-.expander small { display: block; color: var(--muted); font-size: 12px; font-weight: 400; }
-.plus { position: relative; width: 30px; height: 30px; flex: none; border-radius: 50%; background: var(--ink); }
-.plus::before, .plus::after { content: ""; position: absolute; left: 50%; top: 50%; width: 12px; height: 2px; background: #fff; transform: translate(-50%, -50%); transition: transform .2s; }
-.plus::after { transform: translate(-50%, -50%) rotate(90deg); }
-.expander[aria-expanded=true] .plus::after { transform: translate(-50%, -50%) rotate(0deg); }
-.profile-detail { margin-top: 14px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; } /* the horizon table scrolls in its own wrap */
-.profile-detail h4 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+/* the Soil profile tab's cards, spaced as the tab's own; the horizon table scrolls in its own wrap */
+.profile-detail { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+.profile-detail:empty { display: none; }
+.profile-detail .export-row { margin-top: 10px; }
 .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
 table.grid { border-collapse: collapse; width: 100%; font-size: 12px; font-variant-numeric: tabular-nums; }
 table.grid th, table.grid td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
@@ -738,6 +735,8 @@ table.weg-table .here { display: inline-block; margin-left: 4px; padding: 0 7px;
   .panel-head { padding: 6px 10px 6px 16px; }
   .tabs { padding: 0 10px 8px; }
   .tabs button { padding: 7px 10px; font-size: 13px; }
+  .tabs .full { display: none; }
+  .tabs .short { display: inline; }
   .panel-body { padding: 12px 10px max(20px, env(safe-area-inset-bottom)); }
   /* z-index: the search's list and the coordinates box drop over the results panel, which is 1001 and comes later */
   .topbar { left: 10px; top: max(10px, env(safe-area-inset-top)); width: calc(100% - 20px); z-index: 1002; }
@@ -975,6 +974,7 @@ table.weg-table .here { display: inline-block; margin-left: 4px; padding: 0 7px;
 /* the DOWNLOAD data for models tab: set apart from the topic tabs, with its arrow, on two lines */
 .tabs button.tab-dl { display: flex; align-items: center; gap: 6px; color: var(--accent-2); border: 1.5px solid var(--accent-soft); background: var(--accent-soft); position: sticky; right: 0; margin-left: auto; box-shadow: -10px 0 8px -2px var(--surface); }
 .tabs button.tab-dl { padding-top: 4px; padding-bottom: 4px; }
+.tabs.at-end button.tab-dl { box-shadow: none; } /* the fade marks tabs scrolled under it: none once the row ends (app.js fitTabRow) */
 .tab-dl-text { display: flex; flex-direction: column; align-items: flex-start; line-height: 1.1; text-align: left; }
 .tab-dl-text b { font-size: 12.5px; font-weight: 800; letter-spacing: .06em; }
 .tab-dl-text small { font-size: 11px; font-weight: 600; white-space: nowrap; }
@@ -1110,7 +1110,8 @@ table.grid.sm-table td small { color: var(--muted); }
 .so-tile .k > span:first-child { min-width: 0; }
 .so-tile .k .tag { flex: none; font-size: 10px; padding: 1px 6px; }
 .so-tile .s b { color: var(--ink-2); font-weight: 600; }
-.so-tile .so-go { margin-top: auto; padding-top: 6px; align-self: flex-start; font-size: 12px; }
+.so-tile .so-links { margin-top: auto; padding-top: 6px; display: flex; flex-wrap: wrap; gap: 2px 12px; } /* Details, and on the pH tile Soil profile */
+.so-tile .so-go { font-size: 12px; }
 .sm-chips { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; margin-top: 8px; }
 .sm-chips-k { font-size: 11.5px; color: var(--muted); font-weight: 600; }
 .sm-chips .seg button { padding: 5px 11px; }

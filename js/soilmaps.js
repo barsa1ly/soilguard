@@ -186,7 +186,7 @@ WG.soilmaps = (function () {
   Wx.THEMES.splice(Wx.THEMES.findIndex(t => t.key === "erosion") + 1, 0, { key: "soilmaps", name: "Soil maps", short: "Soil", icon: ICON, layersTitle: "Soil maps",
     title: "Soil maps: pH, salinity, sodicity, CEC, organic matter, and total nutrients and nitrogen",
     hint: "to see the soil's chemistry by depth: pH, salinity, sodicity, CEC and organic matter from the soil survey, total nutrients from USGS sites, and nutrients measured at nearby NRCS lab pedons.",
-    note: "Soil survey maps (pH, CEC and organic matter at 30 m; salinity and sodicity at 800 m), USGS total elements and SoilGrids total nitrogen. The panel shows Overview (the soil, its water and its moisture at a glance) and Soil maps: the survey's chemistry by depth, the 30 m values, nearby USGS sites and NRCS lab pedons.",
+    note: "Soil survey maps (pH, CEC and organic matter at 30 m; salinity and sodicity at 800 m), USGS total elements and SoilGrids total nitrogen. The panel shows Overview (the soil, its water and its moisture at a glance), Soil maps (the survey's chemistry by depth, the 30 m values, nearby USGS sites and NRCS lab pedons) and Soil profile (the dominant soil's horizons, classification and site parameters).",
     layersNote: "Survey and model values describe typical soil, not a soil test. Total elements are not plant-available. No map covers the US for soil-test (plant-available) N, P, K, Ca, Mg or S, or for boron.",
     controls: sheetControls });
   Wx.layers.soilmaps = LAYERS;
@@ -516,9 +516,11 @@ WG.soilmaps = (function () {
         <button class="btn primary" data-goto="soilmaps">Open Soil maps</button></div>`;
     const box = id => (live() ? el.querySelector(`#${id}`) : null);
     let S, N; // each: undefined while read, the value, or an Error
+    // the Soil profile tab (app.js: the survey's horizons, classification and site parameters), where the page has one
+    const prof = cls => (document.getElementById("tab-soilprofile") ? `<button class="link ${cls}" data-goto="soilprofile">Soil profile →</button>` : "");
     const tile = (id, v, s) => { const x = box(`so-${id}`), t = tiles.find(q => q[0] === id); if (!x || !t) return;
       x.innerHTML = `<span class="k"><span>${esc(t[1])}</span><span class="tag">${esc(t[2])}</span></span>${v === undefined ? `<span class="v"><span class="skeleton" style="width:55%"></span></span><span class="s">${s}</span>`
-        : `<span class="v">${v}</span><span class="s">${s}</span>`}${v === undefined ? "" : `<button class="link so-go" data-goto="soilmaps" data-so-go="${t[3]}">Details →</button>`}`; };
+        : `<span class="v">${v}</span><span class="s">${s}</span>`}${v === undefined ? "" : `<span class="so-links"><button class="link so-go" data-goto="soilmaps" data-so-go="${t[3]}">Details →</button>${id === "ph" ? prof("so-go") : ""}</span>`}`; };
     const bad = e => `Could not read: ${esc(e.message || String(e))}`, u = (v, unit) => `${v}${unit ? ` <small>${esc(unit)}</small>` : ""}`;
     function draw() {
       if (!live()) return;
@@ -536,7 +538,7 @@ WG.soilmaps = (function () {
               ["Salinity, EC", ok(l.ec) ? `${fmt(l.ec, 1)} dS/m` : "—", salinity(l.ec)], ["Sodicity, SAR · ESP", `${fmt(l.sar, 1)} · ${ok(l.esp) ? `${fmt(l.esp, 0)}%` : "—"}`, sodicity(l.ec, l.sar, l.esp)],
               ["Organic matter", ok(l.om) ? `${fmt(l.om, 1)}%` : "—", ok(l.caco3) && l.caco3 > 0 ? `CaCO₃ ${fmt(l.caco3, 0)}%` : ""]])}</div>` : ""}</div>
           <p class="risk-text">${why ? esc(why) : `${esc(S.mu.name)} (${esc(S.mu.sym)} · ${esc(S.mu.area)}). ${esc(SURVEY_NOTE)}`}</p>
-          <div class="risk-links"><button class="link risk-how" data-goto="soilmaps" data-so-go="#smSurvey">Chemistry by depth →</button><button class="link risk-how" data-methods="m-sources">Sources →</button></div>`;
+          <div class="risk-links"><button class="link risk-how" data-goto="soilmaps" data-so-go="#smSurvey">Chemistry by depth →</button>${prof("risk-how")}<button class="link risk-how" data-methods="m-sources">Sources →</button></div>`;
       }
       const sw = "Reading the soil survey…";
       if (S === undefined) ["ph", "salt", "cec"].forEach(k => tile(k, undefined, sw));

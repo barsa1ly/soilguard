@@ -5252,6 +5252,100 @@ z
     </g>
    </g>
    <g id="text_57">
+    <!-- Overview tab: a pH headline -->
+    <g style="fill: #3e4c59" transform="translate(424.08 390.882969) scale(0.095 -0.095)">
+     <use xlink:href="#SegoeUI-32"/>
+     <use xlink:href="#SegoeUI-59" transform="translate(75.390625 0)"/>
+     <use xlink:href="#SegoeUI-48" transform="translate(123.296875 0)"/>
+     <use xlink:href="#SegoeUI-55" transform="translate(175.59375 0)"/>
+     <use xlink:href="#SegoeUI-59" transform="translate(210.359375 0)"/>
+     <use xlink:href="#SegoeUI-4c" transform="translate(258.265625 0)"/>
+     <use xlink:href="#SegoeUI-48" transform="translate(282.484375 0)"/>
+     <use xlink:href="#SegoeUI-5a" transform="translate(334.78125 0)"/>
+     <use xlink:href="#SegoeUI-3" transform="translate(407.046875 0)"/>
+     <use xlink:href="#SegoeUI-57" transform="translate(434.4375 0)"/>
+     <use xlink:href="#SegoeUI-44" transform="translate(468.328125 0)"/>
+     <use xlink:href="#SegoeUI-45" transform="translate(519.203125 0)"/>
+     <use xlink:href="#SegoeUI-1d" transform="translate(578 0)"/>
+     <use xlink:href="#SegoeUI-3" transform="translate(599.6875 0)"/>
+     <use xlink:href="#SegoeUI-44" transform="translate(627.078125 0)"/>
+     <use xlink:href="#SegoeUI-3" transform="translate(677.953125 0)"/>
+     <use xlink:href="#SegoeUI-53" transform="translate(705.34375 0)"/>
+     <use xlink:href="#SegoeUI-2b" transform="translate(764.140625 0)"/>
+     <use xlink:href="#SegoeUI-3" transform="translate(835.140625 0)"/>
+     <use xlink:href="#SegoeUI-4b" transform="translate(862.53125 0)"/>
+     <use xlink:href="#SegoeUI-48" transform="translate(919.125 0)"/>
+     <use xlink:href="#SegoeUI-44" transform="translate(971.421875 0)"/>
+     <use xlink:href="#SegoeUI-47" transform="translate(1022.296875 0)"/>
+     <use xlink:href="#SegoeUI-4f" transform="translate(1081.1875 0)"/>
+     <use xlink:href="#SegoeUI-4c" transform="translate(1105.40625 0)"/>
+     <use xlink:href="#SegoeUI-51" transform="translate(1129.625 0)"/>
+     <use xlink:href="#SegoeUI-48" transform="translate(1186.21875 0)"/>
+    </g>
+   </g>
+   <g id="text_58">
+    <!-- and tiles from the same reads, -->
+    <g style="fill: #3e4c59" transform="translate(424.08 404.663906) scale(0.095 -0.095)">
+     <use xlink:href="#SegoeUI-44"/>
+     <use xlink:href="#SegoeUI-51" transform="translate(50.875 0)"/>
+     <use xlink:href="#SegoeUI-47" transform="translate(107.46875 0)"/>
+     <use xlink:href="#SegoeUI-3" transform="translate(166.359375 0)"/>
+     <use xlink:href="#SegoeUI-57" transform="translate(193.75 0)"/>
+     <use xlink:href="#SegoeUI-4c" transform="translate(227.640625 0)"/>
+     <use xlink:href="#SegoeUI-4f" transform="translate(251.859375 0)"/>
+     <use xlink:href="#SegoeUI-48" transform="translate(276.078125 0)"/>
+     <use xlink:href="#SegoeUI-56" transform="translate(328.375 0)"/>
+     <use xlink:href="#SegoeUI-3" transform="translate(370.8125 0)"/>
+     <use xlink:href="#SegoeUI-49" transform="translate(398.203125 0)"/>
+     <use xlink:href="#SegoeUI-55" transform="translate(429.5 0)"/>
+     <use xlink:href="#SegoeUI-52" transform="translate(464.265625 0)"/>
+     <use xlink:href="#SegoeUI-50" transform="translate(522.859375 0)"/>
+     <use xlink:href="#SegoeUI-3" transform="translate(609 0)"/>
+     <use xlink:href="#SegoeUI-57" transform="translate(636.390625 0)"/>
+     <use xlink:href="#SegoeUI-4b" transform="translate(670.28125 0)"/>
+     <use xlink:href="#SegoeUI-48" transform="translate(726.875 0)"/>
+     <use xlink:href="#SegoeUI-3" transform="translate(779.171875 0)"/>
+     <use xlink:href="#SegoeUI-56" transform="translate(806.5625 0)"/>
+     <use xlink:href="#SegoeUI-44" transform="translate(849 0)"/>
+     <use xlink:href="#SegoeUI-50" transform="translate(899.875 0)"/>
+     <use xlink:href="#SegoeUI-48" transform="translate(986.015625 0)"/>
+     <use xlink:href="#SegoeUI-3" transform="translate(1038.3125 0)"/>
+     <use xlink:href="#SegoeUI-55" transform="translate(1065.703125 0)"/>
+     <use xlink:href="#SegoeUI-48" transform="translate(1100.46875 0)"/>
+     <use xlink:href="#SegoeUI-44" transform="translate(1152.765625 0)"/>
+     <use xlink:href="#SegoeUI-47" transform="translate(1203.640625 0)"/>
+     <use xlink:href="#SegoeUI-56" transform="translate(1262.53125 0)"/>
+     <use xlink:href="#SegoeUI-f" transform="translate(1304.96875 0)"/>
+    </g>
+   </g>
+   <g id="text_59">
+    <!-- Details → to each card -->
+    <g style="fill: #3e4c59" transform="translate(424.08 418.242969) scale(0.095 -0.095)">
+     <use xlink:href="#SegoeUI-27"/>
+     <use xlink:href="#SegoeUI-48" transform="translate(70.125 0)"/>
+     <use xlink:href="#SegoeUI-57" transform="translate(122.421875 0)"/>
+     <use xlink:href="#SegoeUI-44" transform="translate(156.3125 0)"/>
+     <use xlink:href="#SegoeUI-4c" transform="translate(207.1875 0)"/>
+     <use xlink:href="#SegoeUI-4f" transform="translate(231.40625 0)"/>
+     <use xlink:href="#SegoeUI-56" transform="translate(255.625 0)"/>
+     <use xlink:href="#SegoeUI-3" transform="translate(298.0625 0)"/>
+     <use xlink:href="#SegoeUI-b2e" transform="translate(325.453125 0)"/>
+     <use xlink:href="#SegoeUI-3" transform="translate(411.734375 0)"/>
+     <use xlink:href="#SegoeUI-57" transform="translate(439.125 0)"/>
+     <use xlink:href="#SegoeUI-52" transform="translate(473.015625 0)"/>
+     <use xlink:href="#SegoeUI-3" transform="translate(531.609375 0)"/>
+     <use xlink:href="#SegoeUI-48" transform="translate(559 0)"/>
+     <use xlink:href="#SegoeUI-44" transform="translate(611.296875 0)"/>
+     <use xlink:href="#SegoeUI-46" transform="translate(662.171875 0)"/>
+     <use xlink:href="#SegoeUI-4b" transform="translate(708.359375 0)"/>
+     <use xlink:href="#SegoeUI-3" transform="translate(764.953125 0)"/>
+     <use xlink:href="#SegoeUI-46" transform="translate(792.34375 0)"/>
+     <use xlink:href="#SegoeUI-44" transform="translate(838.53125 0)"/>
+     <use xlink:href="#SegoeUI-55" transform="translate(889.40625 0)"/>
+     <use xlink:href="#SegoeUI-47" transform="translate(924.171875 0)"/>
+    </g>
+   </g>
+   <g id="text_60">
     <!-- Labels: survey (SSURGO, USFS), model (SoilGrids), total (USGS, SoilGrids N: not plant-available), lab (KSSL). -->
     <g style="fill: #616e7c" transform="translate(7.2 484.79875) scale(0.095 -0.095)">
      <defs>
@@ -5374,7 +5468,7 @@ z
      <use xlink:href="#SegoeUI-11" transform="translate(4629.578125 0)"/>
     </g>
    </g>
-   <g id="text_58">
+   <g id="text_61">
     <!-- No US-wide map of soil-test N, P, K, Ca, Mg or S or DTPA micronutrients; boron and P survey data are limited. The tab says so. -->
     <g style="fill: #616e7c" transform="translate(7.2 502.849219) scale(0.095 -0.095)">
      <defs>

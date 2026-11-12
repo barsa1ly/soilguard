@@ -199,7 +199,7 @@ def fig_overview():
     K2 = s.box(KX, rows[2], KW, bh + 2 * pitch, "comb", "Practice planner",
                ["land use and your answers", "Texas: Texas rules; other states:", "the state's practice profile",
                 "region (MLRA), soil group, risk", "→ NRCS practices, timing, species"], module="practices.js")
-    R_soil = s.box(RX, rows[0], RW, bh, "out", "Soil tab", ["editable surface layer, profile", "CSV and crop-model .SOL export"], lw=2)
+    R_soil = s.box(RX, rows[0], RW, bh, "out", "Soil and Soil profile tabs", ["Soil: surface layer, WEG, I", "Soil profile: horizons, .SOL"], lw=2)
     R_over = s.box(RX, rows[1], RW, bh + pitch, "out", "Overview tab",
                    ["risk class, E and EI", "erosive hours, red months,", "prevailing direction",
                     "(wind values from wind engine)"], lw=2)
@@ -377,11 +377,11 @@ def fig_soil():
     Q2 = s.box(SX, 8.05, SW, 1.15, "calc", "Profile parameters",
                ["all horizons: LL, DUL, SAT, AWC, Ksat,", "root growth, runoff CN, SLU1, SLDR"],
                module="soil.js · toSOL", **kw)
-    Q3 = s.box(SX, 6.5, SW, 0.82, "user", "Your edits (Soil tab)", ["sand, silt, clay, OM, CaCO₃, pH"], **kw)
+    Q3 = s.box(SX, 6.5, SW, 1.0, "user", "Your edits", ["sand, silt, clay, OM, CaCO₃ (Soil tab);", "pH (Soil profile tab)"], **kw)
     Q4 = s.box(SX, 5.3, SW, 1.12, "calc", "Edited-layer properties",
                ["Saxton & Rawls 2006 water retention", "RWEQ EF and SCF (cross-check)", "flags soils outside RWEQ range"],
                module="soil.js · saxtonRawls, rweq", **kw)
-    Q5 = s.box(SX, 3.8, SW, 1.12, "out", "Soil tab", ["surface layer and full profile", "CSV and crop-model .SOL export"], lw=2, **kw)
+    Q5 = s.box(SX, 3.8, SW, 1.12, "out", "Soil and Soil profile tabs", ["Soil: surface layer, WEG and I;", "Soil profile: horizons, CSV, .SOL"], lw=2, **kw)
     Q6 = s.box(SX, 2.3, SW, 1.0, "out", "Overview tab", ["risk card and 12-month strip", "WEG, C, EI"], lw=2, **kw)
     Q7 = s.box(SX, 0.88, SW, 0.78, "out", "Practices tab", ["NRCS practices, specs, timing"], lw=2, **kw)
 
@@ -463,7 +463,7 @@ def fig_models():
           s.box(LX, 8.7, CW, 0.72, "wx", "PRISM (Oregon State University)", ["rain, Tmax, Tmin through ACIS GridData,", "4 km, 1981 on; the rest from gridMET"], **kw),
           s.box(LX, 7.85, CW, 0.52, "wx", "NASA POWER daily", ["0.5°, 1981 on (direct)"], **kw),
           s.box(LX, 7.2, CW, 0.72, "user", "Your weather file (upload)", ["CSV, text or Excel, read in the browser;", "columns found by name, units converted"], **kw)]
-    so = [s.box(RX, 9.55, CW, 0.52, "soil", "SSURGO soil at the point", ["the profile shown in the Soil tab"], **kw),
+    so = [s.box(RX, 9.55, CW, 0.52, "soil", "SSURGO soil at the point", ["the profile on the Soil profile tab"], **kw),
           s.box(RX, 8.9, CW, 0.72, "user", "Your soil profile (upload or type)", ["a CSV read in the browser, or typed layers;", "blanks estimated (Saxton & Rawls 2006)"], **kw),
           s.box(RX, 8.05, CW, 0.72, "built", "Templates and CO₂ (built in)", ["the layout of your own files to download;", "NOAA GML CO₂ for APSIM"], **kw)]
     for col, x in ((wx, LX - 0.13), (so, RX - 0.13)):
@@ -517,7 +517,7 @@ def fig_drought():
          s.box(KX, 8.5 + o, KW, 0.73, "calc", "Past-week frames", ["one week at a time; play"], module="timemap.js", **kw),
          s.box(KX, 7.6 + o, KW, 1.12, "calc", "Drought parts", ["class at the point, week by", "week; indices and their", "classes; outlook at the point"], module="weather.js", **kw),
          s.box(KX, 6.3 + o, KW, 1.12, "calc", "Drought Monitor downloads", ["weekly classes at the point;", "grid cells classed by the", "map's colour"], module="datasheet.js · grid.js", **kw)]
-    R = [s.box(RX, 9.6 + o, RW, 0.92, "out", "Map themes", ["Wind erosion · Drought · Soil", "maps: one overlay at a time,", "the agency's own legend"], lw=2, **kw),
+    R = [s.box(RX, 9.6 + o, RW, 0.92, "out", "Map themes", ["Wind erosion · Soil maps ·", "Drought: one overlay at a time,", "the agency's own legend"], lw=2, **kw),
          s.box(RX, 8.5 + o, RW, 0.73, "out", "Map on a past week", ["the Drought Monitor, any week", ], lw=2, **kw),
          s.box(RX, 7.6 + o, RW, 1.12, "out", "Drought tab", ["this week and outlooks; week", "by week since 2000; between", "years since 1980"], lw=2, **kw),
          s.box(RX, 6.3 + o, RW, 1.12, "out", "Data sheet and area grid", ["drought_monitor_weekly.csv;", "dm_* columns and", "drought/weeks.csv"], lw=2, **kw)]
@@ -599,7 +599,7 @@ def fig_soilmaps():
     R2 = s.box(RX, T - 3.25, RW, 2.9, "out", "Soil maps tab",
                ["at a glance: reaction, salinity,", "sodic or saline at 0–15 cm;", "tables by depth and horizon;",
                 "the 30 m values; SoilGrids N;", "the 3 nearest USGS sites;", "the 8 nearest lab pedons;",
-                "a CSV of each table, or all"], lw=2, **kw)
+                "a CSV of each table, or all", "", "Overview tab: a pH headline", "and tiles from the same reads,", "Details → to each card"], lw=2, **kw)
     s.path([(P[0].right, P[0].cy), (K2.x, P[0].cy)])
     s.path([(gx, P[1].cy), (gx, P[-1].cy)], head=False)
     for b in P[1:]:
@@ -743,7 +743,7 @@ def fig_moisture():
 SOURCES = [
     ("Soil survey: map unit, components, horizons, WEG, I, T, climatic factor C, rainfall R, MLRA, yields, plants",
      "USDA-NRCS SSURGO", "Soil Data Access SQL web service (direct)", "survey polygons, mapped at 1:12,000–1:24,000",
-     "Soil tab shows the error; risk cannot be computed"),
+     "the Soil and Soil profile tabs show the error; risk cannot be computed"),
     ("Elevation, slope and aspect", "USGS 3DEP", "Elevation Point Query Service, 5 points (direct)",
      "best available 3DEP: 1 m lidar where flown, else ~10 m", "Copernicus 90 m elevation via Open-Meteo (after 15 s)"),
     ("Land cover", "MRLC NLCD 2021; Esri / Impact Observatory", "WMS GetFeatureInfo; ImageServer identify (direct)",
@@ -1022,7 +1022,7 @@ CODE = [
     ("js/grid.js, js/gridfiles.js", "the area grid: cells from 20 cm up with soil and weather in each; projections, GeoTIFF and shapefile writers"),
     ("js/weather.js", "the map themes and the Drought theme: live layers, the Drought tab, the Drought Monitor at a point and by week"),
     ("js/timemap.js", "the Drought Monitor on a past week: the week bar on the map, play"),
-    ("js/soilmaps.js", "the Soil maps theme and tab: layers, legends, SSURGO chemistry by depth, nearby sites and pedons"),
+    ("js/soilmaps.js", "the Soil maps theme, its Overview and Soil maps tabs: layers, legends, SSURGO chemistry by depth, nearby sites and pedons"),
     ("js/basins.js", "basins in the Soil maps theme and tab: WBD and NHDPlus HR layers, the HU12 and its catchments, EROM "
      "runoff, curve-number storm runoff, RUSLE soil loss, CSV"),
     ("js/soilmoisture.js", "soil moisture in the Soil maps theme and tab: SMAP, NWM, SPoRT and GRACE layers, stations, "
@@ -1315,8 +1315,9 @@ def build_docx(figs, commit):
 
     h = doc.add_heading("6. Soil survey to erosion risk", level=1)
     h.paragraph_format.page_break_before, h.paragraph_format.space_before = True, Pt(0)
-    para("The main column is the path to the risk class. The right column holds what the Soil tab adds and the "
-         "result boxes. Your edits replace the surveyed surface layer, so every value below them is recalculated.")
+    para("The main column is the path to the risk class. The right column holds the profile, your edits (sand to CaCO₃ "
+         "on Wind erosion › Soil, pH on Soil maps › Soil profile) and the result boxes. Your edits replace the surveyed "
+         "surface layer, so every value below them is recalculated.")
     figure(figs[2], 6.2, "Figure 3. Soil and erosion-risk pipeline.")
 
     h = doc.add_heading("7. Field or area analysis", level=1)
@@ -1343,13 +1344,19 @@ def build_docx(figs, commit):
          "total nitrogen; sections 10–12 show them in detail.")
     figure(figs[5], 5.9, "Figure 6. Drought and Soil maps: live layers, tabs and downloads.")
 
-    h = doc.add_heading("10. Soil maps theme and tab", level=1)
+    h = doc.add_heading("10. Soil maps theme and its tabs", level=1)
     h.paragraph_format.page_break_before, h.paragraph_format.space_before = True, Pt(0)
     para("The Soil maps theme shows one soil chemistry layer at a time: pH, CEC and organic matter from the USDA Forest "
          "Service's 30 m maps of the soil survey, salinity and sodicity pre-built from UC Davis SoilWeb, total elements "
-         "from the USGS, and total N from ISRIC SoilGrids. Its tab gives the survey's values by depth with their classes, "
-         "the 30 m values, SoilGrids N, and the nearest USGS sites and NRCS lab pedons. USGS and SoilGrids values are "
-         "total, not plant-available; no map covers the US for soil-test nutrients; boron and phosphorus survey data is limited.")
+         "from the USGS, and total N from ISRIC SoilGrids; its layers are buttons in three groups (soil chemistry, basins, "
+         "soil moisture). It comes right after Wind erosion and has three tabs. Overview gives a headline coloured by the "
+         "survey's pH group and tiles for the soil, its watershed and its moisture; it asks for nothing itself, but draws "
+         "the Soil maps tab once, out of sight, and reads from it, and each tile's Details link opens that tab at its card. "
+         "The Soil maps tab gives the survey's values by depth with their classes, the 30 m values, SoilGrids N, and the "
+         "nearest USGS sites and NRCS lab pedons, with a CSV of each table or all of them. Soil profile shows the dominant "
+         "soil's horizons and site parameters from the survey read for the wind erosion (Figure 3). USGS and SoilGrids "
+         "values are total, not plant-available; no map covers the US for soil-test nutrients; boron and phosphorus "
+         "survey data is limited.")
     figure(figs[6], 5.9, "Figure 7. Soil maps: the map layers and the tab at the point.")
 
     h = doc.add_heading("11. Basins: runoff and soil loss", level=1)

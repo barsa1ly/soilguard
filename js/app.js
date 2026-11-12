@@ -408,7 +408,8 @@
     ...Object.fromEntries(Object.entries(WG.weather.layers).map(([t, list]) => [t, (list.find(x => x.def) || list[0] || {}).key || null])) };
   const groups = { refs, themes, soilLayers, live: new Proxy({}, { get: (_, k) => live[state.theme] && live[state.theme][k] }) };
   const showItem = (it, v) => { [it.layer, it.extra].filter(Boolean).forEach(l => (v ? l.addTo(map) : map.removeLayer(l))); };
-  function setTheme(t) {
+  // tab: the tab to open (a link to another theme's tab), else the one on show if it belongs, else the theme's first
+  function setTheme(t, tab) {
     state.theme = WG.weather.THEMES.some(x => x.key === t) ? t : "erosion";
     Object.entries(themes).forEach(([k, it]) => { const on = state.theme === "erosion" && k === choice.erosion; if (it.on !== on) { it.on = on; showItem(it, on); } });
     Object.entries(live).forEach(([tk, set]) => Object.entries(set).forEach(([k, it]) => { const on = tk === state.theme && k === choice[tk]; if (it.on !== on) { it.on = on; showItem(it, on); } }));
@@ -420,8 +421,8 @@
     $("#hintText").textContent = T.hint;
     // the panel's tabs: those of this theme; the one on show stays if it belongs, else the theme's first
     $$(".tabs button[data-tab]").forEach(b => { b.hidden = !b.dataset.for.split(" ").includes(state.theme); });
-    const on = $(".tabs button.active");
-    showTab(on && !on.hidden ? on.dataset.tab : $(".tabs button[data-tab]:not([hidden])").dataset.tab);
+    const on = $(".tabs button.active"), to = tab && $(`.tabs button[data-tab="${tab}"]:not([hidden])`);
+    showTab(to ? tab : on && !on.hidden ? on.dataset.tab : $(".tabs button[data-tab]:not([hidden])").dataset.tab);
     try {
       if (state.site) history.replaceState(null, "", `?lat=${state.site.lat.toFixed(5)}&lon=${state.site.lon.toFixed(5)}${windQ()}${UN.query()}${KEEP_Q}`);
       else bareUrl();
@@ -797,13 +798,40 @@
     $$(".tabs button").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
     $$(".tab").forEach(t => { t.hidden = t.id !== "tab-" + name; });
     $("#panelBody").scrollTop = 0;
+    fitTabRow();
     if (name === "wind" && state.wind) setTimeout(renderWindCharts, 0);
     if (["drought", "soilmaps", "soiloverview"].includes(name) && state.site) WG.weather.show(name, $("#tab-" + name));
     if (name === "download" && state.site) WG.datasheet.show();
+    if (name === "soilprofile") renderSoilDetail(); // drawn only while on show
   }
+  /* A tab row wider than the panel (tablets; some themes on phones) scrolls under the sticky DOWNLOAD at its right end.
+     The active tab is scrolled clear of it, so a link to another theme's tab lands on a tab that shows. DOWNLOAD's fade
+     marks tabs hidden under it, so it goes ("at-end") once the row is scrolled to its end or fits, where it would only
+     pale the tab next to it. Not measured while the panel is not laid out (no site yet); measured again as the row
+     changes size (the panel opening widens it over .35 s, a window resized). */
+  function fitTabRow() {
+    const row = $(".tabs"), dl = $(".tabs .tab-dl"), b = $(".tabs button.active");
+    if (!row.clientWidth) return;
+    if (b && b !== dl && row.scrollWidth > row.clientWidth) {
+      const x = b.getBoundingClientRect(), left = row.getBoundingClientRect().left + parseFloat(getComputedStyle(row).paddingLeft), right = dl.getBoundingClientRect().left - 16;
+      // its left end first: in a row still narrower than the tab (the panel opening), scrolled no further than keeps it
+      if (x.left < left) row.scrollLeft -= left - x.left;
+      else if (x.right > right) row.scrollLeft += Math.min(x.right - right, x.left - left);
+    }
+    tabRowEnd();
+  }
+  function tabRowEnd() { const row = $(".tabs"); if (row.clientWidth) row.classList.toggle("at-end", row.scrollLeft + row.clientWidth >= row.scrollWidth - 1); }
+  $(".tabs").addEventListener("scroll", tabRowEnd, { passive: true });
+  new ResizeObserver(() => fitTabRow()).observe($(".tabs"));
   $("#dataBtn").addEventListener("click", () => showTab("download"));
   $(".tabs").addEventListener("click", e => { const b = e.target.closest("button[data-tab]"); if (b) showTab(b.dataset.tab); });
-  $("#panel").addEventListener("click", e => { const g = e.target.closest("[data-goto]"); if (g) showTab(g.dataset.goto); });
+  // data-goto-theme: a link to a tab of another theme (Wind erosion › Soil to Soil maps › Soil profile) switches the map's theme too
+  $("#panel").addEventListener("click", e => {
+    const g = e.target.closest("[data-goto]");
+    if (!g) return;
+    if (g.dataset.gotoTheme && g.dataset.gotoTheme !== state.theme) setTheme(g.dataset.gotoTheme, g.dataset.goto);
+    else showTab(g.dataset.goto);
+  });
 
   /* ============ SITE SELECTION ============ */
   let marker = null;
@@ -910,10 +938,13 @@
     $("#monthStrip").innerHTML = U.MONTHS.map(m => `<div class="m"><i class="skeleton" style="height:28px"></i>${m[0]}</div>`).join("");
     $("#ovSoil").innerHTML = '<span class="skeleton"></span><span class="skeleton" style="width:60%"></span>';
     $("#soilSummary").innerHTML = '<span class="skeleton"></span><span class="skeleton" style="width:60%"></span>';
+    $("#profSoil").innerHTML = '<span class="skeleton"></span><span class="skeleton" style="width:60%"></span>';
     $("#profileDetail").innerHTML = "";
+    $("#profSource").textContent = "";
     $("#soilDerived").innerHTML = "";
-    $$("#soilEdit input").forEach(i => { i.value = ""; i.classList.remove("edited"); });
-    $("#resetSoilBtn").hidden = true;
+    $("#soilSrcTag").textContent = $("#profSrcTag").textContent = "SSURGO";
+    $$(EDIT_INPUTS).forEach(i => { i.value = ""; i.classList.remove("edited"); });
+    $$(".reset-soil").forEach(b => { b.hidden = true; });
     clearWind();
     $("#planBox").innerHTML = "";
     renderPractices();
@@ -935,7 +966,7 @@
     const jobs = [
       reverseGeocode(lat, lon).then(p => { if (live() && p && !state.place) { state.place = p; renderHeader(); } }).catch(() => {}),
       fetchElevation(lat, lon).then(({ e, later }) => {
-        const use = x => { if (x && live()) { state.elev = x; renderHeader(); renderSoilSummary(); renderSoilDetail(); } };
+        const use = x => { if (x && live()) { state.elev = x; renderHeader(); renderSoilDetail(); } };
         use(e);
         later.then(use); // USGS 3DEP (1 m), when it answers after the Copernicus DEM was shown
       }).catch(() => {}),
@@ -1180,9 +1211,16 @@
     // keep the survey's group unless the edit changes what the texture rules give (both worked out the same way):
     // a pH edit must not move Pullman clay loam (survey WEG 7) to the rules' 6, or a very stony Ector loam from 8 to 6
     const base = S.wegFromSurface(sameTex ? s : { ...s, texCode: texOf(s) });
-    if (s.weg && w.weg === base.weg) { e.calc = null; e.kept = true; }
+    // "kept" puts a note under the edits that the survey's group stays: not after a pH edit alone, which edits none of them
+    if (s.weg && w.weg === base.weg) { e.calc = null; e.kept = erodEdited(); }
     else { e.weg = w.weg; e.wei = w.I; e.calc = w; }
     return e;
+  }
+  // the edits change a value that sets the wind erodibility (sand to CaCO3, edited on Wind erosion › Soil; not pH);
+  // a survey without CaCO3 reads as 0, as in the input
+  function erodEdited() {
+    const s = state.soil && state.soil.surface, ed = state.edits;
+    return !!(s && ed) && ["sand", "silt", "clay", "om", "caco3"].some(k => (ed[k] ?? null) !== (s[k] ?? (k === "caco3" ? 0 : null)));
   }
   WG.currentSurface = currentSurface;
 
@@ -1655,17 +1693,20 @@
   $("#modelSel").value = state.gridModel;
   syncPeriodUI();
 
-  /* ============ SOIL TAB ============ */
+  /* ============ SOIL TAB ============
+     Wind erosion › Soil holds only what sets the wind erodibility: the dominant soil with its WEG, I and surface
+     texture, the surface layer to edit and what it gives, and the WEG classes. The rest of the profile is the Soil maps
+     theme's Soil profile tab (renderSoilDetail), drawn from the same survey read. */
+  // the surface layer's inputs: sand to CaCO3 on Wind erosion › Soil; pH, which does not set the erodibility, on the Soil profile tab
+  const EDIT_INPUTS = "#soilEdit input, #soilEditPh input";
+  const EDIT_KEY = { inSand: "sand", inSilt: "silt", inClay: "clay", inOm: "om", inCaco3: "caco3", inPh: "ph" };
   function renderSoil() {
     const s = state.soil;
-    if (!s || s.error) {
-      const msg = s && s.error ? `Soil survey request failed: ${esc(s.error)}` : "No soil survey map unit at this point.";
-      $("#soilSummary").innerHTML = `<p class="fine">${msg}</p>`;
-      $("#ovSoil").innerHTML = `<p class="fine">${msg}</p>`;
-      return;
-    }
+    // no survey soil: the same message on the erosion Overview, Wind erosion › Soil and the Soil profile tab
+    const say = msg => ["#soilSummary", "#ovSoil", "#profSoil"].forEach(id => { $(id).innerHTML = `<p class="fine">${msg}</p>`; });
+    if (!s || s.error) return say(s && s.error ? `Soil survey request failed: ${esc(s.error)}` : "No soil survey map unit at this point.");
     const d = s.dominant;
-    if (!d) { $("#soilSummary").innerHTML = `<p class="fine">Map unit ${esc(s.mapunit.muname)} has no component data.</p>`; return; }
+    if (!d) return say(`Map unit ${esc(s.mapunit.muname)} has no component data.`);
     const surf = s.surface;
     if (surf) {
       $("#inSand").value = surf.sand ?? "";
@@ -1683,31 +1724,21 @@
     const s = state.soil;
     if (!s || s.error || !s.dominant) return;
     const d = s.dominant, surf = currentSurface();
-    const site = S.siteParams(s, d, surf);
-    const others = s.components.filter(c => c.cokey !== d.cokey && c.comppct_r >= 5);
     const tex = surf ? (surf.texName || S.TEX[surf.texCode] || surf.texCode) : "—";
+    // the erodibility chips, here and on the erosion Overview's soil card; the profile's own are on the Soil profile tab
     const chips = [
       surf && surf.weg ? `<span class="chip ${surf.wei >= 86 ? "warn" : surf.wei <= 38 ? "ok" : ""}" title="Wind Erodibility Group: nine classes from 1 (most erodible) to 8 (not erodible), with 4L between 4 and 5">WEG ${esc(surf.weg)} · I ${esc(UN.fmt("soilLoss", surf.wei, 0))}${surf.calc ? " (from your values)" : ""}</span>` : "",
       tex ? `<span class="chip">Surface: ${esc(tex)}</span>` : "",
-      site.slope !== null ? `<span class="chip">Slope ${fmt(site.slope, 1)}%</span>` : "",
-      site.drainage ? `<span class="chip">${esc(site.drainage)}</span>` : "",
-      site.hydgrp ? `<span class="chip">Hydrologic group ${esc(site.hydgrp)}</span>` : "",
-      site.depth ? `<span class="chip">${site.restriction ? `${esc(site.restriction.kind)} at ${UN.fmt("depth", site.restriction.depth)}` : `Deep (> ${UN.fmt("depth", site.depth)})`}</span>` : "",
-      d.eco ? `<span class="chip">${esc(d.eco.ecoclassname)}</span>` : "",
-      s.mlra ? `<span class="chip">MLRA ${esc(s.mlra.sym)} · ${esc(s.mlra.name)}</span>` : "",
     ].join("");
-    const html = `<div><div class="nm">${esc(d.compname)} <span style="font-weight:500;color:#69716a;font-size:13px">${fmt(d.comppct_r, 0)}% of map unit</span></div>
-      <div class="sub">${esc(s.mapunit.muname || "")}</div>
-      <div class="sub">${esc(d.taxclname || "")}</div></div>
+    $("#soilSummary").innerHTML = `<div><div class="nm">${esc(d.compname)} <span style="font-weight:500;color:#69716a;font-size:13px">${fmt(d.comppct_r, 0)}% of map unit</span></div>
+      <div class="sub">${esc(s.mapunit.muname || "")}</div></div>
       <div class="chips">${chips}</div>
       ${!s.dominantIsTop ? `<p class="fine">Largest component (${esc(s.components[0].compname)}) has no horizon data; showing the largest soil component.</p>` : ""}
-      ${others.length ? `<p class="fine">Also in this map unit: ${others.map(c => `${esc(c.compname)} ${fmt(c.comppct_r, 0)}%`).join(" · ")}</p>` : ""}`;
-    $("#soilSummary").innerHTML = html;
+      <p class="fine">Horizons, classification, site parameters and the map unit's other soils: <button class="link" data-goto="soilprofile" data-goto-theme="soilmaps">Soil maps › Soil profile →</button></p>`;
     $("#ovSoil").innerHTML = `<div class="nm">${esc(d.compname)} ${tex ? "· " + esc(tex) : ""}</div><div class="sub">${esc(s.mapunit.muname || "")}</div><div class="chips">${chips}</div>`;
     $("#soilSrcTag").textContent = `SSURGO · ${s.mapunit.areasymbol || ""}`;
     renderWegTable(surf);
-    const e = state.elev;
-    $("#soilSource").innerHTML = `Source: USDA-NRCS Soil Survey Geographic Database (SSURGO) via <a href="https://sdmdataaccess.nrcs.usda.gov/" target="_blank" rel="noopener">Soil Data Access</a>, map unit key ${s.mukey}, ${esc(s.mapunit.areaname || "")}${s.mapunit.saverest ? `, survey dated ${esc(String(s.mapunit.saverest).split(/[ T]/)[0])}` : ""}. Elevation/slope: ${e ? esc(e.src) + (e.src.startsWith("USGS") ? " (Elevation Point Query Service)" : " via Open-Meteo") : "loading"}. Water retention for edited layers: Saxton &amp; Rawls (2006). <button class="link" data-methods="m-erod">Equations →</button>`;
+    $("#soilSource").innerHTML = `Source: USDA-NRCS Soil Survey Geographic Database (SSURGO) via <a href="https://sdmdataaccess.nrcs.usda.gov/" target="_blank" rel="noopener">Soil Data Access</a>, map unit key ${s.mukey}, ${esc(s.mapunit.areaname || "")}${s.mapunit.saverest ? `, survey dated ${esc(String(s.mapunit.saverest).split(/[ T]/)[0])}` : ""}. Groups for edited values: NRCS National Soil Survey Handbook §618.93; RWEQ factors: Fryrear et al. (1994, 1998). <button class="link" data-methods="m-erod">Equations →</button>`;
     renderDerived();
   }
 
@@ -1715,24 +1746,13 @@
     const s = state.soil;
     if (!s || !s.surface) return;
     const surf = currentSurface(), base = s.surface;
-    // survey water retention for the mapped soil; Saxton & Rawls only once the user edits texture/OM
-    const hz0 = s.dominant.horizons[0] || {};
-    const surveyed = !state.edits && num(hz0.wfifteenbar_r) !== null && num(hz0.wthirdbar_r) !== null;
-    const sr = surveyed
-      ? { ll: num(hz0.wfifteenbar_r) / 100, dul: num(hz0.wthirdbar_r) / 100,
-          awc: num(hz0.awc_r) ?? (num(hz0.wthirdbar_r) - num(hz0.wfifteenbar_r)) / 100,
-          ksat: num(hz0.ksat_r) !== null ? num(hz0.ksat_r) * 3.6 : null }
-      : S.saxtonRawls(surf.sand, surf.clay, surf.om);
+    // what sets the wind erodibility; the layer's water retention is in the Soil profile tab's horizons (survey values,
+    // or Saxton & Rawls once edited)
     const ch = (a, b) => (state.edits && a !== b ? "chg" : "");
     const cells = [
       ["Texture class", surf.texName || S.TEX[surf.texCode] || "—", ch(surf.texCode, base.texCode)],
       ["Wind erodibility group (1 most – 8 least)", surf.weg || "—", ch(surf.weg, base.weg)],
       [`Erodibility index I (${UN.range("soilLoss", 0, 310, 0)})`, surf.wei !== null ? UN.both("soilLoss", surf.wei, 0) : "—", ch(surf.wei, base.wei)],
-      ["Organic carbon", surf.om !== null ? `${fmt(surf.om / 1.724, 2)}%` : "—", ""],
-      ["Wilting point (15 bar)", sr ? `${fmt(sr.ll, 3)} cm³/cm³` : "—", ""],
-      ["Field capacity (⅓ bar)", sr ? `${fmt(sr.dul, 3)} cm³/cm³` : "—", ""],
-      ["Plant-available water", sr ? UN.fmt("awc", sr.awc) : "—", ""],
-      ["Sat. conductivity", sr && sr.ksat !== null ? UN.fmt("ksat", sr.ksat / 3.6) : "—", ""], // mm/h -> µm/s base
     ];
     const rw = S.rweq(surf), rw0 = S.rweq(base);
     if (rw) cells.push(
@@ -1774,33 +1794,56 @@
     }
     const ed = { sand, silt, clay, om: g("inOm"), caco3: g("inCaco3") ?? 0, ph: g("inPh") };
     const b = s.surface;
-    const same = ["sand", "silt", "clay", "om", "caco3", "ph"].every(k => (ed[k] ?? null) === (b[k] ?? (k === "caco3" ? 0 : null)));
+    const same = Object.values(EDIT_KEY).every(k => (ed[k] ?? null) === (b[k] ?? (k === "caco3" ? 0 : null)));
     state.edits = same ? null : ed;
-    $$("#soilEdit input").forEach(i => {
-      const k = { inSand: "sand", inSilt: "silt", inClay: "clay", inOm: "om", inCaco3: "caco3", inPh: "ph" }[i.id];
+    $$(EDIT_INPUTS).forEach(i => {
+      const k = EDIT_KEY[i.id];
       i.classList.toggle("edited", !!state.edits && (ed[k] ?? null) !== (b[k] ?? (k === "caco3" ? 0 : null)));
     });
-    $("#resetSoilBtn").hidden = !state.edits;
+    // each reset shows when it has something to undo: Wind erosion › Soil's its five values, the Soil profile tab's any edit
+    $("#tab-soil .reset-soil").hidden = !erodEdited();
+    $("#tab-soilprofile .reset-soil").hidden = !state.edits;
     renderSoilSummary(); renderSoilDetail(); renderRisk(); renderStats(); renderPractices();
   }
-  $$("#soilEdit input").forEach(i => i.addEventListener("change", onSoilEdit));
-  $("#resetSoilBtn").addEventListener("click", () => { state.edits = null; renderSoil(); onSoilEdit(); });
+  $$(EDIT_INPUTS).forEach(i => i.addEventListener("change", onSoilEdit));
+  // Wind erosion › Soil's reset: its five values back to the survey's, a pH edit kept; the Soil profile tab's: every edit
+  $$(".reset-soil").forEach(r => r.addEventListener("click", () => {
+    const ph = r.closest("#tab-soil") ? $("#inPh").value : null;
+    state.edits = null; renderSoil();
+    if (ph !== null) $("#inPh").value = ph;
+    onSoilEdit();
+  }));
 
-  $("#profileToggle").addEventListener("click", () => {
-    const b = $("#profileToggle"), open = b.getAttribute("aria-expanded") !== "true";
-    b.setAttribute("aria-expanded", open);
-    $("#profileDetail").hidden = !open;
-    if (open) renderSoilDetail();
-  });
-
+  /* ============ SOIL PROFILE TAB (Soil maps theme) ============
+     The dominant soil's horizons, classification and site parameters, from the survey read for the wind erosion
+     (state.soil): no request of its own. Drawn only while on show (showTab draws it when opened) and again when the
+     surface edits, the elevation or the units change; renderSoil writes the message where the survey has no soil. */
+  const DL_SVG = '<svg viewBox="0 0 24 24"><path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/></svg>';
   function renderSoilDetail() {
     const s = state.soil;
     const box = $("#profileDetail");
-    if (box.hidden || !s || s.error || !s.dominant) return;
+    if ($("#tab-soilprofile").hidden || !s || s.error || !s.dominant) return;
     const d = s.dominant, surf = currentSurface();
     const layers = S.profileLayers(d, state.edits ? { sand: surf.sand, silt: surf.silt, clay: surf.clay, om: surf.om, ph: surf.ph, caco3: surf.caco3 } : null);
     const site = S.siteParams(s, d, surf);
     const f = (v, n) => (v === null || v === undefined ? "—" : fmt(v, n));
+    // the dominant soil and what the site is; its erodibility chips (WEG, I, surface texture) are Wind erosion › Soil's
+    const others = s.components.filter(c => c.cokey !== d.cokey && c.comppct_r >= 5);
+    const chips = [
+      site.slope !== null ? `<span class="chip">Slope ${fmt(site.slope, 1)}%</span>` : "",
+      site.drainage ? `<span class="chip">${esc(site.drainage)}</span>` : "",
+      site.hydgrp ? `<span class="chip">Hydrologic group ${esc(site.hydgrp)}</span>` : "",
+      site.depth ? `<span class="chip">${site.restriction ? `${esc(site.restriction.kind)} at ${UN.fmt("depth", site.restriction.depth)}` : `Deep (> ${UN.fmt("depth", site.depth)})`}</span>` : "",
+      d.eco ? `<span class="chip">${esc(d.eco.ecoclassname)}</span>` : "",
+      s.mlra ? `<span class="chip">MLRA ${esc(s.mlra.sym)} · ${esc(s.mlra.name)}</span>` : "",
+    ].join("");
+    $("#profSoil").innerHTML = `<div><div class="nm">${esc(d.compname)} <span style="font-weight:500;color:#69716a;font-size:13px">${fmt(d.comppct_r, 0)}% of map unit</span></div>
+      <div class="sub">${esc(s.mapunit.muname || "")}</div>
+      <div class="sub">${esc(d.taxclname || "")}</div></div>
+      ${chips ? `<div class="chips">${chips}</div>` : ""}
+      ${!s.dominantIsTop ? `<p class="fine">Largest component (${esc(s.components[0].compname)}) has no horizon data; showing the largest soil component.</p>` : ""}
+      ${others.length ? `<p class="fine">Also in this map unit: ${others.map(c => `${esc(c.compname)} ${fmt(c.comppct_r, 0)}%`).join(" · ")}</p>` : ""}`;
+    $("#profSrcTag").textContent = `SSURGO · ${s.mapunit.areasymbol || ""}`;
     const cols = [
       ["Horizon", l => esc(l.hz) + (l.edited ? " ✎" : ""), ""], ["Depth", l => `${UN.num("depth", l.top)}–${UN.num("depth", l.bot)}`, UN.sym("depth")],
       ["Texture", l => esc(l.texture), ""], ["Sand", l => f(l.sand, 1), "%"], ["Silt", l => f(l.silt, 1), "%"],
@@ -1837,22 +1880,26 @@
       P("Ecological site", d.eco ? `<a href="https://edit.jornada.nmsu.edu/catalogs/esd/${esc(d.eco.ecoclassid.slice(1, 5))}/${esc(d.eco.ecoclassid)}" target="_blank" rel="noopener">${esc(d.eco.ecoclassid)}</a>` : "—"),
       P("MLRA", s.mlra ? `${esc(s.mlra.sym)}` : "—"), P("Survey area", esc(s.mapunit.areasymbol || "—")), P("Map unit key", esc(String(s.mukey))),
     ].join("");
-    const yields = d.yields.length ? `<div><h4>Typical yields (survey estimates)</h4><div class="table-wrap"><table class="grid"><thead><tr><th>Crop</th><th>Dryland</th><th>Irrigated</th><th>Units</th></tr></thead>
-      <tbody>${d.yields.map(y => `<tr><td>${esc(y.cropname)}</td><td>${f(num(y.nonirryield_r), 0)}</td><td>${f(num(y.irryield_r), 0)}</td><td>${esc(y.yldunits || "")}</td></tr>`).join("")}</tbody></table></div></div>` : "";
+    const card = (title, body, tools) => `<div class="card"><div class="card-h"><h3>${title}</h3>${tools || ""}</div>${body}</div>`;
+    const yields = d.yields.length ? card("Typical yields (survey estimates)", `<div class="table-wrap"><table class="grid"><thead><tr><th>Crop</th><th>Dryland</th><th>Irrigated</th><th>Units</th></tr></thead>
+      <tbody>${d.yields.map(y => `<tr><td>${esc(y.cropname)}</td><td>${f(num(y.nonirryield_r), 0)}</td><td>${f(num(y.irryield_r), 0)}</td><td>${esc(y.yldunits || "")}</td></tr>`).join("")}</tbody></table></div>`) : "";
     const plants = d.plants.filter(p => p.plantsciname).slice(0, 12);
-    const plantTbl = plants.length ? `<div><h4>Reference native plant community (% of production)</h4><div class="table-wrap"><table class="grid"><thead><tr><th>Plant</th><th>Scientific name</th><th>%</th></tr></thead>
-      <tbody>${plants.map(p => `<tr><td>${esc(p.plantcomname || p.plantsym)}</td><td class="l"><i>${esc(p.plantsciname)}</i></td><td>${f(num(p.rangeprod), 0)}</td></tr>`).join("")}</tbody></table></div></div>` : "";
-    const comps = `<div><h4>Components in this map unit</h4><div class="table-wrap"><table class="grid"><thead><tr><th>Component</th><th>%</th><th>WEG</th><th>I<small>${esc(UN.sym("soilLoss"))}</small></th><th>Slope<small>%</small></th><th>Drainage</th><th>Ecological site</th></tr></thead>
-      <tbody>${s.components.map(c => `<tr><td>${esc(c.compname)}${c.cokey === d.cokey ? " ★" : ""}</td><td>${f(c.comppct_r, 0)}</td><td>${esc(c.weg || "—")}</td><td>${num(c.wei) === null ? "—" : UN.num("soilLoss", num(c.wei), 0)}</td><td>${f(num(c.slope_r), 1)}</td><td class="l">${esc(c.drainagecl || "—")}</td><td class="l">${esc(c.eco ? c.eco.ecoclassname : "—")}</td></tr>`).join("")}</tbody></table></div></div>`;
-    box.innerHTML = `<div><h4>Horizons — ${esc(d.compname)}</h4>${table}<p class="fine">Water retention, conductivity and bulk density come from the survey; rows marked ✎ use your edited values with Saxton &amp; Rawls (2006). Root growth factor = exp(−0.02 × mid-depth) below 15 cm, 0 below a restrictive layer. Total N estimated as organic C ÷ 10.</p></div>
-      <div><h4>Site and classification</h4><div class="param-grid">${params}</div></div>
-      ${comps}${yields}${plantTbl}
-      <div class="export-row"><button class="btn small" id="dlCsv">Download CSV</button><button class="btn small" id="dlSol">Download DSSAT .SOL</button></div>`;
-    $("#dlCsv").onclick = () => U.download(`soil_${s.mukey}_${d.compname.replace(/\W+/g, "_")}.csv`, S.toCSV(s, layers, site, cFactor()), "text/csv");
+    const plantTbl = plants.length ? card("Reference native plant community (% of production)", `<div class="table-wrap"><table class="grid"><thead><tr><th>Plant</th><th>Scientific name</th><th>%</th></tr></thead>
+      <tbody>${plants.map(p => `<tr><td>${esc(p.plantcomname || p.plantsym)}</td><td class="l"><i>${esc(p.plantsciname)}</i></td><td>${f(num(p.rangeprod), 0)}</td></tr>`).join("")}</tbody></table></div>`) : "";
+    const comps = card("Components in this map unit", `<div class="table-wrap"><table class="grid"><thead><tr><th>Component</th><th>%</th><th>WEG</th><th>I<small>${esc(UN.sym("soilLoss"))}</small></th><th>Slope<small>%</small></th><th>Drainage</th><th>Ecological site</th></tr></thead>
+      <tbody>${s.components.map(c => `<tr><td>${esc(c.compname)}${c.cokey === d.cokey ? " ★" : ""}</td><td>${f(c.comppct_r, 0)}</td><td>${esc(c.weg || "—")}</td><td>${num(c.wei) === null ? "—" : UN.num("soilLoss", num(c.wei), 0)}</td><td>${f(num(c.slope_r), 1)}</td><td class="l">${esc(c.drainagecl || "—")}</td><td class="l">${esc(c.eco ? c.eco.ecoclassname : "—")}</td></tr>`).join("")}</tbody></table></div>`);
+    box.innerHTML = card(`Horizons — ${esc(d.compname)}`, `${table}<p class="fine">Water retention, conductivity and bulk density come from the survey; rows marked ✎ use your edited values with Saxton &amp; Rawls (2006). Root growth factor = exp(−0.02 × mid-depth) below 15 cm, 0 below a restrictive layer. Total N estimated as organic C ÷ 10. The CSV keeps cm and cm/h whatever the units table says.</p>
+        <div class="export-row"><button class="btn small" id="dlCsv">Download CSV</button><button class="btn small" id="dlSol">Download DSSAT .SOL</button></div>`,
+      `<span class="card-tools"><button class="dl-btn" id="dlCsvHz" title="Download the horizons as CSV" aria-label="Download the horizons as CSV">${DL_SVG}</button></span>`)
+      + card("Site and classification", `<div class="param-grid">${params}</div>`) + comps + yields + plantTbl;
+    const csv = () => U.download(`soil_${s.mukey}_${d.compname.replace(/\W+/g, "_")}.csv`, S.toCSV(s, layers, site, cFactor()), "text/csv");
+    $("#dlCsv").onclick = csv;
+    $("#dlCsvHz").onclick = csv;
     $("#dlSol").onclick = () => { // a component without water retention or bulk density (urban land, pits) has no DSSAT soil
       try { U.download("WG.SOL", WG.models.writers.dssatSol(WG.models.surveySoil(state))); }
       catch (e) { console.warn(e); U.toast(`No DSSAT soil file for ${d.compname}: ${e.message || e}.`, 6000); }
     };
+    $("#profSource").innerHTML = `Source: USDA-NRCS Soil Survey Geographic Database (SSURGO) via <a href="https://sdmdataaccess.nrcs.usda.gov/" target="_blank" rel="noopener">Soil Data Access</a>, map unit key ${s.mukey}, ${esc(s.mapunit.areaname || "")}${s.mapunit.saverest ? `, survey dated ${esc(String(s.mapunit.saverest).split(/[ T]/)[0])}` : ""}. Elevation/slope: ${e ? esc(e.src) + (e.src.startsWith("USGS") ? " (Elevation Point Query Service)" : " via Open-Meteo") : "loading"}. Water retention for edited layers: Saxton &amp; Rawls (2006). <button class="link" data-methods="m-soil">Equations →</button>`;
   }
 
   /* ============ PRACTICES TAB ============ */

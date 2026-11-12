@@ -233,11 +233,12 @@ With gridMET moisture, the Lubbock calibrated high-risk months are Feb–Apr. Ma
 
 Airport anemometers sit on open, mown ground (mesonet towers should too; the exposure check tests it), so calibrated values describe exposed fields. Sheltered sites blow less.
 
-## 4. Soil profile (Soil tab and exports)
+## 4. Soil profile (Soil maps › Soil profile tab and exports)
 
 **Source:** SSURGO via Soil Data Access.
 - Tables: mapunit, legend, sacatalog, muaggatt, component, chorizon, chtexturegrp (RV), corestrictions, coecoclass, cocropyld, coeplants, muaoverlap/laoverlap (MLRA, C, R).
 - The "dominant soil" is the largest component that has horizon data.
+- The Soil maps theme's Soil profile tab shows it, from the survey read for the wind erosion (no request of its own); Wind erosion › Soil keeps what sets the erodibility (the dominant soil's WEG, I and surface texture, §1–2). Sand, silt, clay, OM and CaCO₃ are edited on Wind erosion › Soil, pH on the Soil profile tab; the edited layer is the horizon marked ✎. Wind erosion › Soil's Reset to survey restores its five values and keeps a pH edit; the Soil profile tab's undoes every edit.
 
 **Crop-model parameters** (DSSAT conventions; Romero et al. 2012; DSSAT CSM `SOILDYN.for`):
 
@@ -257,9 +258,9 @@ Airport anemometers sit on open, mown ground (mesonet towers should too; the exp
 
 **Edited surface layer, and blanks in your own soil:** water retention, bulk density and Ksat come from Saxton & Rawls (2006), using sand and clay fractions and OM % capped at 8. The estimates are kept physical for any input: wilting point ≥ 0.01 cm³/cm³, field capacity ≥ wilting point + 0.01, saturation ≥ field capacity + 0.01, with bulk density (1 − θS) × 2.65 and Ksat from the bounded values; sand and clay that add up to more than 100 % are scaled to 100 %.
 
-The Soil tab's DSSAT download and the data sheet use the same writer (§7).
+The Soil profile tab's DSSAT download and the data sheet use the same writer (§7).
 
-**Slope and aspect** come from USGS 3DEP (1–10 m lidar/DEM) through the Elevation Point Query Service: elevation at 5 points about 100 m apart. slope = 100·√(gx² + gy²), aspect = atan2(−gx, −gy). The Copernicus 90 m DEM (Open-Meteo, one request for the 5 points, about a second) is asked at the same time and shown when 3DEP has not answered within 4 s (in tests from five Texas places 3DEP took 9–16 s); a 3DEP answer that comes later (within its 15 s limit) replaces it in the header and the Soil tab. Model files built in between use the value shown then, and their README names its source.
+**Slope and aspect** come from USGS 3DEP (1–10 m lidar/DEM) through the Elevation Point Query Service: elevation at 5 points about 100 m apart. slope = 100·√(gx² + gy²), aspect = atan2(−gx, −gy). The Copernicus 90 m DEM (Open-Meteo, one request for the 5 points, about a second) is asked at the same time and shown when 3DEP has not answered within 4 s (in tests from five Texas places 3DEP took 9–16 s); a 3DEP answer that comes later (within its 15 s limit) replaces it in the header and the Soil profile tab. Model files built in between use the value shown then, and their README names its source.
 
 ## 5. Field or area analysis (area tool) and the map-click check
 
@@ -384,7 +385,7 @@ The data sheet is the panel's **DOWNLOAD data for models** tab, marked with a do
 
 ## 8. Drought: map theme, live layers, tab and downloads
 
-The map shows one theme at a time, chosen on the bar under the search box or in the layer sheet: **Wind erosion**, **Drought** or **Soil maps** (§11; with basins, §12, and soil moisture, §13). A theme puts its overlay on the map (one at a time, the last one chosen) and gives the panel its tabs: Wind erosion has Overview, Wind, Soil and Practices; Drought has Drought; Soil maps has Soil maps. DOWNLOAD data for models is in all of them. The theme is kept in the link (`&map=drought`, `soilmaps`), so a shared link opens on the same theme; a link naming a theme this app does not have opens on Wind erosion. Code: `js/weather.js` (themes, live layers, the Drought tab) and `js/timemap.js` (the Drought Monitor on a past week); the Methods sheet's *Drought* section lists the same.
+The map shows one theme at a time, chosen on the bar under the search box or in the layer sheet: **Wind erosion**, **Soil maps** (§11; with basins, §12, and soil moisture, §13) or **Drought**, in that order. A theme puts its overlay on the map (one at a time, the last one chosen) and gives the panel its tabs: Wind erosion has Overview, Wind, Soil and Practices; Drought has Drought; Soil maps has Overview, Soil maps and Soil profile (§11, §4). DOWNLOAD data for models is in all of them. A link to another theme's tab (Wind erosion › Soil to Soil maps › Soil profile) switches the theme too. A tab row wider than the panel scrolls, and the open tab is scrolled clear of DOWNLOAD; on a phone the Soil maps theme's tabs read Overview, Maps, Profile. The theme is kept in the link (`&map=drought`, `soilmaps`), so a shared link opens on the same theme; a link naming a theme this app does not have opens on Wind erosion. Code: `js/weather.js` (themes, live layers, the Drought tab) and `js/timemap.js` (the Drought Monitor on a past week); the Methods sheet's *Drought* section lists the same.
 
 **Live overlays.** Each is a WMS from the agency that makes it, shown as the producer draws it with the producer's own legend (GetLegendGraphic; `sld_version=1.1.0` is sent because the Drought Monitor's MapServer needs it). Nothing in them is recomputed. All were checked on 9 November 2026 by requesting tiles and legends from a page.
 - *Drought:* the U.S. Drought Monitor from the National Drought Mitigation Center's MapServer (`https://ndmcgeodata.unl.edu/cgi-bin/mapserv.exe?map=/ms4w/apps/usdm/map/usdm_current_wms.map`, layer `usdm_current`); the same week a year and five years before from `usdm_YYYYMMDD_wms.map` (layer `usdmYYYYMMDD`, the Tuesday the map is valid for: this week's date, read from the WMS capabilities' title, minus 52 or 261 weeks). The legend note gives the map's date and the credit the Drought Monitor's terms ask for. NOAA CPC's monthly and seasonal drought outlooks: `…/vector/services/outlooks/cpc_drought_outlk/MapServer/WMSServer`, layers 5 and 2.
@@ -433,7 +434,9 @@ Model files name the state the point is in: DSSAT's site and field ID (WG + the 
 
 ## 11. Soil maps: theme and tab
 
-The **Soil maps** theme shows one soil-chemistry map at a time; its tab gives what each source says at the point. Code: `js/soilmaps.js`; per-state images from `tools/build_soilmaps.py`; USGS map classes in `data/soilchem_legend.json`. Survey and model values describe typical soil, not a soil test.
+The **Soil maps** theme shows one soil-chemistry map at a time; its Soil maps tab gives what each source says at the point. Code: `js/soilmaps.js`; per-state images from `tools/build_soilmaps.py`; USGS map classes in `data/soilchem_legend.json`. Survey and model values describe typical soil, not a soil test.
+
+**Tabs.** The theme has three tabs. *Overview* opens first: a headline coloured by the soil survey's pH group (the dominant component at 0–15 cm: strongly acid ≤ 5.5, acid 5.6–6.5, neutral 6.6–7.3, alkaline 7.4–8.4, strongly alkaline > 8.4) and tiles for pH, salinity and sodicity, and CEC with organic matter (SSURGO); total N at 0–5 cm (SoilGrids, classed after Landon 1991: very low < 1, low 1–2, medium 2–5, high 5–10, very high > 10 g/kg); the HU12's mean annual runoff, design-storm runoff and RUSLE soil loss (§12); soil moisture today (ECMWF IFS, else ERA5-Land) and the nearest soil moisture station (§13). It asks for nothing itself: it draws the Soil maps tab once per location, out of sight, and fills its tiles from that tab's reads and tables, so opening Soil maps afterwards asks for nothing again. Each tile's *Details →* opens the Soil maps tab at its card, and the pH tile's *Soil profile →* the Soil profile tab. *Soil maps* holds the cards below, ending with the "What data is missing" card and *Download all the tables*. *Soil profile* is the dominant soil's horizons, classification and site parameters (§4). The map layers are buttons in three groups (Soil chemistry; Water: basins; Soil moisture) on the Overview's *On the map* card and under *Show on the map* in the Soil maps tab; the layer on the map is shown pressed, and choosing another replaces it.
 
 | Map or table | Source | What, depth | Resolution | Licence |
 |---|---|---|---|---|
@@ -450,7 +453,7 @@ The **Soil maps** theme shows one soil-chemistry map at a time; its tab gives wh
 - *USGS DS-801:* near-total four-acid digest, 4,857 sites sampled 2007–2010. The USGS interpolates by inverse distance and colours 10 classes; sampling the WMS at the sites showed the classes are the national deciles of the sites (censored values at the detection limit, classes closed above). Values are total, not plant-available.
 - *SoilGrids:* a model; built-up land and water have no value.
 - *KSSL:* the 8 nearest pedons' surface layer (`hzn_top = 0`) from `lab_combine_nasis_ncss`, `lab_layer` and `lab_chemical_properties`: NH₄OAc pH 7 K, Ca, Mg and Na; Bray-1, Olsen and Mehlich-3 P; total N and S. Sparse, often old, and Ca is inflated in calcareous soils.
-- *Downloads:* every table of the tab as CSV.
+- *Downloads:* every table of the tab as CSV, each from its card and all of them from *Download all the tables*, the tab's last card.
 - *What data is missing:* no map covers the US for soil-test (plant-available) N, P, K, Ca, Mg or S, or DTPA micronutrients; boron and phosphorus survey data is also limited for the US.
 - *Basins and soil moisture:* §12 and §13 add their layers and tab cards to this theme.
 
