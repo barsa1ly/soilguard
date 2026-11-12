@@ -32,7 +32,7 @@ This file lists every calculation the app makes, with its source. `docs/RESEARCH
 | Soil maps tab: chemistry by horizon, lab pedons | USDA-NRCS SSURGO and KSSL, public domain | Soil Data Access, direct | map units; points | the tab says why |
 | Soil maps: watershed boundaries, streams | USGS WBD; USGS NHDPlus HR (public domain) | MapServer export tiles, direct (§12) | HU8 to HU12; 1:24,000 flowlines from zoom 12 | — |
 | Soil maps tab: basin runoff | NHDPlus HR EROM step A (a model); USGS NLDI | WBD and NHDPlus_HR MapServer queries, catchments by id; NLDI, direct (§12) | HR catchments (about 0.1–1 km²); HU12 40–250 km² | the card says it could not be read |
-| Soil maps tab: design-storm runoff | NOAA Atlas 14 Vol. 11 (Texas); NLCD 2021; SSURGO | pre-built `atlas14.json`; MRLC WCS; Soil Data Access (§12) | 0.05° cells; 30 m; map units | a typed depth |
+| Soil maps tab: design-storm runoff | NOAA Atlas 14 Vols. 1, 2, 6, 8–12 (all but OR, WA); NLCD 2021; SSURGO | pre-built `atlas14.json`; MRLC WCS; Soil Data Access (§12) | 0.05° cells; 30 m; map units | a typed depth (OR, WA) |
 | Soil maps tab: RUSLE soil loss | USGS RF7100 R (Wieczorek & LaMotte 2010); SSURGO; NLCD 2021 | pre-built `rfactor.json` per state, COMID from NLDI (§12) | NHDPlus V2 catchment; R kept to 1% | a typed R |
 | Soil maps: soil moisture maps | NASA SMAP L4; NOAA NWM 3.0; NASA SPoRT-LIS, GRACE-DA | NASA GIBS WMTS; NOAA map services WMS; NOAA NIDIS tiles, direct (§13) | 9 km daily since 2015; 1 km hourly; 3 km daily; 0.125° weekly | — |
 | Soil maps tab: soil moisture at the point | ERA5-Land, ECMWF IFS (Open-Meteo); SMAP L4 (USDA Crop-CASMA); NWM 3.0 (AWS) | Open-Meteo's copy for the models; Crop-CASMA and the NWM files, direct (§13) | 0.1°; 9 km; 9 km; 1 km | the card says which source did not answer |
@@ -487,8 +487,10 @@ While the theme is on and the point is unchanged, the map also shows:
 
 **Design-storm runoff (SCS curve number, NRCS TR-55 1986).**
 - Storm: the 2-, 10- or 100-year 24-hour depth.
-  - In Texas it comes from NOAA Atlas 14 Volume 11 (partial-duration series): the point's 0.05° cell (the mean of its 6 × 6 30″ cells), or the nearest of its 8 neighbours that has all three depths.
-  - Elsewhere the depth is typed, with a link to NOAA's PFDS at the point (PFDS sends no CORS header).
+  - It comes from NOAA Atlas 14 (partial-duration series): the point's 0.05° cell (the mean of its 6 × 6 30″ cells), or the nearest of its 8 neighbours that has all three depths.
+  - The volumes: 1 and 6 (AZ, CA, NM, NV, UT; one grid), 2 (DC, DE, IL, IN, KY, MD, NC, NJ, OH, PA, SC, TN, VA, WV), 8 (CO, IA, KS, MI, MN, MO, ND, NE, OK, SD, WI), 9 (AL, AR, FL, GA, LA, MS), 10 (CT, MA, ME, NH, NY, RI, VT), 11 (TX) and 12 (ID, MT, WY).
+  - A state's cells take its own volume; a neighbouring volume fills only the edge cells outside the state that its own grid leaves empty.
+  - Oregon and Washington have no Atlas 14 volume yet (NOAA Atlas 2 still applies there): the depth is typed. A depth can be typed anywhere, with a link to NOAA's PFDS at the point (PFDS sends no CORS header).
 - Soil groups: SSURGO hydrologic groups, area-weighted inside the HU12. Soil Data Access intersects the HU12 with the map-unit polygons on its own server, and each component is weighted by its map unit's area × comppct. Dual groups (A/D, B/D, C/D) are taken as undrained (D). Area with no group is left out and its share stated.
 - Land cover: NLCD 2021, counted in 30 m cells inside the HU12 from the MRLC WCS (`js/landcover.js`). Open water and ice are left out.
 - Curve numbers come from TR-55 Table 2-2, at average wetness (AMC II):
@@ -540,9 +542,14 @@ The storm's return period, cropland's C and P are kept on the device; a typed de
   - the COMIDs, sorted and delta-coded;
   - q = round(100 ln R), delta- and zigzag-coded;
   - both written in a base-32 text code, about 2 characters a COMID (5.7 MB for the 48 states).
-- `python tools/build_basins.py atlas14 TX` writes the 0.05° grid from NOAA's 30″ ASCII grids (`xx{2,10,100}yr24ha.zip`). Add a newly built state's code to `A14` in `js/basins.js`.
+- `python tools/build_basins.py atlas14 all` (or `IA MO`) fetches, once, NOAA's 30″ ASCII grids of each region (`rr{2,10,100}yr24ha.zip` for sw, orb, mw, se, ne, tx and inw; 39 MB) into `tools/raw/basins`.
+- It writes `data/states/XX/atlas14.json` for the 46 states and DC (2.5 MB; Texas 184 KB, DC 1 KB):
+  - the state's box plus 0.1° on the same 0.05° cells for every state; Volume 2's 30″ cells, 0.02% smaller than the others', each go to the cell that holds their centre;
+  - cells more than about 0.1° outside the state's outline left empty;
+  - each row delta-coded.
+- Add a newly built state's code to `A14` in `js/basins.js` (the run prints the list).
 
-**Credits.** USGS and USDA-NRCS Watershed Boundary Dataset; USGS NHDPlus High Resolution and NLDI; USGS RF7100 (Wieczorek & LaMotte 2010); NOAA Atlas 14 Volume 11 (Perica et al. 2018); USDA-NRCS SSURGO through Soil Data Access; MRLC NLCD 2021; NRCS TR-55 (1986); Renard et al. (1997), AH 703; McCool et al. (1987). All public domain.
+**Credits.** USGS and USDA-NRCS Watershed Boundary Dataset; USGS NHDPlus High Resolution and NLDI; USGS RF7100 (Wieczorek & LaMotte 2010); NOAA Atlas 14 Volumes 1, 2, 6 and 8–12 (NOAA NWS Hydrometeorological Design Studies Center, 2004–2024; Volume 11, Perica et al. 2018); USDA-NRCS SSURGO through Soil Data Access; MRLC NLCD 2021; NRCS TR-55 (1986); Renard et al. (1997), AH 703; McCool et al. (1987). All public domain.
 
 ## 13. Soil moisture by depth (Soil maps theme and tab)
 

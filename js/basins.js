@@ -5,8 +5,8 @@
    the catchment layer takes 40-100 s or times out, so none is ever made. Three results, each labelled for what it is:
    - mean annual runoff of each catchment and of the HU12 from NHDPlus HR's EROM step A (the McCabe-Wolock water-balance
      model): 893.6 x qincrama (cfs) / area (km²) = mm/yr, a model value;
-   - design-storm runoff by the SCS curve number (TR-55) for a 24-hour depth (NOAA Atlas 14 where data/states/XX/atlas14.json
-     is built, else typed), CN from the soil survey's hydrologic groups (SSURGO, area-weighted inside the HU12 on Soil Data
+   - design-storm runoff by the SCS curve number (TR-55) for a 24-hour depth (NOAA Atlas 14 from data/states/XX/atlas14.json:
+     every state but Oregon and Washington, which no Atlas 14 volume covers yet, where it is typed), CN from the soil survey's hydrologic groups (SSURGO, area-weighted inside the HU12 on Soil Data
      Access's server) and the HU12's NLCD 2021 land cover (js/landcover.js's reader of the MRLC WCS);
    - gross sheet-and-rill soil loss by RUSLE, A = R K LS C P: R of the point's NHDPlus V2 catchment (USGS RF7100, pre-built
      per state into data/states/XX/rfactor.json by tools/build_basins.py; the COMID from USGS NLDI), K, slope and slope
@@ -220,8 +220,9 @@ WG.basins = (function () {
   }
   /* NOAA Atlas 14 24-hour depths (mm) at the point from data/states/XX/atlas14.json: the 0.05° cell, or the nearest of its
      neighbours with a value (a point at the state's edge). Only the states in A14 have the file (tools/build_basins.py
-     atlas14 XX, then add XX here): elsewhere nothing is asked, as a missing file would log a 404 at every point. */
-  const A14 = new Set(["TX"]);
+     atlas14 all: Volumes 1, 2, 6, 8-12, every state but Oregon and Washington): elsewhere nothing is asked, as a missing
+     file would log a 404 at every point. */
+  const A14 = new Set(["AL", "AR", "AZ", "CA", "CO", "CT", "DC", "DE", "FL", "GA", "IA", "ID", "IL", "IN", "KS", "KY", "LA", "MA", "MD", "ME", "MI", "MN", "MO", "MS", "MT", "NC", "ND", "NE", "NH", "NJ", "NM", "NV", "NY", "OH", "OK", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VA", "VT", "WI", "WV", "WY"]);
   const a14Files = new Map();
   const a14File = st => { if (!a14Files.has(st)) a14Files.set(st, fetchJSON(`data/states/${st}/atlas14.json?v=${V}`, {}, 20000).catch(() => null)); return a14Files.get(st); };
   function a14At(j, lat, lon) {

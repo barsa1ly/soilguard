@@ -630,7 +630,7 @@ def fig_basins():
     s.text(SX, T - 0.27, "For the HU12 that holds the point", fs=9, color=MUTED, weight="semibold")
     src = [(0.5, "soil", "USGS WBD MapServer", "HU12 at the point; HU8–HU12 map"),
            (1.1, "soil", "USGS NHDPlus HR MapServer", "flowlines, sinks; catchments by id"),
-           (1.85, "built", "Atlas 14 (built in, Texas)", "2-, 10-, 100-yr 24 h → atlas14.json"),
+           (1.85, "built", "Atlas 14 (built in)", "2-, 10-, 100-yr 24 h → atlas14.json"),
            (2.45, "soil", "MRLC NLCD 2021 WCS", "30 m classes in the HU12"),
            (3.05, "soil", "SSURGO by Soil Data Access", "groups, K, slope, λ, T in the HU12"),
            (3.8, "built", "R factor (built in)", "RF7100 per COMID → rfactor.json"),
@@ -668,7 +668,8 @@ def fig_basins():
         s.path([(k.right, k.cy), (R2.x, k.cy)])
     s.text(SX, S[-1].y - 0.3, "Labels: model (EROM runoff, the curve number, RUSLE), survey (SSURGO), map (NLCD 2021).",
            fs=9.5, color=MUTED, va="center", limit=W - 0.05)
-    s.text(SX, S[-1].y - 0.55, "NOAA Atlas 14 depths are built for Texas only; elsewhere the 24-hour depth is typed.",
+    s.text(SX, S[-1].y - 0.55, "NOAA Atlas 14 depths are built in for every state but Oregon and Washington, where the "
+           "24-hour depth is typed.",
            fs=9.5, color=MUTED, va="center", limit=W - 0.05)
     return s.save("flow_basins.png")
 
@@ -809,8 +810,8 @@ SOURCES = [
     ("Soil maps tab: basin runoff", "NHDPlus HR EROM step A (a model); USGS NLDI", "HU12 by point query; flowlines and "
      "sinks by its polygon; catchments by id, 500 a request (direct)", "HR catchments; HU12 40–250 km²",
      "the card says it could not be read"),
-    ("Soil maps tab: design-storm runoff", "NOAA Atlas 14 Vol. 11 (Texas); NLCD 2021; SSURGO", "pre-built atlas14.json "
-     "(tools/build_basins.py); MRLC WCS; Soil Data Access", "0.05°; 30 m; map units", "a typed depth"),
+    ("Soil maps tab: design-storm runoff", "NOAA Atlas 14 Vols. 1, 2, 6, 8–12 (not OR, WA); NLCD 2021; SSURGO", "pre-built "
+     "atlas14.json (tools/build_basins.py); MRLC WCS; Soil Data Access", "0.05°; 30 m; map units", "a typed depth (OR, WA)"),
     ("Soil maps tab: soil loss (RUSLE)", "USGS RF7100 (Wieczorek & LaMotte 2010); SSURGO; NLCD 2021", "pre-built "
      "rfactor.json per state (tools/build_basins.py); COMID from NLDI", "NHDPlus V2 catchment", "a typed R"),
     ("Soil maps: soil moisture maps", "NASA SMAP L4; NOAA NWM 3.0; NASA SPoRT-LIS, GRACE-DA", "NASA GIBS WMTS; NOAA WMS; "
@@ -946,11 +947,11 @@ BASIN_CALC = [
     ("Soils and land cover in the HU12", "SDA intersects the HU12 with map units on its server; NLCD 2021 counted in 30 m "
      "cells from the MRLC WCS", "HU12 → components, class areas", "basins.js · `soilsIn`; landcover.js · `boundaryShares`"),
     ("Curve number runoff", "TR-55 Table 2-2 CN per class and group; Q = (P − 0.2S)²/(P + 0.8S) per pair, averaged; "
-     "P from Atlas 14 (TX) or typed", "groups, classes, P → CN, Q, volume", "basins.js · `cnModel`, `a14At`, `scsQ`"),
+     "P from Atlas 14 (not OR, WA) or typed", "groups, classes, P → CN, Q, volume", "basins.js · `cnModel`, `a14At`, `scsQ`"),
     ("RUSLE", "R from rfactor.json by NLDI COMID; K, LS (McCool S, L by slope class), T per component; C by class; "
      "A = R K LS C P", "→ t/ac/yr, t/ha/yr, × T, tons/yr", "basins.js · `rAt`, `ls`, `drawRusle`"),
     ("R and Atlas 14 lookups (offline)", "RF7100 split by state with StreamCat COMIDs, delta and base-32 coded; Atlas 14 "
-     "30″ grids to 0.05° means", "national files → rfactor.json, atlas14.json", "tools/build_basins.py"),
+     "regional 30″ grids to 0.05° means per state", "national and regional files → rfactor.json, atlas14.json", "tools/build_basins.py"),
 ]
 
 MOISTURE_CALC = [
@@ -993,7 +994,7 @@ RESULTS = [
     ("Basin: HU12 and catchment runoff", "893.6 × qincrama ÷ area (EROM step A, a model); upstream by hydroseq",
      "NHDPlus HR, WBD, USGS NLDI"),
     ("Design-storm runoff, soil loss", "TR-55 curve number; RUSLE A = R K LS C P",
-     "NOAA Atlas 14 (Texas) or your depth; NLCD 2021; SSURGO; USGS RF7100"),
+     "NOAA Atlas 14 (not OR, WA) or your depth; NLCD 2021; SSURGO; USGS RF7100"),
     ("Soil moisture by depth", "daily means in m³/m³; the 3 nearest stations",
      "ERA5-Land, ECMWF IFS (Open-Meteo); SMAP L4 (Crop-CASMA); National Water Model; SCAN, SNOTEL, USCRN"),
     ("Figure and table downloads", "charts redrawn at the chosen size and DPI; CSV with units", "the results above, in the "
@@ -1037,8 +1038,8 @@ CODE = [
     ("data/states.js, data/states/XX.json, data/states/XX/*.png", "the state list; each state's outline, airports, "
      "statewide layers and county C (made by tools/build_states.py and tools/build_layers.py)"),
     ("data/practices/XX.json", "each state's practice profile (made by tools/fetch_efotg.py and tools/build_practices.py)"),
-    ("data/states/XX/rfactor.json, data/states/TX/atlas14.json", "the R factor per NHDPlus V2 catchment and Texas's "
-     "Atlas 14 depths (made by tools/build_basins.py)"),
+    ("data/states/XX/rfactor.json, data/states/XX/atlas14.json", "the R factor per NHDPlus V2 catchment and the "
+     "Atlas 14 depths of 46 states and DC (made by tools/build_basins.py)"),
     ("data/soilmoisture_stations.json", "the soil moisture stations and their sensor depths (made by tools/build_moisture.py)"),
     ("tools/*.py", "offline builders, run by hand, never by the app; tools/build_flow_doc.py makes this document"),
 ]
@@ -1104,7 +1105,8 @@ LIMITS = [
     ("Basins are models.", " Mean annual runoff is NHDPlus HR's EROM model (1971–2000 climate), not a gauge; other "
      "models can differ by a factor of two. The curve number is an event method on average wetness. RUSLE gives gross "
      "sheet-and-rill erosion, with LS from survey slopes and C from land-cover classes, not gullies or the sediment that "
-     "leaves the HU12. NOAA Atlas 14 depths are built for Texas only; elsewhere the depth is typed."),
+     "leaves the HU12. NOAA Atlas 14 depths are built for every state but Oregon and Washington, which no volume covers "
+     "yet; there the depth is typed."),
     ("Soil moisture sources differ.", " Models, SMAP L4 and stations often differ by 0.1 m³/m³ or more, as a model's "
      "soil is not the field's; compare changes more than levels. A station reads its own soil, often tens of km away."),
     ("No SoilGuard server.", " GitHub Pages only delivers the files. Your browser sends the point's coordinates (and any "
@@ -1355,8 +1357,9 @@ def build_docx(figs, commit):
     para("The Soil maps theme and tab also work on the small watershed (HU12) that holds the point. USGS map servers give "
          "its outline and its NHDPlus High Resolution catchments; their mean annual runoff comes from NHDPlus HR's EROM "
          "model. A design storm's runoff is worked out by the curve number (TR-55) from the HU12's land cover and soil "
-         "groups, with NOAA Atlas 14 depths built in for Texas, and the long-term soil loss by RUSLE, with R built in "
-         "from USGS RF7100 for every NHDPlus V2 catchment. All three are models, and the tab says so.")
+         "groups, with NOAA Atlas 14 depths built in for every state but Oregon and Washington, and the long-term soil "
+         "loss by RUSLE, with R built in from USGS RF7100 for every NHDPlus V2 catchment. All three are models, and the "
+         "tab says so.")
     figure(figs[7], 5.9, "Figure 8. Basins: the HU12 and its catchments, runoff by EROM and by the curve number, and "
                          "RUSLE soil loss.")
 
