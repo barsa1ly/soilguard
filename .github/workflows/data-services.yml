@@ -1,0 +1,52 @@
+# Once a day, one small request to each outside data service the app's pages ask (tools/check_services.py). When any
+# fails, an issue "Data services check: failing" is opened with the table, or the open one gets the new table as a
+# comment; when all answer again, the open issue gets "All services answered" and is closed.
+name: Data services check
+
+on:
+  schedule:
+    - cron: "17 11 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install requests
+      - name: Ask each data service once
+        id: check
+        continue-on-error: true
+        run: python tools/check_services.py --report report.md --failing failing.txt
+      - name: Open, update or close the issue
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          OUTCOME: ${{ steps.check.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Data services check: failing"
+          num=$(gh issue list --state open --limit 200 --json number,title --jq "[.[] | select(.title == \"$title\") | .number][0] // empty")
+          if [ "$OUTCOME" = "success" ]; then
+            if [ -n "$num" ]; then
+              gh issue comment "$num" --body "All services answered ([run]($RUN_URL))."
+              gh issue close "$num"
+            fi
+            exit 0
+          fi
+          [ -s report.md ] || echo "The check did not finish; see the run log." > report.md
+          printf '\n[Run log](%s)\n' "$RUN_URL" >> report.md
+          if [ -n "$num" ]; then
+            gh issue comment "$num" --body-file report.md
+          else
+            gh issue create --title "$title" --body-file report.md
+          fi
