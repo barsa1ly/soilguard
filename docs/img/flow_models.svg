@@ -2911,7 +2911,7 @@ z
     </g>
    </g>
    <g id="text_15">
-    <!-- the profile on the Soil profile tab -->
+    <!-- the profile on the Soil tab -->
     <g style="fill: #3e4c59" transform="translate(330.48 63.009375) scale(0.1 -0.1)">
      <defs>
       <path id="SegoeUI-53" d="M 1044 463 
@@ -2966,17 +2966,9 @@ z
      <use xlink:href="#SegoeUI-4c" transform="translate(906.21875 0)"/>
      <use xlink:href="#SegoeUI-4f" transform="translate(930.4375 0)"/>
      <use xlink:href="#SegoeUI-3" transform="translate(954.65625 0)"/>
-     <use xlink:href="#SegoeUI-53" transform="translate(982.046875 0)"/>
-     <use xlink:href="#SegoeUI-55" transform="translate(1040.84375 0)"/>
-     <use xlink:href="#SegoeUI-52" transform="translate(1075.609375 0)"/>
-     <use xlink:href="#SegoeUI-49" transform="translate(1134.203125 0)"/>
-     <use xlink:href="#SegoeUI-4c" transform="translate(1165.5 0)"/>
-     <use xlink:href="#SegoeUI-4f" transform="translate(1189.71875 0)"/>
-     <use xlink:href="#SegoeUI-48" transform="translate(1213.9375 0)"/>
-     <use xlink:href="#SegoeUI-3" transform="translate(1266.234375 0)"/>
-     <use xlink:href="#SegoeUI-57" transform="translate(1293.625 0)"/>
-     <use xlink:href="#SegoeUI-44" transform="translate(1327.515625 0)"/>
-     <use xlink:href="#SegoeUI-45" transform="translate(1378.390625 0)"/>
+     <use xlink:href="#SegoeUI-57" transform="translate(982.046875 0)"/>
+     <use xlink:href="#SegoeUI-44" transform="translate(1015.9375 0)"/>
+     <use xlink:href="#SegoeUI-45" transform="translate(1066.8125 0)"/>
     </g>
    </g>
    <g id="text_16">
