@@ -80,50 +80,122 @@ WG.util = (function () {
   const keptInfo = async () => { try { const box = await keepOpen(); return (await box.keys()).length; } catch (e) { return 0; } };
   const keepClear = () => (keepOn ? caches.delete(KEEP_BOX).then(() => { keepBox = null; }) : Promise.resolve());
 
-  /* headerMs caps the wait for the server to start answering; timeoutMs caps the whole download. */
+  /* Pacing, never a quota: at most 6 requests from this page are open to one server at the same instant; more wait in
+     line, first come first served, and each is sent as soon as one before it is answered, so a visitor can ask as much
+     and for as long as they like. With 50 to 75 visitors at once this keeps each page from opening dozens of
+     connections to one small server (Soil Data Access, The National Map) at the same moment. A request holds its place
+     from when it is sent until its answer starts (the headers), not while a long answer downloads; the time spent in
+     line does not count against its time limits; a caller's stop takes a waiting request out of the line unsent. The
+     app's own files (same origin) skip the line: the GitHub Pages CDN is not the bottleneck. Leaflet's map tiles and
+     WMS images are <img> loads, outside this; the browser paces those itself. */
+  const PER_HOST = 6, lines = new Map(); // host -> { open: sent and not yet answered, wait: in line }
+  function slot(host, sig) {
+    let L = lines.get(host);
+    if (!L) lines.set(host, (L = { open: 0, wait: [] }));
+    return new Promise((res, rej) => {
+      if (sig.aborted) { rej(sig.reason); return; }
+      if (L.open < PER_HOST) { L.open++; res(); return; }
+      const w = {
+        go: () => { sig.removeEventListener("abort", w.off); res(); },
+        off: () => { const k = L.wait.indexOf(w); if (k >= 0) { L.wait.splice(k, 1); rej(sig.reason); } },
+      };
+      L.wait.push(w);
+      sig.addEventListener("abort", w.off, { once: true });
+    });
+  }
+  // a place let go passes straight to the first in line
+  function free(host) { const L = lines.get(host), w = L.wait.shift(); if (w) w.go(); else L.open--; }
+
+  /* Asked again, at most twice, when the server is busy or failing (HTTP 429, 502, 503, 504) or the request did not get
+     through (fetch's TypeError: the network dropped, or an error page came without a CORS header): after about 1 s,
+     then 3 s, each times a random 0.5 to 1.5 so that pages turned away at the same moment do not all come back at once,
+     or after the server's Retry-After (seconds or a date, where the server lets pages read it), at least 0.5 s (a
+     Retry-After of 0 or a past date would send the page straight back to a server that said it is busy) and at most
+     20 s. The place in line is let go while it waits. A 502, a 504 or a request that did not get through is asked
+     again only when it failed within 8 s: one that came later is most likely a gateway that has already waited its own
+     limit for the server behind it (an NHDPlus HR query failed after 10 s on 12 Nov 2026), and two more tries would
+     triple the wait for an error. Never on another 4xx (the same question gets the same answer), on the caller's stop,
+     or on this module's own time limit (a 45 s wait should not become 135 s). POST is asked again too: the app's POSTs
+     are read-only queries (Soil Data Access, ACIS, The National Map's query by POST), so a second ask changes nothing
+     on the server. */
+  const BUSY = new Set([429, 503]), GATE = new Set([502, 504]), SLOW_MS = 8000, BACK = [1000, 3000], BACK_MAX = 20000;
+  const again = (r, err, ms) => (err ? err instanceof TypeError && ms < SLOW_MS : BUSY.has(r.status) || (GATE.has(r.status) && ms < SLOW_MS));
+  function backoff(r, k) {
+    const h = r ? (r.headers.get("Retry-After") || "").trim() : "", ms = !h ? NaN : /^\d+$/.test(h) ? h * 1000 : Date.parse(h) - Date.now();
+    return Math.min(BACK_MAX, Number.isFinite(ms) ? Math.max(500, ms) : BACK[k] * (0.5 + Math.random()));
+  }
+  const nap = (ms, sig) => new Promise((res, rej) => {
+    if (sig.aborted) { rej(sig.reason); return; }
+    const off = () => { clearTimeout(t); rej(sig.reason); }, t = setTimeout(() => { sig.removeEventListener("abort", off); res(); }, ms);
+    sig.addEventListener("abort", off, { once: true });
+  });
+  const where = url => { try { const u = new URL(url, location.href); return { host: u.host, own: u.origin === location.origin }; } catch (e) { return { host: "the server", own: false }; } };
+
+  /* One request through its server's line, asked again as above. o.timeoutMs caps the whole answer and o.headerMs the
+     wait for it to start, both counted from when it is sent (anew for each try), never while it waits. o.read(r) reads
+     the answer within o.timeoutMs; without it the Response is returned, and o.timeoutMs and the caller's signal still
+     cover the reading of its body. o.plain: a time limit stops the request with no message of its own (fetchText's
+     way, kept). A caller's stop with no reason of its own is DOMException "Stopped", as before. */
+  async function send(url, opts = {}, o = {}) {
+    const { host, own } = where(url), sig = opts.signal, ctrl = new AbortController();
+    const stop = () => ctrl.abort(sig.reason && sig.reason.name !== "AbortError" ? sig.reason : new DOMException("Stopped", "AbortError"));
+    const late = () => (o.plain ? ctrl.abort() : ctrl.abort(new Error(`${host} did not answer in time`)));
+    let timer = 0, hdr = 0, lent = false;
+    if (sig) { if (sig.aborted) stop(); else sig.addEventListener("abort", stop, { once: true }); }
+    try {
+      for (let k = 0; ; k++) {
+        if (!own) await slot(host, ctrl.signal);
+        let r = null, err = null, t0 = 0;
+        try {
+          if (o.timeoutMs) timer = setTimeout(late, o.timeoutMs);
+          if (o.headerMs) hdr = setTimeout(late, o.headerMs);
+          t0 = Date.now();
+          r = await fetch(url, { ...opts, signal: ctrl.signal });
+        } catch (e) { err = e; } finally { clearTimeout(hdr); if (!own) free(host); }
+        if (k < BACK.length && !ctrl.signal.aborted && again(r, err, Date.now() - t0)) {
+          clearTimeout(timer);
+          const ms = backoff(r, k);
+          if (r && r.body) r.body.cancel().catch(() => {});
+          await nap(ms, ctrl.signal);
+          continue;
+        }
+        if (err) throw err;
+        if (!o.read) { lent = true; return r; }
+        return await o.read(r);
+      }
+    } finally {
+      if (!lent) { clearTimeout(timer); clearTimeout(hdr); if (sig) sig.removeEventListener("abort", stop); }
+    }
+  }
+  /* fetch(url, opts) through the server's line, asked again as above: the Response, for the modules that read it
+     themselves (byte ranges, GeoTIFFs, HEAD). timeoutMs caps the whole answer, its body too (0: none), and headerMs the
+     wait for it to start, both from when it is sent; opts.signal stops it in line, between tries or while its body is read. */
+  const fetchQ = (url, opts = {}, timeoutMs = 0, headerMs = 0) => send(url, opts, { timeoutMs, headerMs });
+
+  /* headerMs caps the wait for the server to start answering; timeoutMs caps the whole download; a caller's own signal
+     (opts.signal) cancels the request too. */
   async function fetchJSON(url, opts = {}, timeoutMs = 45000, headerMs = timeoutMs) {
     const key = keepKey(url, opts), hit = key && (await kept(key));
     if (hit) { try { return await hit.json(); } catch (e) { /* a broken copy: asked again */ } }
-    const ctrl = new AbortController();
-    const host = (() => { try { return new URL(url, location.href).host; } catch (e) { return "the server"; } })();
-    const late = () => ctrl.abort(new Error(`${host} did not answer in time`));
-    const timer = setTimeout(late, timeoutMs);
-    const hdrTimer = setTimeout(late, headerMs);
-    // a caller's own signal (opts.signal) cancels this request too
-    const stop = () => ctrl.abort(new DOMException("Stopped", "AbortError"));
-    if (opts.signal) { if (opts.signal.aborted) stop(); else opts.signal.addEventListener("abort", stop, { once: true }); }
-    try {
-      const r = await fetch(url, { ...opts, signal: ctrl.signal });
-      clearTimeout(hdrTimer);
+    return send(url, opts, { timeoutMs, headerMs, read: async r => {
       if (!r.ok) {
         let msg = r.status + " " + r.statusText;
         try { const j = await r.json(); msg = j.reason || j.message || msg; } catch (e) { /* not json */ }
         throw new Error(msg);
       }
       if (key) keep(key, r);
-      return await r.json();
-    } finally {
-      clearTimeout(timer);
-      clearTimeout(hdrTimer);
-    }
+      return r.json();
+    } });
   }
 
   async function fetchText(url, timeoutMs = 45000, headerMs = timeoutMs) {
     const key = keepKey(url, {}), hit = key && (await kept(key));
     if (hit) { try { return await hit.text(); } catch (e) { /* a broken copy: asked again */ } }
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-    const hdrTimer = setTimeout(() => ctrl.abort(), headerMs);
-    try {
-      const r = await fetch(url, { signal: ctrl.signal });
-      clearTimeout(hdrTimer);
+    return send(url, {}, { timeoutMs, headerMs, plain: true, read: async r => {
       if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
       if (key) keep(key, r);
-      return await r.text();
-    } finally {
-      clearTimeout(timer);
-      clearTimeout(hdrTimer);
-    }
+      return r.text();
+    } });
   }
 
   /* a file as a Blob; type: a pattern its Content-Type must match, as some servers answer an error with a page and
@@ -131,16 +203,13 @@ WG.util = (function () {
   async function fetchBlob(url, timeoutMs = 45000, type = null) {
     const key = keepKey(url, {}), hit = key && (await kept(key));
     if (hit) { try { const b = await hit.blob(); if (!type || type.test(b.type)) return b; } catch (e) { /* a broken copy: asked again */ } }
-    const host = (() => { try { return new URL(url, location.href).host; } catch (e) { return "the server"; } })();
-    const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(new Error(`${host} did not answer in time`)), timeoutMs);
-    try {
-      const r = await fetch(url, { signal: ctrl.signal });
+    return send(url, {}, { timeoutMs, read: async r => {
       if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
       const ct = r.headers.get("Content-Type") || "";
       if (type && !type.test(ct)) { const t = await r.text().catch(() => ""); throw new Error(`the server answered ${ct || "no type"}${t ? `: ${t.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 160)}` : ""}`); }
       if (key) keep(key, r);
-      return await r.blob();
-    } finally { clearTimeout(timer); }
+      return r.blob();
+    } });
   }
 
   /* Map items through an async fn with at most n requests in flight; results keep input order. */
@@ -239,6 +308,6 @@ WG.util = (function () {
     },
   };
 
-  return { MONTHS, MONTHS_LONG, COMPASS, $, $$, esc, num, fmt, clamp, msToMph, compass, fetchJSON, fetchText, fetchBlob, keptInfo, keepClear, pool, debounce,
+  return { MONTHS, MONTHS_LONG, COMPASS, $, $$, esc, num, fmt, clamp, msToMph, compass, fetchJSON, fetchText, fetchBlob, fetchQ, keptInfo, keepClear, pool, debounce,
     parseCoords, toast, download, linreg, cache };
 })();

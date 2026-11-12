@@ -25,7 +25,8 @@
     if (rows) return Promise.resolve(rows);
     if (!loading) {
       const ctrl = new AbortController(), t = setTimeout(() => ctrl.abort(), 30000);
-      loading = fetch(`data/places.txt?v=${v}`, { signal: ctrl.signal })
+      // the app's own file: it skips util.js's per-server line, and is asked again after a network failure
+      loading = WG.util.fetchQ(`data/places.txt?v=${v}`, { signal: ctrl.signal })
         .then(r => { if (!r.ok) throw new Error(`the place list did not load (HTTP ${r.status})`); return r.text(); })
         .then(text => {
           rows = text.split("\n").filter(Boolean).map(l => {

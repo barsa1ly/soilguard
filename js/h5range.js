@@ -44,17 +44,19 @@ WG.h5range = (function () {
   }
 
   /* bytes [a, a + n) of S's file. short: a block may end at the end of the file. A 200 to a Range request is the whole
-     file (6 GB and more here), so it is stopped at once, never downloaded. */
+     file (6 GB and more here), so it is stopped at once, never downloaded. Sent through util.js's line for the server
+     (shared with the app's other requests to it) and asked again when the server is busy; HEAD_MS counts from when it
+     is sent, not while it waits in either line. */
   async function get(S, a, n, sig, short) {
     if (S.dead) throw staleErr(S);
     await slot(sig);
     const ctrl = new AbortController(), late = () => ctrl.abort(new Error(`${S.host} did not answer in time`)), stop = () => ctrl.abort(stopped(sig));
-    let t = setTimeout(late, HEAD_MS);
+    let t = 0;
     if (sig) sig.addEventListener("abort", stop, { once: true });
     const cut = r => { if (r.body) r.body.cancel().catch(() => {}); ctrl.abort(); };
     try {
       if (sig && sig.aborted) throw stopped(sig);
-      const r = await fetch(S.url, { headers: { Range: `bytes=${a}-${a + n - 1}` }, signal: ctrl.signal, cache: S.fresh ? "reload" : "default" });
+      const r = await WG.util.fetchQ(S.url, { headers: { Range: `bytes=${a}-${a + n - 1}` }, signal: ctrl.signal, cache: S.fresh ? "reload" : "default" }, 0, HEAD_MS);
       const len = +(r.headers.get("Content-Length") || 0);
       if (r.status === 200 || (r.status === 206 && len > n)) { cut(r); throw new Error(`${S.host} answered with ${r.status === 200 ? "the whole file" : `${len} bytes`}, not the ${n} bytes asked for`); }
       if (r.status !== 206) { cut(r); throw new Error(`${S.host}: ${r.status} ${r.statusText}`); }

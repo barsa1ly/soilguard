@@ -94,7 +94,7 @@ WG.landcover = (function () {
   async function classAt(lat, lon) {
     const [x, y] = albers(lon, lat), q = new URLSearchParams({ service: "WCS", version: "2.0.1", request: "GetCoverage", coverageId: "NLCD_2021_Land_Cover_L48", format: "image/geotiff" });
     q.append("subset", `X(${Math.floor(x - 45)},${Math.ceil(x + 45)})`); q.append("subset", `Y(${Math.floor(y - 45)},${Math.ceil(y + 45)})`);
-    const r = await fetch(`${WCS}?${q}`);
+    const r = await WG.util.fetchQ(`${WCS}?${q}`);
     if (!r.ok) throw new Error(`MRLC WCS answered ${r.status}`);
     const g = readTiff(await r.arrayBuffer()), c = Math.floor((x - g.left) / g.dx), k = Math.floor((g.top - y) / g.dy);
     if (c < 0 || k < 0 || c >= g.w || k >= g.h) throw new Error("the point is outside the cells returned");
@@ -120,7 +120,7 @@ WG.landcover = (function () {
       const q = new URLSearchParams({ service: "WCS", version: "2.0.1", request: "GetCoverage", coverageId: "NLCD_2021_Land_Cover_L48", format: "image/geotiff" });
       q.append("subset", `X(${x0},${x1})`); q.append("subset", `Y(${y0},${y1})`);
       if (f > 1) q.set("scalesize", `i(${n}),j(${m})`);
-      const r = await fetch(`${WCS}?${q}`);
+      const r = await WG.util.fetchQ(`${WCS}?${q}`);
       if (!r.ok) throw new Error(`MRLC WCS answered ${r.status}`);
       const res = count(readTiff(await r.arrayBuffer()), rings);
       if (!res.cells) throw new Error("no cells inside the boundary");

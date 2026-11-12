@@ -207,7 +207,7 @@ WG.soilmoisture = (function () {
     for (let h = 0; h <= 6; h++) {
       const t = Date.now() - h * 36e5, s = new Date(t).toISOString(), url = `${NWM_S3}nwm.${s.slice(0, 10).replace(/-/g, "")}/analysis_assim/nwm.t${s.slice(11, 13)}z.analysis_assim.land.tm00.conus.nc`;
       // one byte, to see whether the hour's file is there yet (a plain range is allowed across origins; HEAD may not be)
-      const r = await fetch(url, { headers: { Range: "bytes=0-0" }, signal: AbortSignal.timeout(15000) }).catch(() => null);
+      const r = await WG.util.fetchQ(url, { headers: { Range: "bytes=0-0" } }, 15000).catch(() => null);
       if (r && r.ok) return { url, valid: Math.floor(t / 36e5) * 36e5 };
     }
     throw new Error("no National Water Model analysis on AWS in the last 6 hours");
@@ -271,8 +271,8 @@ WG.soilmoisture = (function () {
     const latest = new Map();
     if (d1 >= today() - 2) try {
       const y = new Date(d1 * 864e5).getUTCFullYear(), url = `${CRN}hourly02/${y}/CRNH0203-${y}-${stem}.txt`;
-      const h = await fetch(url, { method: "HEAD", signal: AbortSignal.timeout(15000) }), size = +h.headers.get("content-length");
-      const r = await fetch(url, { headers: size > 30000 ? { Range: `bytes=${size - 30000}-` } : {}, signal: AbortSignal.timeout(20000) });
+      const h = await WG.util.fetchQ(url, { method: "HEAD" }, 15000), size = +h.headers.get("content-length");
+      const r = await WG.util.fetchQ(url, { headers: size > 30000 ? { Range: `bytes=${size - 30000}-` } : {} }, 20000);
       (await r.text()).split("\n").slice(1).map(l => l.trim().split(/\s+/)).filter(c => c.length >= 33).forEach(c => CRN_K.forEach((k, i) => {
         const v = num(c[28 + i]);
         if (ok(v) && v >= 0) latest.set(k, { v, time: `${c[3].slice(0, 4)}-${c[3].slice(4, 6)}-${c[3].slice(6)} ${c[4].slice(0, 2)}:${c[4].slice(2)} LST` });

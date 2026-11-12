@@ -790,11 +790,14 @@ WG.wind = (function () {
   }
 
   /* IEM refuses a hads.py request that starts within about a second of another from the same address (HTTP 429,
-     still readable cross-origin) and has throttled asos.py at times: retry twice. */
+     still readable cross-origin) and has throttled asos.py at times: fetchText (util.js) already asks again twice after
+     a 429, 502, 503 or 504 or a dropped connection. It does not after its own time limit, so this asks again twice
+     after one, as before; after nothing else, so that a lasting 429 costs 3 requests, not 9. (With no signal of the
+     caller's, fetchText's AbortError is its time limit.) */
   async function iemText(url, timeoutMs) {
     for (let k = 0; ; k++) {
       try { return await fetchText(url, timeoutMs); }
-      catch (e) { if (k === 2) throw e; await new Promise(r => setTimeout(r, 3000 * 2 ** k)); } // 429 (busy) or a network error
+      catch (e) { if (k === 2 || !e || e.name !== "AbortError") throw e; await new Promise(r => setTimeout(r, 3000 * 2 ** k)); }
     }
   }
 
