@@ -234,6 +234,13 @@ svg { display: block; }
 .legend .lc-n { flex: 1; }
 .legend .lc-p { font-variant-numeric: tabular-nums; font-weight: 600; }
 .legend .lnote { color: var(--muted); margin: 6px 0 0; font-size: 11px; line-height: 1.35; }
+/* a wide screen: the legend keeps below the theme bar (and the past-date bar under it), scrolling inside when it is longer
+   (the land cover's curve numbers, open, run past the screen), its title and hide button held at its top */
+@media (min-width: 768px) {
+  .legend { max-height: calc(100% - 148px); overflow-y: auto; overscroll-behavior: contain; }
+  .map-pane:has(> .time-bar:not([hidden])) .legend { max-height: calc(100% - 300px); } /* the bar ends about 260 px down */
+  .legend > h5:first-child { position: sticky; top: -10px; z-index: 1; margin: -10px -12px 6px; padding: 10px 12px 2px; background: rgba(255, 255, 255, .97); border-radius: 12px 12px 0 0; }
+}
 
 .hint {
   position: absolute;
@@ -981,6 +988,12 @@ table.weg-table .here { display: inline-block; margin-left: 4px; padding: 0 7px;
 .tabs button.tab-dl svg { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
 .tabs button.tab-dl.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 .tabs button.tab-dl:not(.active):hover { background: #f1d7c8; color: var(--accent-2); }
+/* narrow phones (360-400 px): a theme's four tabs and DOWNLOAD in one row without scrolling, by tighter padding */
+@media (max-width: 400px) {
+  .tabs { gap: 2px; padding-left: 6px; padding-right: 6px; }
+  .tabs button { padding-left: 6px; padding-right: 6px; font-size: 12.5px; }
+  .tabs button.tab-dl { padding-left: 7px; padding-right: 7px; gap: 4px; }
+}
 .dl-head { display: flex; gap: 12px; align-items: center; padding: 4px 2px; }
 .dl-head svg { width: 34px; height: 34px; flex: none; padding: 6px; border-radius: 10px; background: var(--accent); color: #fff; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
 .dl-head h3 { margin: 0; font-size: 16px; }
@@ -1078,14 +1091,52 @@ table.grid.sm-table td small { color: var(--muted); }
 .bs-leg i.up { background: transparent; border: 2px solid #e6550d; }
 .bs-sw { display: inline-block; width: 10px; height: 10px; margin-right: 6px; border-radius: 2px; vertical-align: -1px; border: 1px solid rgba(0, 0, 0, .2); }
 
+/* the design storm's results in plain words: the HU12 in one line, each method's letters in a box to open, a hint under
+   each RUSLE input, and the meaning of each factor under its name */
+.bs-hu { margin: 4px 0 6px; font-size: 13.5px; line-height: 1.45; }
+.bs-help { margin: 10px 0 6px; font-size: 12.5px; color: var(--ink-2); }
+.bs-help summary { cursor: pointer; color: var(--accent-2); font-weight: 600; font-size: 12.5px; }
+.bs-help[open] summary { margin-bottom: 6px; }
+.bs-help table.grid.sm-table td { white-space: normal; vertical-align: top; }
+.bs-help table.grid.sm-table td:nth-child(3) { min-width: 220px; }
+.bs-ctl label small { font-weight: 400; color: var(--muted); font-size: 11px; line-height: 1.3; }
+.bs-ctl label[hidden] { display: none; }
+table.grid.sm-table small.bs-mean { display: block; font-weight: 400; white-space: normal; }
+
+/* the Soil tab (js/soilmaps.js): the Horizons card's two views, and a place from a table shown on the map */
+.sm-hzseg { margin: 2px 0 8px; }
+.sm-hzwho { margin-top: 0; }
+.sm-pin i { display: block; width: 18px; height: 18px; border-radius: 50%; background: #6a3d9a; border: 3px solid #fff; box-shadow: 0 0 0 1.5px #4a1486, 0 2px 6px rgba(0, 0, 0, .35); box-sizing: border-box; }
+.leaflet-tooltip.sm-pin-tip { font-size: 12px; line-height: 1.35; padding: 5px 8px; width: max-content; max-width: 220px; white-space: normal; }
+.sm-pin-btn { font-size: inherit; text-align: left; }
+
+/* the land cover legend's curve numbers (js/landcover.js): shut until tapped, a compact table */
+.legend .lc-cn { margin-top: 6px; }
+.legend .lc-cn summary { cursor: pointer; color: var(--accent-2); font-weight: 600; font-size: 11.5px; }
+.legend .lc-cnt { width: 100%; border-collapse: collapse; margin-top: 4px; font-size: 11px; font-variant-numeric: tabular-nums; }
+.legend .lc-cnt th { font-weight: 600; text-align: center; color: var(--ink-2); padding: 2px 3px; border-bottom: 1px solid rgba(0, 0, 0, .12); }
+.legend .lc-cnt th:first-child { text-align: left; }
+.legend .lc-cnt td { text-align: center; padding: 2px 3px; border-bottom: 1px solid rgba(0, 0, 0, .05); }
+.legend .lc-cnt td:first-child { text-align: left; display: flex; align-items: flex-start; gap: 5px; }
+.legend .lc-cnt td:first-child .sw { width: 10px; height: 10px; margin-top: 2px; }
+.legend .lc-cnt td small { display: block; color: var(--muted); font-size: 10px; line-height: 1.25; }
+.legend.min .lc-cn { display: none; }
+
 /* ---------- soil moisture by depth (js/soilmoisture.js) ---------- */
-/* the tab's small line charts: one line a depth, a hover column a day (its title is the tooltip), and their key */
-.smm-chart { display: block; width: 100%; height: auto; margin: 8px 0 2px; }
-.smm-chart .hv rect:hover { fill: rgba(28, 36, 32, .07); }
-.smm-key { display: flex; flex-wrap: wrap; gap: 3px 12px; margin: 2px 0 8px; font-size: 11px; color: var(--ink-2); }
-.smm-key span { display: inline-flex; align-items: center; gap: 5px; }
-.smm-key i { display: inline-block; width: 16px; border-top: 2px solid; }
-.smm-key i.d { border-top-style: dashed; }
+/* the Soil moisture tab (Wx.RENDER.soilmoist): the period's rows of checkboxes (depths, sources, sensors), each depth's
+   colour, and the tables of what is shown, closed until opened */
+.smm-fs { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 14px; margin: 10px 0 2px; font-size: 12.5px; }
+.smm-fs-k { flex: 0 0 100%; font-size: 12px; font-weight: 600; color: var(--ink-2); }
+.smm-fs label.check { display: inline-flex; align-items: center; gap: 5px; font-weight: 500; color: var(--ink); cursor: pointer; white-space: nowrap; }
+.smm-fs label.check input { margin: 0; accent-color: var(--accent-2); }
+.smm-fs small { color: var(--muted); font-size: 11px; }
+.smm-sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
+.smm-per .form-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+.smm-prog:empty { display: none; }
+.smm-tbl { margin: 6px 0; }
+.smm-tbl summary { cursor: pointer; font-size: 12.5px; font-weight: 600; color: var(--accent-2); padding: 4px 0; }
+.smm-tbl .table-wrap { max-height: 420px; overflow: auto; }
+.smm-sub { margin-top: 12px; }
 /* the SMAP maps' day, under the legend's title */
 .smm-ctl input[type="date"] { height: 28px; min-width: 0; border: 1px solid var(--line); border-radius: 7px; padding: 0 6px; font: inherit; font-size: 12px; font-weight: 500; background: var(--surface); color: var(--ink); }
 .smm-latest { height: 28px; border: 1px solid var(--line); border-radius: 7px; padding: 0 8px; font: inherit; font-size: 12px; font-weight: 600; background: var(--surface); color: var(--accent-2); cursor: pointer; white-space: nowrap; }
@@ -1102,15 +1153,15 @@ table.grid.sm-table td small { color: var(--muted); }
 /* the longer class names ("Strongly alkaline") wrap on a phone rather than end in "…"; the ranges stay in line at the foot */
 .so-head .risk-scale div { display: flex; flex-direction: column; justify-content: space-between; }
 .so-head .risk-scale b { white-space: normal; }
-/* the Overview draws the Soil maps tab while it is hidden: laid out at the panel's width but with no height and unseen, so
-   what is drawn to its box's width (the soil moisture charts) comes out as it would in the open tab */
+/* the Overview draws the Soil tab while it is hidden: laid out at the panel's width but with no height and unseen, so
+   what is drawn to its box's width comes out as it would in the open tab */
 #tab-soilmaps[hidden] { display: grid !important; height: 0; overflow: hidden; visibility: hidden; contain: layout paint; }
 .so-tile { display: flex; flex-direction: column; }
 .so-tile .k { display: flex; justify-content: space-between; align-items: flex-start; gap: 6px; line-height: 1.3; }
 .so-tile .k > span:first-child { min-width: 0; }
 .so-tile .k .tag { flex: none; font-size: 10px; padding: 1px 6px; }
 .so-tile .s b { color: var(--ink-2); font-weight: 600; }
-.so-tile .so-links { margin-top: auto; padding-top: 6px; display: flex; flex-wrap: wrap; gap: 2px 12px; } /* Details, and on the pH tile Soil profile */
+.so-tile .so-links { margin-top: auto; padding-top: 6px; display: flex; flex-wrap: wrap; gap: 2px 12px; } /* Details, and on the pH tile Horizons */
 .so-tile .so-go { font-size: 12px; }
 .sm-chips { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; margin-top: 8px; }
 .sm-chips-k { font-size: 11.5px; color: var(--muted); font-weight: 600; }

@@ -2,11 +2,13 @@
    (the USDA Forest Service's image services built from gNATSGO, 30 m, drawn for each view), salinity and sodicity (UC Davis
    SoilWeb 800 m grids from SSURGO, pre-built per state by tools/build_soilmaps.py), total elements (the USGS soil
    geochemistry WMS from Data Series 801, one element at a time) and total nitrogen (the ISRIC SoilGrids WMS, a model).
-   The tab gives, at the point, the survey's chemistry by depth (SSURGO through Soil Data Access), the Forest Service
-   values, SoilGrids' total N, the nearest USGS sites and the nearest NRCS lab pedons (KSSL), each labelled for what it
-   measures. No map covers the US for soil-test (plant-available) N, P, K, Ca, Mg or S, nor for boron: the tab says
-   so. Loaded after weather.js, whose THEMES, layers and RENDER it joins, and before app.js, which builds the theme bar,
-   the layer sheet and the legend from them. */
+   The panel's tabs: Overview (the soil at a glance, a tile per source), Soil (the dominant soil and its horizons, drawn
+   with js/app.js's profile from the survey read for the wind erosion, then the survey's chemistry by depth through Soil
+   Data Access, the Forest Service values, SoilGrids' total N, the nearest USGS sites and NRCS lab pedons (KSSL), each
+   labelled for what it measures) and Basin (js/basins.js's parts); Moisture is js/soilmoisture.js's. No map covers the
+   US for soil-test (plant-available) N, P, K, Ca, Mg or S, nor for boron: the Soil tab says so. Loaded after weather.js,
+   whose THEMES, layers and RENDER it joins, and before app.js, which builds the theme bar, the layer sheet and the
+   legend from them. */
 WG.soilmaps = (function () {
   const { $$, esc, fmt, fetchJSON, fetchText, compass } = WG.util;
   const Wx = WG.weather, UN = WG.units;
@@ -41,11 +43,12 @@ WG.soilmaps = (function () {
   const HZ = [["Top5", "top 0–5 cm"], ["A", "A horizon"], ["C", "C horizon"]];
   const SGD = ["0-5cm", "5-15cm", "15-30cm", "30-60cm", "60-100cm", "100-200cm"];
   const cmLabel = d => d.replace("-", "–").replace("cm", " cm");
-  const pick = { depth: 5, el: "P", hz: "Top5", nd: "0-5cm", ...(WG.util.cache.get("soilmaps") || {}) }; // remembered on this device
+  const pick = { depth: 5, el: "P", hz: "Top5", nd: "0-5cm", hzv: "phys", ...(WG.util.cache.get("soilmaps") || {}) }; // remembered on this device (hzv: the Horizons card's view)
   if (!DEPTHS.some(d => d[0] === pick.depth)) pick.depth = 5;
   if (!ELS.some(e => e[0] === pick.el)) pick.el = "P";
   if (!HZ.some(h => h[0] === pick.hz)) pick.hz = "Top5";
   if (!SGD.includes(pick.nd)) pick.nd = "0-5cm";
+  if (!["phys", "chem"].includes(pick.hzv)) pick.hzv = "phys";
   const nameOf = (list, k) => (list.find(x => x[0] === k) || [k, k])[1];
 
   /* ---------- the Forest Service's 30 m maps, drawn for the view ---------- */
@@ -186,7 +189,7 @@ WG.soilmaps = (function () {
   Wx.THEMES.splice(Wx.THEMES.findIndex(t => t.key === "erosion") + 1, 0, { key: "soilmaps", name: "Soil maps", short: "Soil", icon: ICON, layersTitle: "Soil maps",
     title: "Soil maps: pH, salinity, sodicity, CEC, organic matter, and total nutrients and nitrogen",
     hint: "to see the soil's chemistry by depth: pH, salinity, sodicity, CEC and organic matter from the soil survey, total nutrients from USGS sites, and nutrients measured at nearby NRCS lab pedons.",
-    note: "Soil survey maps (pH, CEC and organic matter at 30 m; salinity and sodicity at 800 m), USGS total elements and SoilGrids total nitrogen. The panel shows Overview (the soil, its water and its moisture at a glance), Soil maps (the survey's chemistry by depth, the 30 m values, nearby USGS sites and NRCS lab pedons) and Soil profile (the dominant soil's horizons, classification and site parameters).",
+    note: "Soil survey maps (pH, CEC and organic matter at 30 m; salinity and sodicity at 800 m), USGS total elements and SoilGrids total nitrogen. The panel shows Overview (the soil, its water and its moisture at a glance), Soil (the dominant soil, its horizons and chemistry by depth, classification and site, the 30 m values, nearby USGS sites and NRCS lab pedons), Basin (the watershed, design-storm runoff and soil loss) and Moisture (soil moisture by depth).",
     layersNote: "Survey and model values describe typical soil, not a soil test. Total elements are not plant-available. No map covers the US for soil-test (plant-available) N, P, K, Ca, Mg or S, or for boron.",
     controls: sheetControls });
   Wx.layers.soilmaps = LAYERS;
@@ -298,31 +301,39 @@ WG.soilmaps = (function () {
   }
   const kssl = (lat, lon) => Wx.once("sm:kssl", () => ksslAt(lat, lon));
 
-  /* the tab's tables, kept for the CSV downloads: id -> { title, header, rows }. Setting one (the parts in other files
-     write tables().basin = …) tells the listeners, so the Overview's tiles fill as each source answers. */
+  /* the tabs' tables, kept for the CSV downloads: id -> { title, header, rows }, one set per location, which the Soil and
+     Basin tabs and the Overview share. Setting one (the parts in other files write tables().basin = …) tells the
+     listeners, so the Overview's tiles fill as each source answers. */
   const subs = new Set(), emit = id => subs.forEach(f => { try { f(id); } catch (e) { console.warn("soil maps listener", e); } });
   const newTables = () => new Proxy({}, { set(o, k, v) { o[k] = v; emit(k); return true; } });
   const on = f => { subs.add(f); return () => subs.delete(f); }; // f(id): a table set, or "part:<key>" when a part has ended
   let tables = newTables();
-  // the tab's last drawing: its location and how each added part ended ("done", or the Error), for the Overview's tiles
-  let run = { tok: null, parts: {} };
+  // the location the tables are for, and how each added part ended there ("wait", "done", or the Error), for the Overview's tiles
+  let run = { tok: null, parts: {}, who: {} };
+  const pins = new Map(); // the "show on the map" buttons of the tables: id -> { lat, lon, label, sub }
+  function fresh() { if (run.tok !== WG.state.token) { tables = newTables(); run = { tok: WG.state.token, parts: {}, who: {} }; pins.clear(); } }
+  // the tab a table belongs to, by its id: the Basin tab's begin with "basin", the Moisture tab's with "moisture"
+  const tabOf = id => (/^basin/.test(id) ? "soilbasin" : /^moisture/.test(id) ? "soilmoist" : "soilmaps");
   const DL = `<svg viewBox="0 0 24 24"><path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/></svg>`;
   const head = (title, csv, tag = "") => `<div class="card-h"><h3>${esc(title)}</h3><div class="card-tools">${tag ? `<span class="tag">${esc(tag)}</span>` : ""}${csv ? `<button class="dl-btn" data-sm-csv="${csv}" title="Download this table (CSV)" aria-label="Download ${esc(title)} (CSV)">${DL}</button>` : ""}</div></div>`;
   const grid = (cols, rows) => `<div class="table-wrap"><table class="grid sm-table"><thead><tr>${cols.map(c => `<th>${c}</th>`).join("")}</tr></thead><tbody>${rows.map(r => `<tr>${r.map((c, i) => `<td${i === 0 ? ' class="l"' : ""}>${c}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
   const th = (name, unit) => `${esc(name)}${unit ? `<small>${esc(unit)}</small>` : ""}`;
   const r1 = v => (ok(v) ? +v.toFixed(2) : null); // CSV values: two decimals, blank when missing
   const showBtn = (key, label, data = {}) => `<button class="link" data-sm-show="${key}"${Object.entries(data).map(([k, v]) => ` data-${k}="${esc(v)}"`).join("")}>${esc(label)}</button>`;
+  // id: one table; "all": every table read here; "all:<tab>": those of one tab ("all:soilmaps", "all:soilbasin")
   function csv(id) {
-    const ids = id === "all" ? Object.keys(tables) : [id];
+    const [what, tab] = id.split(":"), ids = what === "all" ? Object.keys(tables).filter(k => !tab || tabOf(k) === tab) : [id];
     if (!ids.length || !tables[ids[0]]) return WG.util.toast("Wait for the tables to load.");
-    if (id !== "all") { const t = tables[id]; return WG.downloads.csvSave(`soil_${id}`, t.header, t.rows); }
+    if (what !== "all") { const t = tables[id]; return WG.downloads.csvSave(`soil_${id}`, t.header, t.rows); }
     // all tables in one file: each row headed by its table's name, and each table's own header as its first row
     const width = Math.max(...ids.map(k => tables[k].header.length)), pad = r => [...r, ...new Array(Math.max(0, width + 1 - r.length)).fill("")];
     const rows = ids.flatMap(k => [pad([tables[k].title, ...tables[k].header]), ...tables[k].rows.map(r => pad([tables[k].title, ...r]))]);
-    WG.downloads.csvSave("soil_all_tables", ["Table", ...new Array(width).fill("").map((_, i) => `Column ${i + 1}`)], rows);
+    WG.downloads.csvSave({ soilmaps: "soil_tables", soilbasin: "basin_tables", soilmoist: "soil_moisture_tables" }[tab] || "soil_all_tables", ["Table", ...new Array(width).fill("").map((_, i) => `Column ${i + 1}`)], rows);
   }
 
-  let hooks = null; // app.js: setLive(theme, key)
+  /* app.js: setLive(theme, key); profile() draws the dominant soil into the Soil tab's boxes (renderSoilDetail); lower()
+     drops a phone's results to their bar so the map shows; landCover() puts the NLCD layer on the map */
+  let hooks = null;
   function showMap(key, d) {
     if (d.depth) pick.depth = +d.depth;
     if (d.el) pick.el = d.el;
@@ -339,10 +350,11 @@ WG.soilmaps = (function () {
   const SHORT = { ph: "pH", cec: "CEC", om: "Organic matter", ec: "Salinity (EC)", sar: "Sodicity (SAR)", chem: "Total elements", n: "Total N",
     wbd: "Watersheds", flow: "Streams", smap_sf: "SMAP 0–5 cm", smap_rz: "SMAP 0–100 cm", nwm: "NWM saturation", sport: "Percentile, daily", grace: "Percentile, weekly", stations: "Stations" };
   const onMap = it => !!(WG.map && it && it.layer && WG.map.hasLayer(it.layer));
-  function chips() {
+  // which: the groups to give, of "chem", "water" and "wet" (the Overview gives all; each tab its own)
+  function chips(which) {
     const wet = new Set(WG.soilmoisture ? WG.soilmoisture.layers.map(x => x.key) : []);
-    const groups = [["Soil chemistry", x => OWN.has(x.key)], ["Water: basins", x => !OWN.has(x.key) && !wet.has(x.key)], ["Soil moisture", x => wet.has(x.key)]];
-    return groups.map(([g, f]) => { const list = LAYERS.filter(f); return list.length ? `<div class="sm-chips"><span class="sm-chips-k">${esc(g)}</span><div class="seg" role="group" aria-label="${esc(g)} maps">${list.map(x =>
+    const G = { chem: ["Soil chemistry", x => OWN.has(x.key)], water: ["Water: basins", x => !OWN.has(x.key) && !wet.has(x.key)], wet: ["Soil moisture", x => wet.has(x.key)] };
+    return (which || ["chem", "water", "wet"]).map(k => G[k]).filter(Boolean).map(([g, f]) => { const list = LAYERS.filter(f); return list.length ? `<div class="sm-chips"><span class="sm-chips-k">${esc(g)}</span><div class="seg" role="group" aria-label="${esc(g)} maps">${list.map(x =>
       `<button type="button" data-sm-show="${x.key}" data-sm-chip class="${onMap(x) ? "on" : ""}" aria-pressed="${onMap(x)}" title="${esc(x.name)}${x.sub ? `: ${esc(x.sub)}` : ""}">${esc(SHORT[x.key] || x.name.split(/[:,(]/)[0].trim())}</button>`).join("")}</div></div>` : ""; }).join("");
   }
   // the pressed chip follows the map, whichever way the layer changed (a chip, a link, the layer sheet, another theme)
@@ -354,36 +366,136 @@ WG.soilmaps = (function () {
     if (c) { e.preventDefault(); csv(c.dataset.smCsv); }
     const m = e.target.closest && e.target.closest("[data-sm-show]");
     if (m) { e.preventDefault(); showMap(m.dataset.smShow, m.dataset); }
+    const p = e.target.closest && e.target.closest("[data-sm-pin]"), q = p && pins.get(p.dataset.smPin);
+    if (q) { e.preventDefault(); showOnMap(q.lat, q.lon, q.label, q.sub); }
+    // the Horizons card's two views, and its download: the CSV of the view on show (the profile's is app.js's #dlCsv)
+    const v = e.target.closest && e.target.closest("[data-hzv-btn]");
+    if (v) { pick.hzv = v.dataset.hzvBtn; WG.util.cache.set("soilmaps", pick); hzView(); }
+    if (e.target.closest && e.target.closest("[data-hz-csv]")) { const b = document.getElementById("dlCsv"); if (pick.hzv === "phys" && b) b.click(); else csv("horizons"); }
   });
+  function hzView() {
+    $$("[data-hzv]").forEach(x => { x.hidden = !!x.parentNode.querySelector(`[data-hzv="${pick.hzv}"]`) && x.dataset.hzv !== pick.hzv; });
+    $$("[data-hzv-btn]").forEach(b => { b.classList.toggle("on", b.dataset.hzvBtn === pick.hzv); b.setAttribute("aria-pressed", b.dataset.hzvBtn === pick.hzv); });
+  }
+
+  /* ---------- a place from a table (a lab pedon, a USGS site, a station) as a point on the map ----------
+     One at a time, with a dashed line from the location and both in view; on a phone the results drop to their bar so the
+     map shows (the grip brings them back). Gone when the location or the theme changes: checked twice a second while
+     one is shown, as js/basins.js's overlay is. label and each line of sub are plain text. */
+  let pin = null;
+  function clearPin() { if (!pin) return; clearInterval(pin.t); clearTimeout(pin.ft); pin.g.remove(); pin = null; }
+  function showOnMap(lat, lon, label, sub) {
+    const m = WG.map, S = WG.state;
+    lat = num(lat); lon = num(lon);
+    if (!m || !ok(lat) || !ok(lon)) return;
+    clearPin();
+    const at = L.latLng(lat, lon), here = S.site ? L.latLng(S.site.lat, S.site.lon) : null, lines = (Array.isArray(sub) ? sub : sub ? [sub] : []).filter(Boolean);
+    const g = L.layerGroup().addTo(m);
+    if (here) [["#fff", 4.5, 0.85, null], ["#4a1486", 2, 0.95, "6 5"]].forEach(([color, weight, opacity, dashArray]) => L.polyline([here, at], { color, weight, opacity, dashArray, interactive: false }).addTo(g));
+    L.marker(at, { icon: L.divIcon({ className: "sm-pin", html: "<i></i>", iconSize: [18, 18], iconAnchor: [9, 9] }), keyboard: false, zIndexOffset: 400, interactive: false })
+      .bindTooltip(`<b>${esc(label)}</b>${lines.map(l => `<br>${esc(l)}`).join("")}`, { permanent: true, direction: "top", offset: [0, -10], className: "sm-pin-tip" }).addTo(g);
+    pin = { g, tok: S.token, theme: S.theme, t: setInterval(() => { if (pin && (WG.state.token !== pin.tok || WG.state.theme !== pin.theme)) clearPin(); }, 500) };
+    const mine = pin, phone = window.matchMedia("(max-width: 767px)").matches;
+    // clear of a phone's search and theme bars above, the map tools at the right and the results' bar below
+    // (on a phone without animation: the map is growing under it, and an animation's frames may not come in a background tab)
+    const fit = () => { if (pin === mine) m.fitBounds(L.latLngBounds(here ? [here, at] : [at]).pad(0.15), { paddingTopLeft: [24, phone ? 120 : 24], paddingBottomRight: [phone ? 64 : 24, phone ? 80 : 24], maxZoom: 14, animate: !phone }); };
+    fit();
+    if (phone && hooks && hooks.lower) {
+      /* again once the results have dropped to their bar and the map has stopped growing: after app.js has settled the
+         map on its new size, which keeps the location's pin in view */
+      const again = () => { clearTimeout(mine.ft); mine.ft = setTimeout(fit, 300); }, stop = () => m.off("resize", again);
+      m.on("resize", again);
+      setTimeout(stop, 2500);
+      hooks.lower();
+      again();
+    }
+  }
+  const pinBtn = (lat, lon, label, sub, text) => {
+    if (!ok(num(lat)) || !ok(num(lon))) return esc(text || label);
+    const id = `p${pins.size + 1}`;
+    pins.set(id, { lat: num(lat), lon: num(lon), label, sub });
+    return `<button class="link sm-pin-btn" data-sm-pin="${id}" title="Show ${esc(label)} on the map">${esc(text || label)}</button>`;
+  };
 
   const SOURCES = `Each part comes from its own source and says what it measures: <b>survey</b> values describe the soil mapped here (not a test of a field); <b>model</b> values are predictions; <b>total</b> elements include what is locked in minerals (not plant-available); <b>lab</b> values were measured on samples at a pedon, often decades ago.`;
   const NO_MAP = `<div class="card">${head("What data is missing", "")}<p class="fine" style="margin-top:0">No map covers the US for the nutrients a plant can take up, as a <b>soil test</b> measures them: nitrate, phosphorus (Bray, Olsen or Mehlich-3), potassium, calcium, magnesium and sulfur, or zinc, iron, manganese and copper (DTPA). Boron and phosphorus survey data is also limited for the US. For a field's fertility, take a soil test: the total elements and lab pedons here are background, not a recommendation.</p></div>`;
 
-  // more parts of the tab from other files (js/basins.js, js/soilmoisture.js): {key, wait, render(el, live, lat, lon)}, each in its own box
+  /* more parts from other files: {key, wait, render(el, live, lat, lon), tab}, each in its own box of its tab, the Soil
+     tab's ("soilmaps", the default) or the Basin tab's ("soilbasin": js/basins.js) */
   const PARTS = [];
+  const partsOf = tab => PARTS.filter(p => (p.tab || "soilmaps") === tab);
+  // a tab's parts drawn into their boxes; how each ends is kept for the Overview's tiles (when a part is drawn again for
+  // the same location, as after a change of units, the last drawing is the one that counts)
+  const runParts = (list, at, live, lat, lon) => list.map(p => {
+    const me = {}, tok = WG.state.token, end = v => { if (run.tok === tok && run.who[p.key] === me) { run.parts[p.key] = v; emit(`part:${p.key}`); } };
+    run.parts[p.key] = "wait"; run.who[p.key] = me;
+    return Promise.resolve().then(() => { const x = at(`smPart-${p.key}`); return x && p.render(x, live, lat, lon); })
+      .then(() => end("done"), e => { const err = e instanceof Error ? e : new Error(String(e)); console.warn(p.key, e); end(err); const x = at(`smPart-${p.key}`); if (x) x.innerHTML = Wx.failed(p.wait, err); });
+  });
+  const allBtn = (tab, what) => `<div class="card sm-all"><button class="btn" data-sm-csv="all:${tab}">${DL}<span>Download ${esc(what)} (CSV)</span></button>
+    <p class="fine">Every table of this tab in one file, each row headed by its table's name; each card's own button gives its table alone.</p></div>`;
+
+  /* the Horizons card's Chemistry view: every horizon of the map unit's major components (the survey's), with your edits
+     of the dominant soil's surface layer (app.js state.edits: Wind erosion › Soil and the pH box) marked ✎. Drawn again
+     when the edits change (app.js tells with "wg-soil"). */
+  let chem = null; // { x, S, tok }: the box and the survey read it shows
+  function drawChem(x, S) {
+    chem = { x, S, tok: WG.state.token };
+    const st = WG.state, b = st.soil && st.soil.surface, E = st.edits, dom = st.soil && st.soil.dominant;
+    const ed = k => !!(E && b && E[k] !== null && E[k] !== undefined && E[k] !== (b[k] ?? (k === "caco3" ? 0 : null)));
+    const comps = S.comps.filter(c => c.hz.length), D = (a, b0) => UN.range("depth", a, b0);
+    if (!comps.length) { x.innerHTML = `<p class="fine">The survey gives no horizons for this map unit's major components.</p>`; return; }
+    const cols = [th("Component"), th("Horizon"), th("Depth"), th("pH"), th("EC", "dS/m"), th("SAR"), th("ESP", "%"), th("CEC", "cmol(+)/kg"), th("Base sat.", "%"), th("OM", "%"), th("Org. C", "%"), th("Total N est.", "%"), th("CaCO₃", "%"), th("Gypsum", "%")];
+    let edited = false;
+    const rows = comps.flatMap(c => c.hz.map((h, i) => {
+      const mine = !!dom && String(c.cokey) === String(dom.cokey) && i === 0, use = k => mine && ed(k), v = k => (use(k) ? E[k] : h[k]), mk = k => (use(k) ? " ✎" : "");
+      if (mine && ["ph", "om", "caco3"].some(use)) edited = true;
+      const ph = v("ph"), om = v("om"), oc = ok(om) ? om / 1.724 : null;
+      return [esc(c.name), esc(h.name), D(h.t, h.b), ok(ph) ? `${fmt(ph, 1)}${h.cacl2 && !use("ph") ? " CaCl₂" : ""}${mk("ph")}` : "—", fmt(h.ec, 1), fmt(h.sar, 1), fmt(h.esp, 0),
+        `${fmt(h.cec, 1)}${h.ecec && ok(h.cec) ? " ECEC" : ""}`, ok(h.bs) ? fmt(Math.min(100, h.bs), 0) : "—", `${fmt(om, 1)}${mk("om")}`, fmt(oc, 2), ok(oc) ? fmt(Math.min(oc / 10, 0.5), 3) : "—", `${fmt(v("caco3"), 0)}${mk("caco3")}`, fmt(h.gyps, 0)];
+    }));
+    x.innerHTML = `${grid(cols, rows)}
+      <p class="fine">Every horizon of the map unit's major components (representative values, USDA-NRCS SSURGO through Soil Data Access, public domain). pH 1:1 in water ("CaCl₂": the survey gives only pH in calcium chloride, about 0.5 below water pH); EC and SAR of the saturated-paste extract; ESP: exchangeable sodium percentage; CEC by ammonium acetate at pH 7 ("ECEC": effective CEC, where CEC at pH 7 is not given); base saturation: sum of bases over CEC at pH 7 (100 in calcareous soils, where bases exceed it); organic C = OM ÷ 1.724; total N estimated as organic C ÷ 10, at most 0.5%. ${edited ? "✎: your value in the dominant soil's surface layer (the CSV keeps the survey's). " : ""}${SURVEY_NOTE} <button class="link" data-sm-csv="horizons">chemistry by horizon (CSV)</button></p>`;
+  }
+  document.addEventListener("wg-soil", () => { if (chem && chem.tok === WG.state.token && chem.x.isConnected) drawChem(chem.x, chem.S); });
+
+  /* ---------- the Soil tab ----------
+     The dominant soil and its horizons from js/app.js (hooks.profile: the survey read for the wind erosion, no request of
+     its own), with the chemistry of this file's own survey read beside it, then each other source in its own card. */
   Wx.RENDER.soilmaps = async (el, live) => {
     const { lat, lon } = WG.state.site, at = id => (live() ? el.querySelector(`#${id}`) : null);
-    tables = newTables();
-    const me = (run = { tok: WG.state.token, parts: Object.fromEntries(PARTS.map(p => [p.key, "wait"])) });
-    el.innerHTML = `<div class="card">${head("Soil chemistry here", "", "")}<p class="fine" style="margin-top:0">${SOURCES}</p>
-        <h4 class="sm-h">Show on the map</h4>${chips()}</div>
+    fresh();
+    const list = partsOf("soilmaps"), P = !!(hooks && hooks.profile);
+    const seg = [["phys", "Physical and water"], ["chem", "Chemistry"]];
+    el.innerHTML = `${P ? `<div class="card" id="smSoil"><div class="card-h"><h3>Dominant soil</h3><span class="tag" id="profSrcTag">SSURGO</span></div><div id="profSoil" class="soil-summary"><span class="skeleton"></span></div></div>` : ""}
       <div id="smSurvey">${Wx.wait("the soil survey's chemistry (SSURGO)")}</div>
+      <div class="card" id="smHz"><div class="card-h"><h3>Horizons</h3><div class="card-tools"><button class="dl-btn" data-hz-csv title="Download the view on show (CSV)" aria-label="Download the horizons (CSV)">${DL}</button></div></div>
+        ${P ? `<div class="seg sm-hzseg" role="group" aria-label="Horizons: what to show">${seg.map(([k, n]) => `<button type="button" data-hzv-btn="${k}">${esc(n)}</button>`).join("")}</div>
+        <div data-hzv="phys" id="profHz"><p class="fine"><span class="skeleton" style="width:60%"></span></p><p class="fine">Reading the soil survey…</p></div>` : ""}
+        <div data-hzv="chem" id="smHzChem"><p class="fine"><span class="skeleton" style="width:60%"></span></p><p class="fine">Reading the soil survey's chemistry by horizon…</p></div></div>
+      ${P ? `<div id="profPh"></div><div id="profMore"></div><p class="source" id="profSource"></p>` : ""}
       <div id="smUsfs">${Wx.wait("the Forest Service's 30 m maps at this cell")}</div>
       <div id="smN">${Wx.wait("SoilGrids' total nitrogen")}</div>
       <div id="smUsgs">${Wx.wait("the nearest USGS soil geochemistry sites")}</div>
       <div id="smKssl">${Wx.wait("the nearest NRCS lab pedons (KSSL)")}</div>
-      ${PARTS.map(p => `<div id="smPart-${p.key}">${Wx.wait(p.wait)}</div>`).join("")}
+      ${list.map(p => `<div id="smPart-${p.key}">${Wx.wait(p.wait)}</div>`).join("")}
       ${NO_MAP}
-      <div class="card sm-all"><button class="btn" data-sm-csv="all">${DL}<span>Download all the tables (CSV)</span></button>
-        <p class="fine">Every table of this tab in one file, each row headed by its table's name; each card's own button gives its table alone.</p></div>`;
+      <div class="card">${head("Soil chemistry on the map", "", "")}<p class="fine" style="margin-top:0">${SOURCES}</p>${chips(["chem"])}</div>
+      ${allBtn("soilmaps", "all the tables")}`;
+    hzView();
+    if (P) { try { hooks.profile(); } catch (e) { console.warn("soil profile", e); } }
     const fail = (id, what) => e => { console.warn(id, e); const x = at(id); if (x) x.innerHTML = Wx.failed(what, e); };
     const D = (a, b) => UN.range("depth", a, b);
 
     /* the survey: the dominant component at a glance, each major component over 0-15 and 0-30 cm, and every horizon */
     const pSurvey = survey(lat, lon).then(S => {
-      const x = at("smSurvey");
+      const x = at("smSurvey"), hz = at("smHzChem");
       if (!x) return;
-      if (!S.mu || !S.comps.length) { x.innerHTML = `<div class="card">${head("Soil survey chemistry", "")}<p class="fine">No soil survey map unit with major components here (water, or an area not surveyed).</p></div>`; return; }
+      if (!S.mu || !S.comps.length) {
+        x.innerHTML = `<div class="card">${head("Soil chemistry, 0–15 and 0–30 cm", "")}<p class="fine">No soil survey map unit with major components here (water, or an area not surveyed).</p></div>`;
+        if (hz) hz.innerHTML = `<p class="fine">No survey horizons here.</p>`;
+        return;
+      }
       const comps = S.comps.filter(c => c.hz.length), top = comps[0];
       const P = (v, cacl2) => (ok(v) ? `${fmt(v, 1)}${cacl2 ? " CaCl₂" : ""}` : "—");
       const rowsHtml = [], rowsCsv = [];
@@ -408,14 +520,12 @@ WG.soilmaps = (function () {
           <div><span>${l15.ecec ? "ECEC" : "CEC at pH 7"}</span><b>${vu(l15.cec, 1, "cmol(+)/kg")}</b><span>${ok(l15.bs) ? `base saturation ${fmt(Math.min(100, l15.bs), 0)}%` : ""}</span></div>
           <div><span>Organic matter</span><b>${vu(l15.om, 1, "%")}</b><span>${ok(l15.caco3) ? `CaCO₃ ${fmt(l15.caco3, 0)}%` : ""}${ok(l15.gyps) && l15.gyps > 0 ? ` · gypsum ${fmt(l15.gyps, 0)}%` : ""}</span></div></div>` : "";
       const cols = [th("Component"), th("Share", "%"), th("Depth"), th("pH"), th("Reaction"), th("EC", "dS/m"), th("Salinity"), th("SAR"), th("ESP", "%"), th("Sodicity"), th("CEC", "cmol(+)/kg"), th("Base sat.", "%"), th("OM", "%"), th("CaCO₃", "%"), th("Gypsum", "%")];
-      const hzCols = [th("Component"), th("Horizon"), th("Depth"), th("pH"), th("EC", "dS/m"), th("SAR"), th("ESP", "%"), th("CEC", "cmol(+)/kg"), th("Base sat.", "%"), th("OM", "%"), th("CaCO₃", "%"), th("Gypsum", "%")];
-      x.innerHTML = `<div class="card">${head("Soil survey chemistry", "survey", `${S.mu.sym} · ${S.mu.area}`)}
-          <p class="fine" style="margin-top:0">${esc(S.mu.name)}. ${top ? `${esc(top.name)} (${fmt(top.pct, 0)}% of the map unit), 0–15 cm:` : "No horizon data."}</p>${kv}
+      x.innerHTML = `<div class="card">${head("Soil chemistry, 0–15 and 0–30 cm", "survey", `${S.mu.sym} · ${S.mu.area}`)}
+          <p class="fine" style="margin-top:0">${top ? `${esc(top.name)} (${fmt(top.pct, 0)}% of the map unit), 0–15 cm, the survey's values:` : "No horizon data."}</p>${kv}
           <h4 class="sm-h">Each major component, depth-weighted</h4>${grid(cols, rowsHtml)}
-          <p class="fine">Depth-weighted over the horizons with a value. Base saturation is the sum of bases over CEC at pH 7 (shown as 100+ in calcareous soils, where bases exceed it). "CaCl₂": the survey gives only pH in calcium chloride (common in New England), about 0.5 below water pH. "ECEC": effective CEC, given where CEC at pH 7 is not (acid soils).</p></div>
-        <div class="card">${head("Soil survey chemistry by horizon", "horizons")}${grid(hzCols, comps.flatMap(c => c.hz.map(h => [esc(c.name), esc(h.name), D(h.t, h.b), P(h.ph, h.cacl2), fmt(h.ec, 1), fmt(h.sar, 1), fmt(h.esp, 0), `${fmt(h.cec, 1)}${h.ecec && ok(h.cec) ? " ECEC" : ""}`, ok(h.bs) ? fmt(Math.min(100, h.bs), 0) : "—", fmt(h.om, 1), fmt(h.caco3, 0), fmt(h.gyps, 0)])))}
-          <p class="fine">USDA-NRCS Soil Survey Geographic Database (SSURGO) through Soil Data Access: representative values of the map unit's major components, public domain. pH 1:1 in water; EC and SAR of the saturated-paste extract; ESP: exchangeable sodium percentage; CEC by ammonium acetate at pH 7; organic matter, CaCO₃ equivalent and gypsum by weight. Classes: Soil Survey Manual (reaction, salinity); sodic at SAR 13 or ESP 15 or more, saline at EC 4 dS/m or more (U.S. Salinity Laboratory, Handbook 60). ${SURVEY_NOTE}</p></div>`;
-    }, fail("smSurvey", "the soil survey's chemistry"));
+          <p class="fine">Depth-weighted over the horizons with a value; each horizon is in Horizons › Chemistry below. Base saturation is the sum of bases over CEC at pH 7 (shown as 100+ in calcareous soils, where bases exceed it). "CaCl₂": the survey gives only pH in calcium chloride (common in New England), about 0.5 below water pH. "ECEC": effective CEC, given where CEC at pH 7 is not (acid soils). Classes: Soil Survey Manual (reaction, salinity); sodic at SAR 13 or ESP 15 or more, saline at EC 4 dS/m or more (U.S. Salinity Laboratory, Handbook 60). USDA-NRCS SSURGO through Soil Data Access, representative values of the map unit's major components, public domain. ${SURVEY_NOTE}</p></div>`;
+      if (hz) drawChem(hz, S);
+    }, e => { fail("smSurvey", "the soil survey's chemistry")(e); const hz = at("smHzChem"); if (hz) hz.innerHTML = `<p class="fine">Could not read the survey's chemistry: ${esc(e.message || String(e))}. Pick the location again to retry.</p>`; });
 
     /* the Forest Service's 30 m values: each property's column fills as its service answers */
     const R = {}, drawUsfs = () => {
@@ -458,10 +568,10 @@ WG.soilmaps = (function () {
         lg && lg.elements[el] ? esc(String(lg.elements[el].Top5.median)) : "—"]);
       tables.usgs = { title: "USGS DS-801 soil geochemistry, nearest sites: TOTAL element (not plant-available)", header: ["Element", "Unit", ...sites.flatMap((s, i) => [`Site ${i + 1} (#${s.id}, ${r1(s.km)} km ${s.dir}, ${s.p.colldate || ""}) top 5 cm`, `Site ${i + 1} A horizon`]), "US median top 5 cm"],
         rows: ELS.map(([el]) => [el, unit(el), ...sites.flatMap(s => [val(s, "top5cm", el), val(s, "ahorizon", el)]), lg && lg.elements[el] ? lg.elements[el].Top5.median : null]) };
-      const sLine = sites.map((s, i) => { const p = s.p; return `<b>Site ${i + 1}</b> #${esc(s.id)}: ${dist(s.km)} ${esc(s.dir)}, sampled ${esc(p.colldate || "")}${p.landcover1 ? `, ${esc(p.landcover1)}${p.landcover2 ? ` (${esc(p.landcover2)})` : ""}` : ""}`; }).join("; ");
+      const sLine = sites.map((s, i) => { const p = s.p; return `<b>${pinBtn(s.lat, s.lon, `USGS site ${i + 1} (#${s.id})`, [`soil geochemistry, sampled ${p.colldate || "2007–2010"}`, `${dist(s.km)} ${s.dir} of the point`], `Site ${i + 1}`)}</b> #${esc(s.id)}: ${dist(s.km)} ${esc(s.dir)}, sampled ${esc(p.colldate || "")}${p.landcover1 ? `, ${esc(p.landcover1)}${p.landcover2 ? ` (${esc(p.landcover2)})` : ""}` : ""}`; }).join("; ");
       x.innerHTML = `<div class="card">${head("Nearest USGS soil geochemistry sites", "usgs", "TOTAL element")}
         <p class="fine" style="margin-top:0">${sLine}.</p>${grid(cols, rows)}
-        <p class="fine"><b>Total element in the soil, not plant-available:</b> a near-total four-acid digest (ICP-AES/MS) that counts the element held in minerals; K, Ca, Mg, S, Fe and Na in % by weight (1% = 10,000 mg/kg), the others in mg/kg. A soil test (available P, K …) reads tens to hundreds of times lower and is not predicted by these. "&lt;": below the detection limit. USGS Data Series 801 (Smith et al. 2013, doi:10.3133/ds801), public domain, one site per about 1,600 km², sampled 2007–2010. Click an element to map it.</p></div>`;
+        <p class="fine"><b>Total element in the soil, not plant-available:</b> a near-total four-acid digest (ICP-AES/MS) that counts the element held in minerals; K, Ca, Mg, S, Fe and Na in % by weight (1% = 10,000 mg/kg), the others in mg/kg. A soil test (available P, K …) reads tens to hundreds of times lower and is not predicted by these. "&lt;": below the detection limit. USGS Data Series 801 (Smith et al. 2013, doi:10.3133/ds801), public domain, one site per about 1,600 km², sampled 2007–2010. Click an element to map it, or a site to see where it is.</p></div>`;
     }, fail("smUsgs", "the USGS soil geochemistry sites"));
 
     /* NRCS KSSL pedons */
@@ -473,24 +583,35 @@ WG.soilmaps = (function () {
       const calc = r => (ok(n(r, "caco3")) && n(r, "caco3") >= 1) || (ok(n(r, "ph_h2o")) && n(r, "ph_h2o") >= 7.8);
       const cols = [th("Pedon"), th("Distance"), th("Year"), th("Layer", "cm"), th("pH", "water"), th("EC", "dS/m"), th("Total N", "%"), th("P Bray-1", "mg/kg"), th("P Olsen", "mg/kg"), th("P Mehlich-3", "mg/kg"),
         th("K", "cmol(+)/kg"), th("Ca", "cmol(+)/kg"), th("Mg", "cmol(+)/kg"), th("Na", "cmol(+)/kg"), th("Total S", "%"), th("CEC7", "cmol(+)/kg"), th("CaCO₃", "%")];
-      const html = rows.map(r => [`${esc(r.corr_name || r.samp_name || "")} <small>${esc(r.pedlabsampnum || "")}</small>`, dist(r.km) + ` ${esc(r.dir)}`, esc(r.year), `${f(n(r, "hzn_top"), 0)}–${f(n(r, "hzn_bot"), 0)}${r.hzn_desgn ? ` ${esc(r.hzn_desgn)}` : ""}`,
+      const pedon = r => { const nm = r.corr_name || r.samp_name || "Pedon";
+        return pinBtn(r.lat, r.lon, nm, [`NRCS lab pedon ${r.pedlabsampnum || r.pedon_key || ""}${r.year ? `, sampled ${r.year}` : ""}`, `${dist(r.km)} ${r.dir} of the point`]); };
+      const html = rows.map(r => [`${pedon(r)} <small>${esc(r.pedlabsampnum || "")}</small>`, dist(r.km) + ` ${esc(r.dir)}`, esc(r.year), `${f(n(r, "hzn_top"), 0)}–${f(n(r, "hzn_bot"), 0)}${r.hzn_desgn ? ` ${esc(r.hzn_desgn)}` : ""}`,
         f(n(r, "ph_h2o"), 1), f(n(r, "ec"), 2), f(n(r, "n_pct"), 3), f(n(r, "p_bray1"), 1), f(n(r, "p_olsen"), 1), f(n(r, "p_m3"), 1), f(n(r, "k"), 2), `${f(n(r, "ca"), 1)}${ok(n(r, "ca")) && calc(r) ? "*" : ""}`, f(n(r, "mg"), 2), f(n(r, "na"), 2), f(n(r, "s_pct"), 3), f(n(r, "cec7"), 1), f(n(r, "caco3"), 0)]);
       tables.kssl = { title: "NRCS KSSL lab-measured pedons nearby, surface layer", header: ["Pedon key", "Lab sample number", "Soil (correlated name)", "Distance (km)", "Direction", "Sampled", "Layer top (cm)", "Layer bottom (cm)", "Horizon", "pH (1:1 water)", "pH (CaCl2)", "EC saturated paste (dS/m)", "Total N (%)", "P Bray-1 (mg/kg)", "P Olsen (mg/kg)", "P Mehlich-3 (mg/kg)", "K NH4OAc pH 7 (cmol(+)/kg)", "Ca NH4OAc pH 7 (cmol(+)/kg)", "Mg NH4OAc pH 7 (cmol(+)/kg)", "Na NH4OAc pH 7 (cmol(+)/kg)", "Total S (%)", "CEC NH4OAc pH 7 (cmol(+)/kg)", "CaCO3 equivalent (%)", "Latitude", "Longitude"],
         rows: rows.map(r => [r.pedon_key, r.pedlabsampnum, r.corr_name || r.samp_name || "", r1(r.km), r.dir, r.obsdate ? String(r.obsdate).split(" ")[0] : "", n(r, "hzn_top"), n(r, "hzn_bot"), r.hzn_desgn || "", ...["ph_h2o", "ph_cacl2", "ec", "n_pct", "p_bray1", "p_olsen", "p_m3", "k", "ca", "mg", "na", "s_pct", "cec7", "caco3"].map(k => n(r, k)), num(r.lat), num(r.lon)]) };
       x.innerHTML = `<div class="card">${head("Lab-measured pedons nearby", "kssl", "NRCS soil lab")}${grid(cols, html)}
-        <p class="fine">Measured at the USDA-NRCS Kellogg Soil Survey Laboratory on each pedon's surface layer (public domain, through Soil Data Access): K, Ca, Mg and Na exchangeable by ammonium acetate at pH 7 (1 cmol(+)/kg K = 391 mg/kg; Ca 200; Mg 122), P by the Bray-1, Olsen or Mehlich-3 extraction where run, total N and S by combustion. <b>Caveats:</b> pedons are sparse and often old (the year is the sampling date), sampled to describe the soil series rather than a field's fertility; blank cells were not measured. *Ammonium acetate dissolves carbonates, so Ca reads high in calcareous soils (CaCO₃ 1% or more, or pH 7.8 or more).</p></div>`;
+        <p class="fine">Measured at the USDA-NRCS Kellogg Soil Survey Laboratory on each pedon's surface layer (public domain, through Soil Data Access): K, Ca, Mg and Na exchangeable by ammonium acetate at pH 7 (1 cmol(+)/kg K = 391 mg/kg; Ca 200; Mg 122), P by the Bray-1, Olsen or Mehlich-3 extraction where run, total N and S by combustion. <b>Caveats:</b> pedons are sparse and often old (the year is the sampling date), sampled to describe the soil series rather than a field's fertility; blank cells were not measured. Click a pedon's name to see where it is on the map. *Ammonium acetate dissolves carbonates, so Ca reads high in calcareous soils (CaCO₃ 1% or more, or pH 7.8 or more).</p></div>`;
     }, fail("smKssl", "the NRCS soil lab's pedons"));
 
-    const ended = (k, v) => { if (run === me) { me.parts[k] = v; emit(`part:${k}`); } };
-    const pParts = PARTS.map(p => Promise.resolve().then(() => { const x = at(`smPart-${p.key}`); return x && p.render(x, live, lat, lon); })
-      .then(() => ended(p.key, "done"), e => { ended(p.key, e instanceof Error ? e : new Error(String(e))); fail(`smPart-${p.key}`, p.wait)(e); }));
-    await Promise.allSettled([pSurvey, pUsfs, pN, pUsgs, pKssl, ...pParts]);
+    await Promise.allSettled([pSurvey, pUsfs, pN, pUsgs, pKssl, ...runParts(list, at, live, lat, lon)]);
+  };
+
+  /* ---------- the Basin tab: js/basins.js's parts (the watershed, design-storm runoff, soil loss) and the water layers ---------- */
+  Wx.RENDER.soilbasin = async (el, live) => {
+    const { lat, lon } = WG.state.site, at = id => (live() ? el.querySelector(`#${id}`) : null);
+    fresh();
+    const list = partsOf("soilbasin");
+    el.innerHTML = `${list.map(p => `<div id="smPart-${p.key}">${Wx.wait(p.wait)}</div>`).join("") || `<div class="card"><p class="fine">No basin results in this page.</p></div>`}
+      <div class="card">${head("Water on the map", "", "")}<p class="fine" style="margin-top:0">The watershed boundaries and streams the cards above use, drawn by the USGS servers.</p>${chips(["water"])}</div>
+      ${allBtn("soilbasin", "all the basin tables")}`;
+    await Promise.allSettled(runParts(list, at, live, lat, lon));
   };
 
   /* ---------- the Overview tab: the soil here at a glance, one tile per source with a link to its card ----------
-     It asks nothing itself: it draws the Soil maps tab once per location into that tab's hidden box (Wx.show keeps it,
-     so opening the tab afterwards reads nothing again), and fills from the same reads (Wx.once) and the tab's tables
-     as each one answers; each tile waits or fails on its own. */
+     It asks nothing itself: it draws the Soil and Basin tabs once per location into their hidden boxes (Wx.show keeps
+     them, so opening a tab afterwards reads nothing again), fills from the same reads (Wx.once) and the tabs' tables as
+     each one answers, and takes soil moisture from js/soilmoisture.js's summary (kept per location there); each tile
+     waits or fails on its own. */
   // the pH reaction classes in five groups: the headline's colour and its scale
   const PH5 = [[5.55, "Strongly acid", "≤ 5.5", "#e34a33"], [6.55, "Acid", "5.6–6.5", "#fdbb84"], [7.35, "Neutral", "6.6–7.3", "#a6d96a"], [8.45, "Alkaline", "7.4–8.4", "#3288bd"], [99, "Strongly alkaline", "> 8.4", "#5e4fa2"]];
   const ph5 = v => (ok(v) ? PH5.findIndex(g => v < g[0]) + 1 : 0);
@@ -499,28 +620,32 @@ WG.soilmaps = (function () {
   const facts = rows => rows.filter(Boolean).map(([k, v, n]) => `<span class="k">${esc(k)}</span><span class="v">${esc(v)}</span><span class="n">${esc(n || "")}</span>`).join("");
   const rowOf = (t, re, unit) => (t && t.rows.find(r => re.test(String(r[0])) && (!unit || r[2] === unit))) || null;
   const val = r => (r && ok(num(r[1])) ? num(r[1]) : null);
+  // id, title, tag, the tab and card its Details open (a | between choices: the first the tab has), and the part it needs
   const TILES = [
-    ["ph", "Soil pH, 0–15 cm", "survey", "#smSurvey"], ["salt", "Salinity · sodicity", "survey", "#smSurvey"], ["cec", "CEC · organic matter", "survey", "#smSurvey"],
-    ["n", "Total nitrogen, 0–5 cm", "model", "#smN"], ["basin", "Watershed (HU12)", "model", "#smPart-basin", "basin"], ["storm", "Design-storm runoff", "TR-55", "#bsCnOut", "basin"],
-    ["loss", "Soil loss (RUSLE)", "model", "#bsRusleOut", "basin"], ["smm", "Soil moisture today", "model", ".smm-m", "moisture"], ["stn", "Nearest station", "station", ".smm-st", "moisture"]];
+    ["ph", "Soil pH, 0–15 cm", "survey", "soilmaps", "#smSurvey"], ["salt", "Salinity · sodicity", "survey", "soilmaps", "#smSurvey"], ["cec", "CEC · organic matter", "survey", "soilmaps", "#smSurvey"],
+    ["n", "Total nitrogen, 0–5 cm", "model", "soilmaps", "#smN"], ["basin", "Watershed (HU12)", "model", "soilbasin", "#smPart-basin", "basin"], ["storm", "Design-storm runoff", "TR-55", "soilbasin", "#bsCnOut", "basin"],
+    ["loss", "Soil loss (RUSLE)", "model", "soilbasin", "#bsRusleOut", "basin"], ["smm", "Soil moisture today", "model", "soilmoist", "#smmToday", "moisture"], ["stn", "Nearest station", "station", "soilmoist", "#smmSt|#smmToday", "moisture"]];
 
   Wx.RENDER.soiloverview = async (el, live) => {
-    const { lat, lon } = WG.state.site, tab = document.getElementById("tab-soilmaps");
-    const pTab = tab ? Wx.show("soilmaps", tab) : Promise.resolve();
-    const has = k => !k || PARTS.some(p => p.key === k), tiles = TILES.filter(t => has(t[4]));
+    const { lat, lon } = WG.state.site, tabEl = k => document.getElementById(`tab-${k}`);
+    const pTab = Promise.all(["soilmaps", "soilbasin"].map(k => (tabEl(k) && (k === "soilmaps" || partsOf(k).length) ? Wx.show(k, tabEl(k)) : null)));
+    // soil moisture: js/soilmoisture.js's summary, or (a page where it is still a part of the Soil tab) its tables
+    const SMM = WG.soilmoisture && WG.soilmoisture.summary, partOf = k => PARTS.find(p => p.key === k);
+    const has = k => (!k ? true : k === "moisture" ? !!(SMM || partOf(k)) : !!partOf(k)), tiles = TILES.filter(t => has(t[5]));
+    // the tab a tile's Details open: its own where the page has that tab button, else the tab that holds its part
+    const goTo = t => (document.querySelector(`.tabs [data-tab="${t[3]}"]`) ? t[3] : t[5] && partOf(t[5]) ? partOf(t[5]).tab || "soilmaps" : "soilmaps");
     el.innerHTML = `<div class="risk-card so-head loading" id="soHead"></div>
       <div class="card">${head("At a glance", "", "")}<div class="stat-grid so-tiles">${tiles.map(t => `<div class="stat so-tile" id="so-${t[0]}"></div>`).join("")}</div>
         <p class="fine">Survey and model values describe typical soil here, not a test of a field; each tile's source is named on its card.</p></div>
       <div class="card">${head("On the map", "", "")}${chips()}</div>
-      <div class="card cta"><div><h3>Soil chemistry in depth</h3><p class="fine">Every horizon of the survey, the 30 m maps, total nitrogen, USGS sites, NRCS lab pedons, the watershed and soil moisture by depth, with their tables (CSV).</p></div>
-        <button class="btn primary" data-goto="soilmaps">Open Soil maps</button></div>`;
+      <div class="card cta"><div><h3>The soil in depth</h3><p class="fine">Soil: the dominant soil's horizons, its chemistry by depth, the 30 m maps, total nitrogen, USGS sites and NRCS lab pedons. Basin: the watershed, design-storm runoff and soil loss. Moisture: soil moisture by depth. Each with its tables (CSV).</p></div>
+        <button class="btn primary" data-goto="soilmaps">Open Soil</button></div>`;
     const box = id => (live() ? el.querySelector(`#${id}`) : null);
-    let S, N; // each: undefined while read, the value, or an Error
-    // the Soil profile tab (app.js: the survey's horizons, classification and site parameters), where the page has one
-    const prof = cls => (document.getElementById("tab-soilprofile") ? `<button class="link ${cls}" data-goto="soilprofile">Soil profile →</button>` : "");
+    let S, N, MS; // each: undefined while read, the value, or an Error
+    const hzLink = cls => `<button class="link ${cls}" data-goto="soilmaps" data-so-go="#smHz">Horizons →</button>`;
     const tile = (id, v, s) => { const x = box(`so-${id}`), t = tiles.find(q => q[0] === id); if (!x || !t) return;
       x.innerHTML = `<span class="k"><span>${esc(t[1])}</span><span class="tag">${esc(t[2])}</span></span>${v === undefined ? `<span class="v"><span class="skeleton" style="width:55%"></span></span><span class="s">${s}</span>`
-        : `<span class="v">${v}</span><span class="s">${s}</span>`}${v === undefined ? "" : `<span class="so-links"><button class="link so-go" data-goto="soilmaps" data-so-go="${t[3]}">Details →</button>${id === "ph" ? prof("so-go") : ""}</span>`}`; };
+        : `<span class="v">${v}</span><span class="s">${s}</span>`}${v === undefined ? "" : `<span class="so-links"><button class="link so-go" data-goto="${goTo(t)}" data-so-go="${t[4]}">Details →</button>${id === "ph" ? hzLink("so-go") : ""}</span>`}`; };
     const bad = e => `Could not read: ${esc(e.message || String(e))}`, u = (v, unit) => `${v}${unit ? ` <small>${esc(unit)}</small>` : ""}`;
     function draw() {
       if (!live()) return;
@@ -538,7 +663,7 @@ WG.soilmaps = (function () {
               ["Salinity, EC", ok(l.ec) ? `${fmt(l.ec, 1)} dS/m` : "—", salinity(l.ec)], ["Sodicity, SAR · ESP", `${fmt(l.sar, 1)} · ${ok(l.esp) ? `${fmt(l.esp, 0)}%` : "—"}`, sodicity(l.ec, l.sar, l.esp)],
               ["Organic matter", ok(l.om) ? `${fmt(l.om, 1)}%` : "—", ok(l.caco3) && l.caco3 > 0 ? `CaCO₃ ${fmt(l.caco3, 0)}%` : ""]])}</div>` : ""}</div>
           <p class="risk-text">${why ? esc(why) : `${esc(S.mu.name)} (${esc(S.mu.sym)} · ${esc(S.mu.area)}). ${esc(SURVEY_NOTE)}`}</p>
-          <div class="risk-links"><button class="link risk-how" data-goto="soilmaps" data-so-go="#smSurvey">Chemistry by depth →</button>${prof("risk-how")}<button class="link risk-how" data-methods="m-sources">Sources →</button></div>`;
+          <div class="risk-links"><button class="link risk-how" data-goto="soilmaps" data-so-go="#smSurvey">Chemistry by depth →</button>${hzLink("risk-how")}<button class="link risk-how" data-methods="m-sources">Sources →</button></div>`;
       }
       const sw = "Reading the soil survey…";
       if (S === undefined) ["ph", "salt", "cec"].forEach(k => tile(k, undefined, sw));
@@ -569,7 +694,15 @@ WG.soilmaps = (function () {
         const R = T.basin_rusle, a = val(rowOf(B, /^Soil loss A, all land/, "t/ac/yr")) ?? val(rowOf(R, /^A, all land/)), tf = val(rowOf(B, /^T$/, "t/ac/yr")) ?? val(rowOf(R, /^T, tolerable/));
         later("basin", "loss", "soil loss", () => (ok(a) ? [UN.fmt("soilLoss", a, a < 10 ? 1 : 0), ok(tf) && tf > 0 ? `<b>${fmt(a / tf, a / tf < 1 ? 2 : 1)} × T</b>: ${a <= tf ? "within" : "above"} the tolerable loss · all land in the HU12` : "gross sheet and rill erosion · all land in the HU12"] : null));
       }
-      if (has("moisture")) {
+      if (has("moisture") && SMM) {
+        const m = MS && !(MS instanceof Error) ? MS.model : null, s = MS && !(MS instanceof Error) ? MS.station : null;
+        if (MS === undefined) { tile("smm", undefined, "Reading soil moisture models…"); tile("stn", undefined, "Looking for a station within 400 km…"); }
+        else if (MS instanceof Error) ["smm", "stn"].forEach(k => tile(k, "—", bad(MS)));
+        else {
+          tile("smm", m && ok(num(m.top)) ? u(fmt(num(m.top), 2), "m³/m³") : "—", m ? `top layer · root zone <b>${ok(num(m.root)) ? fmt(num(m.root), 2) : "—"}</b>${m.src ? ` · ${esc(m.src)}` : ""}${m.date ? `, ${esc(String(m.date))}` : ""}` : "No model value here");
+          tile("stn", s && ok(num(s.value)) ? u(fmt(num(s.value), 2), "m³/m³") : "—", s ? `${ok(num(s.depthIn)) ? `${esc(UN.fmt("depth", num(s.depthIn) * 2.54))} · ` : ""}${s.time ? `${esc(String(s.time))} · ` : ""}<b>${esc(s.name || "")}</b>${s.net ? `, ${esc(s.net)}` : ""}${ok(num(s.km)) ? `, ${dist(num(s.km))}${s.dir ? ` ${esc(s.dir)}` : ""}` : ""}` : "No station within 400 km");
+        }
+      } else if (has("moisture")) {
         const M = T.moisture_models, ifs = M ? M.rows.filter(r => /^ECMWF IFS/.test(r[0])) : [], era = M ? M.rows.filter(r => /^ERA5/.test(r[0])) : [], use = ifs.length ? ifs : era;
         const day = use.reduce((m, r) => (r[4] > m ? r[4] : m), ""), at = (a, b) => { const r = use.find(x => x[2] === a && x[3] === b && x[4] === day); return r && ok(r[5]) ? r[5] : null; };
         const v0 = at(0, 7), v28 = at(28, 100);
@@ -584,23 +717,24 @@ WG.soilmaps = (function () {
     draw();
     const pS = survey(lat, lon).then(v => { S = v; }, e => { S = e instanceof Error ? e : new Error(String(e)); }).then(draw);
     const pN = sgN(lat, lon).then(v => { N = v; }, e => { N = e instanceof Error ? e : new Error(String(e)); }).then(draw);
-    await Promise.allSettled([pS, pN, pTab]);
+    const pM = SMM ? Promise.resolve().then(() => SMM(lat, lon)).then(v => { MS = v || { model: null, station: null }; }, e => { MS = e instanceof Error ? e : new Error(String(e)); }).then(draw) : null;
+    await Promise.allSettled([pS, pN, pM, pTab]);
     draw();
   };
-  // a tile's or the headline's Details: the Soil maps tab (app.js shows it on data-goto), scrolled to the card
+  // a tile's, a link's or the headline's Details: the tab it names (app.js shows it on data-goto), scrolled to the card
   document.addEventListener("click", e => {
-    const b = e.target.closest && e.target.closest("[data-so-go]"), tab = document.getElementById("tab-soilmaps"), pb = document.getElementById("panelBody");
+    const b = e.target.closest && e.target.closest("[data-so-go]"), tab = b && document.getElementById(`tab-${b.dataset.goto || "soilmaps"}`), pb = document.getElementById("panelBody");
     if (!b || !tab || !pb) return;
     setTimeout(() => {
-      const x = tab.querySelector(b.dataset.soGo), card = x && (x.closest(".card") || x.querySelector(".card") || x);
+      const x = b.dataset.soGo.split("|").map(s => tab.querySelector(s)).find(Boolean), card = x && (x.closest(".card") || x.querySelector(".card") || x);
       if (!card || tab.hidden) return;
       pb.scrollTo({ top: Math.max(0, card.getBoundingClientRect().top - pb.getBoundingClientRect().top + pb.scrollTop - 8), behavior: "smooth" });
       card.classList.remove("so-flash"); void card.offsetWidth; card.classList.add("so-flash");
     }, 0);
   });
 
-  return { init(h) { hooks = h; WG.map.on("layeradd layerremove", chipSoon); }, pick, layers: LAYERS, legendOf, choose, tables: () => tables, chemLegend, addPart: p => PARTS.push(p), sda, km, head, grid, th, r1, showBtn,
-    on, chips, syncChips,
+  return { init(h) { hooks = h; WG.map.on("layeradd layerremove", chipSoon); }, pick, layers: LAYERS, legendOf, choose, tables: () => tables, chemLegend, addPart: p => PARTS.push(p), sda, km, head, grid, th, r1, showBtn, allBtn,
+    on, chips, syncChips, showOnMap, clearPin, landCover: () => hooks && hooks.landCover && hooks.landCover(),
     // classes and the depth-weighting the tab uses, and each source at any point (plain async functions of lat, lon)
     PH, CEC, OM, reaction, salinity, sodicity, over, layerOf, surveyAt, usfsSamples, sgNAt, usgsNearAt, ksslAt, DS_COL, DEPTHS, SGD, ELS };
 })();

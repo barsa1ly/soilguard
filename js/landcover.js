@@ -3,7 +3,10 @@
    are pre-built (tools/build_landcover.py: MRLC WCS 2.0.1, class counts inside each state's outline, in km2, to
    data/states/landcover.json). A boundary is counted live from the same WCS: its box as an uncompressed GeoTIFF in EPSG:5070
    (Albers equal area, so every cell has the same area), at 30 m, or coarser (nearest neighbour, class codes kept) when that
-   would pass about 4 million cells; the boundary is rasterised on that grid by cell centre. Kept per boundary for the visit. */
+   would pass about 4 million cells; the boundary is rasterised on that grid by cell centre. Kept per boundary for the visit.
+   Under the shares, a block to open gives each listed class's runoff curve numbers (NRCS TR-55 Table 2-2, hydrologic soil
+   groups A-D, js/basins.js's table, where the page has it), and the CSV has them too. classAt gives one point's class,
+   from the same WCS. */
 WG.landcover = (function () {
   const { esc, fetchJSON, download } = WG.util;
   const V = ((document.querySelector('script[src*="data/states.js"]') || {}).src || "").split("v=")[1] || "1";
@@ -87,6 +90,18 @@ WG.landcover = (function () {
     return { km2: CLASSES.map(c => cnt[c[0]] * cell), cells: cnt.reduce((s, v) => s + v, 0), res: Math.round(Math.sqrt(g.dx * g.dy)) };
   }
 
+  /* the class of the 30 m cell that holds a point: a box of 3 x 3 cells from the same WCS, the cell under the point */
+  async function classAt(lat, lon) {
+    const [x, y] = albers(lon, lat), q = new URLSearchParams({ service: "WCS", version: "2.0.1", request: "GetCoverage", coverageId: "NLCD_2021_Land_Cover_L48", format: "image/geotiff" });
+    q.append("subset", `X(${Math.floor(x - 45)},${Math.ceil(x + 45)})`); q.append("subset", `Y(${Math.floor(y - 45)},${Math.ceil(y + 45)})`);
+    const r = await fetch(`${WCS}?${q}`);
+    if (!r.ok) throw new Error(`MRLC WCS answered ${r.status}`);
+    const g = readTiff(await r.arrayBuffer()), c = Math.floor((x - g.left) / g.dx), k = Math.floor((g.top - y) / g.dy);
+    if (c < 0 || k < 0 || c >= g.w || k >= g.h) throw new Error("the point is outside the cells returned");
+    const v = g.data[k * g.w + c];
+    return CLASSES.some(z => z[0] === v) ? v : null;
+  }
+
   /* ---------- state shares ---------- */
   let stateP = null;
   const stateData = () => stateP || (stateP = fetchJSON(`data/states/landcover.json?v=${V}`).catch(e => { stateP = null; throw e; }));
@@ -118,6 +133,8 @@ WG.landcover = (function () {
 
   /* ---------- the legend ---------- */
   let model = null; // what the table shows now, for the CSV
+  let cnOpen = false; // the curve-number block, open or shut, kept as the legend is drawn again
+  const cnOf = () => (WG.basins && WG.basins.CN ? WG.basins : null); // TR-55 by NLCD class: { CN: code -> [A, B, C, D], CN_AS: code -> cover }
   const cur = () => (WG.area && WG.area.boundary && WG.area.boundary()) || null;
   function draw(el, min, toggle) {
     const b = cur(), recs = WG.region ? WG.region.recs() : [];
@@ -137,11 +154,18 @@ WG.landcover = (function () {
     const paint = (res, what, src, note) => {
       const tot = res.km2.reduce((s, v) => s + v, 0) || 1;
       model = { rows: CLASSES.map((c, i) => [c[0], c[1], 100 * res.km2[i] / tot, res.km2[i]]), what, src };
-      const rows = model.rows.filter(r => r[2] >= 0.05);
+      const rows = model.rows.filter(r => r[2] >= 0.05), T = cnOf();
+      // the classes' curve numbers: a compact table under the shares, open on a tap, so the legend stays short on a phone
+      const cn = T ? `<details class="lc-cn"${cnOpen ? " open" : ""}><summary>Runoff curve numbers (TR-55)</summary><table class="lc-cnt"><thead><tr><th>Land cover <small>treated as</small></th><th>A</th><th>B</th><th>C</th><th>D</th></tr></thead><tbody>${rows.map(r => {
+        const c = CLASSES.find(x => x[0] === r[0]), v = T.CN[r[0]];
+        return `<tr><td><i class="sw" style="background:${c[2]}"></i><span>${esc(c[1])}<small>${esc(v ? T.CN_AS[r[0]] : "no curve number")}</small></span></td>${v ? v.map(n => `<td>${n}</td>`).join("") : `<td colspan="4">—</td>`}</tr>`;
+      }).join("")}</tbody></table><p class="lnote">NRCS TR-55 (1986) Table 2-2, average wetness before a storm (AMC II): the higher, the more of the rain runs off. A–D: the hydrologic soil groups, deep sands (A, least runoff) to clays and shallow or wet soils (D). Each class as the TR-55 cover under its name; wetlands 78 (assumed: not in TR-55). The Basin tab gives a storm's runoff at the point and in its watershed.</p></details>` : "";
       set(`<p class="lc-what">% of ${esc(what)}</p>`, `<div class="rows">${rows.map(r => {
         const c = CLASSES.find(x => x[0] === r[0]);
         return `<div class="row"><i class="sw" style="background:${c[2]}"></i><span class="lc-n">${esc(c[1])}</span><b class="lc-p">${r[2].toFixed(1)}%</b></div>`;
-      }).join("")}</div><p class="lnote">${esc(src)}${note ? ` ${esc(note)}` : ""} Classes under 0.05% are not listed. <a href="#" class="lcCsv">CSV</a></p>`);
+      }).join("")}</div>${cn}<p class="lnote">${esc(src)}${note ? ` ${esc(note)}` : ""} Classes under 0.05% are not listed. <a href="#" class="lcCsv">CSV</a></p>`);
+      const d = host.querySelector(".lc-cn");
+      if (d) d.addEventListener("toggle", () => { cnOpen = d.open; });
     };
     const none = () => set("", `<p class="lnote">Land-cover shares are not available.</p>`);
     const states = () => stateData().then(d => {
@@ -166,9 +190,11 @@ WG.landcover = (function () {
   function csv() {
     if (!model) return;
     const q = s => `"${String(s).replace(/"/g, '""')}"`;
-    download("land_cover_shares.csv", ["class_code,class_name,percent,area_km2,area,source", ...model.rows.map(r => [r[0], q(r[1]), r[2].toFixed(2), r[3].toFixed(2), q(model.what), q(model.src)].join(","))].join("\n"), "text/csv");
+    const T = cnOf(), cn = c => (T && T.CN[c] ? [q(T.CN_AS[c]), ...T.CN[c]] : ["", "", "", "", ""]);
+    download("land_cover_shares.csv", [`class_code,class_name,percent,area_km2,area,source${T ? ",tr55_cover_type,cn_a,cn_b,cn_c,cn_d" : ""}`,
+      ...model.rows.map(r => [r[0], q(r[1]), r[2].toFixed(2), r[3].toFixed(2), q(model.what), q(model.src), ...(T ? cn(r[0]) : [])].join(","))].join("\n"), "text/csv");
   }
   // a boundary drawn, uploaded or cleared: the legend follows (app.js draws it only while the layer is on)
   document.addEventListener("wg-boundary", () => redraw());
-  return { draw, CLASSES, albers, readTiff, count, boundaryShares, init: o => { redraw = o.render; } };
+  return { draw, CLASSES, albers, readTiff, count, boundaryShares, classAt, init: o => { redraw = o.render; } };
 })();

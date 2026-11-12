@@ -1,4 +1,4 @@
-/* Basins: surface runoff and soil loss for the small watershed that holds the point, in the Soil maps theme and tab.
+/* Basins: surface runoff and soil loss for the small watershed that holds the point, in the Soil maps theme's Basin tab.
    The watershed is the Watershed Boundary Dataset's 12-digit hydrologic unit (HU12, about 40 to 250 km²; USGS The National
    Map, wbd layer 6). Inside it the NHDPlus High Resolution network: its flowlines (NHDPlus_HR layer 3, asked by the HU12's
    polygon) and the catchments of those flowlines and of the sinks (layer 1), asked BY ID from layer 10: a spatial query on
@@ -7,10 +7,11 @@
      model): 893.6 x qincrama (cfs) / area (km²) = mm/yr, a model value;
    - design-storm runoff by the SCS curve number (TR-55) for a 24-hour depth (NOAA Atlas 14 from data/states/XX/atlas14.json:
      every state but Oregon and Washington, which no Atlas 14 volume covers yet, where it is typed), CN from the soil survey's hydrologic groups (SSURGO, area-weighted inside the HU12 on Soil Data
-     Access's server) and the HU12's NLCD 2021 land cover (js/landcover.js's reader of the MRLC WCS);
+     Access's server) and the HU12's NLCD 2021 land cover (js/landcover.js's reader of the MRLC WCS); and at the point
+     itself, from its own NLCD cell and the dominant soil's group (the survey read for the wind erosion, app.js);
    - gross sheet-and-rill soil loss by RUSLE, A = R K LS C P: R of the point's NHDPlus V2 catchment (USGS RF7100, pre-built
      per state into data/states/XX/rfactor.json by tools/build_basins.py; the COMID from USGS NLDI), K, slope and slope
-     length from SSURGO, C from the NLCD classes.
+     length from SSURGO, C from the NLCD classes, P from the support practice chosen (on cropland only).
    Two map layers join the theme: watershed boundaries (WBD) and NHDPlus HR streams, both drawn by the USGS servers.
    Loaded after soilmaps.js (whose layer list and tab it joins) and before landcover.js and app.js. */
 WG.basins = (function () {
@@ -253,12 +254,42 @@ WG.basins = (function () {
     labels: ["< 10", "10–25", "25–50", "50–100", "100–200", "200–400", "400–800", "≥ 800"] };
   const runColor = v => (ok(v) ? RUN.colors[RUN.lims.filter(l => v >= l).length] : "#bdbdbd");
 
-  /* the user's choices, kept on this device: the storm, cropland's C and the support practice P */
+  /* the support practice factor P: the ratio of soil loss with the practice to that of farming straight up and down the
+     slope. Contour farming by slope, with the longest slope it holds for (Wischmeier & Smith 1978, USDA Agriculture
+     Handbook 537, Table 13: contours stop working on steep slopes, so P rises again above 8% and is 1 above 25%; on a
+     slope longer than the limit, rows overtop and P is taken as 1). Contour strip cropping (Table 14, a 4-year rotation of
+     row crop, small grain and 2 years of meadow): half of contouring, with twice its slope-length limits. Contour-farmed
+     terraces with closed outlets: the contouring P by slope, its limit checked against the terrace spacing (the slope
+     length the terraces leave), times the terrace sediment-delivery subfactor by spacing of Foster & Highfill (1983), as
+     RUSLE uses it (AH 703, chapter 6): the soil that settles in the terrace channels is credited. AH 537's own Table 15
+     is by slope only, so the spacing values are not from it. */
+  const P_CONTOUR = [[2.5, 0.6, 400], [5.5, 0.5, 300], [8.5, 0.5, 200], [12.5, 0.6, 120], [16.5, 0.7, 80], [20.5, 0.8, 60], [25.5, 0.9, 50], [Infinity, 1, Infinity]];
+  // ft: the slope length the practice is judged by (null: not known, no limit applied); strips hold for twice the length
+  const pContour = (s, ft, k = 1) => { if (!ok(s)) return null; const r = P_CONTOUR.find(x => s < x[0]); return ok(ft) && ft > r[2] * k ? 1 : r[1]; };
+  const pStrip = (s, ft) => { const p = pContour(s, ft, 2); return ok(p) ? (p >= 1 ? 1 : p / 2) : null; };
+  const PRACTICES = [["none", "None: up and down the slope (P 1)"], ["contour", "Contour farming (P 0.5–0.9 by slope)"], ["strip", "Contour strip cropping (P 0.25–0.45)"],
+    ["t110", "Terraces < 110 ft apart (P contour × 0.5)"], ["t140", "Terraces 110–140 ft apart (P contour × 0.6)"], ["t180", "Terraces 140–180 ft apart (P contour × 0.7)"], ["t225", "Terraces 180–225 ft apart (P contour × 0.8)"],
+    ["t300", "Terraces 225–300 ft apart (P contour × 0.9)"], ["own", "Your own P"]];
+  // terraces: the widest spacing of the class (ft) and Foster & Highfill's subfactor for closed outlets
+  const P_TERR = { t110: [110, 0.5], t140: [140, 0.6], t180: [180, 0.7], t225: [225, 0.8], t300: [300, 0.9] };
+
+  /* the user's choices, kept on this device: the storm, cropland's C, the support practice and its own P */
   const pick = { storm: "2", cropC: 0.24, P: 1, ...(WG.util.cache.get("basins") || {}) };
   if (!["2", "10", "100", "own"].includes(pick.storm)) pick.storm = "2";
   if (!ok(pick.cropC) || pick.cropC < 0 || pick.cropC > 1) pick.cropC = 0.24;
   if (!ok(pick.P) || pick.P < 0 || pick.P > 1) pick.P = 1;
-  const keep = () => WG.util.cache.set("basins", { storm: pick.storm === "own" ? "2" : pick.storm, cropC: pick.cropC, P: pick.P });
+  if (!PRACTICES.some(p => p[0] === pick.pm)) pick.pm = pick.P === 1 ? "none" : "own"; // a P typed before the practices were offered stays
+  const keep = () => WG.util.cache.set("basins", { storm: pick.storm === "own" ? "2" : pick.storm, cropC: pick.cropC, P: pick.P, pm: pick.pm });
+  /* a soil component's P on cropland under the practice chosen (null: no slope to choose it by); contouring and strips are
+     judged by the component's USLE slope length (m, to ft), terraces by their spacing */
+  const pOf = c => {
+    const pm = pick.pm, ft = ok(c.lam) ? c.lam * 3.2808 : null, t = P_TERR[pm];
+    if (pm === "own") return pick.P;
+    if (pm === "none") return 1;
+    if (t) { const p = pContour(c.slope, t[0]); return ok(p) ? p * t[1] : null; }
+    return pm === "strip" ? pStrip(c.slope, ft) : pContour(c.slope, ft);
+  };
+  const pName = () => (PRACTICES.find(p => p[0] === pick.pm) || PRACTICES[0])[1].replace(/ \(P .*\)$/, "");
 
   /* ---------- the map overlay: the HU12, its catchments by runoff, its flowlines and the upstream outline ----------
      on the map while the Soil maps theme is on and the point is the same; off when the theme changes (back when it
@@ -331,76 +362,116 @@ WG.basins = (function () {
   }
   const storm = () => (M.a14 ? pick.storm : "own"); // without an Atlas 14 grid, the depth is typed
   const stormP = () => (storm() !== "own" ? M.a14[storm()] : M.own);
+  /* the point itself: its NLCD cell (M.ptLc) and the dominant soil's hydrologic group (the survey read for the wind
+     erosion, app.js state.soil; dual groups as undrained, as in the HU12), its TR-55 curve number and the storm's runoff */
+  function pointCn() {
+    const lc = M.ptLc, s = WG.state.soil, d = s && !s.error ? s.dominant : null, g0 = d ? String(d.hydgrp || "").split("/").pop().trim().charAt(0).toUpperCase() : "";
+    const g = g0 && "ABCD".includes(g0) ? g0 : null, cls = lc && !(lc instanceof Error) ? WG.landcover.CLASSES.find(c => c[0] === lc.code) || null : null;
+    const cn = cls && g && CN[cls[0]] ? CN[cls[0]][HSG.indexOf(g)] : null, q = ok(cn) && ok(M.P) ? scsQ(M.P, cn) : null;
+    return { lc, cls, s, d, g, cn, q, S: ok(cn) ? 25400 / cn - 254 : null };
+  }
+  // the letters of each method in plain words: [symbol, name, meaning, units, where the value comes from]
+  const CN_VARS = [
+    ["P", "Rainfall depth", "The storm's rain in 24 hours. The 2-, 10- and 100-year storms have a 50%, 10% and 1% chance of being reached or passed in any year.", "mm or in", "NOAA Atlas 14 at the point's 0.05° cell, or typed"],
+    ["CN", "Curve number", "30 to 100: how readily the land sheds rain, from its cover and its soil group, for average wetness before the storm (AMC II). Higher means more runoff.", "none", "TR-55 Table 2-2 for the NLCD 2021 class and the soil group"],
+    ["HSG", "Hydrologic soil group", "A: deep sand or gravel, takes water in fast (least runoff). B: loams. C: finer soils or a slowly permeable layer. D: clays, shallow or wet soils (most runoff). A/D, B/D, C/D: drained/undrained; undrained is used.", "A–D", "SSURGO component (hydgrp)"],
+    ["S", "Potential retention", "The most water the land can still take in once runoff has begun: S = 1000/CN − 10 in (25400/CN − 254 mm).", "mm or in", "from CN"],
+    ["Ia", "Initial abstraction", "Rain held before any runoff starts: caught by plants, stored in hollows, soaked in. Ia = 0.2 S.", "mm or in", "from S"],
+    ["Q", "Runoff depth", "The rain that runs off: Q = (P − Ia)² ÷ (P − Ia + S) when P is more than Ia, else 0.", "mm or in", "computed"],
+    ["V", "Runoff volume", "Q times the land area of the HU12.", "m³ or acre-feet", "computed"]];
+  const helpBox = (title, vars, extra = "") => `<details class="bs-help"><summary>${esc(title)}</summary>${SM.grid([SM.th("Symbol"), SM.th("Name"), SM.th("Meaning"), SM.th("Units"), SM.th("Value here from")],
+    vars.map(v => [`<b>${esc(v[0])}</b>`, esc(v[1]), esc(v[2]), esc(v[3]), esc(v[4])]))}${extra}</details>`;
   function drawCn() {
     const x = box("bsCnOut");
     if (!x) return;
     M.P = stormP();
-    const miss = [!M.soils && !M.err.soils && "the soil survey's hydrologic groups", !M.lc && !M.err.lc && "the HU12's land cover"].filter(Boolean);
-    if (M.err.soils || M.err.lc) { x.innerHTML = `<p class="fine">Could not read ${esc([M.err.soils && "the soil survey (SDA)", M.err.lc && "the land cover (MRLC)"].filter(Boolean).join(" or "))}: ${esc((M.err.soils || M.err.lc).message || "")}. Pick the location again to retry.</p>`; return; }
-    if (miss.length) { x.innerHTML = `<p class="fine">Reading ${esc(miss.join(" and "))}…</p>`; return; }
-    if (M.a14 === undefined) { x.innerHTML = `<p class="fine">Reading the NOAA Atlas 14 depths…</p>`; return; }
-    if (!ok(M.P)) { x.innerHTML = `<p class="fine">Type the storm's 24-hour depth above (NOAA's point estimate: ${pfds()}).</p>`; return; }
-    const R = cnModel();
-    if (!R || R.noHsg || R.noLand) { x.innerHTML = `<p class="fine">${R && R.noLand ? "The HU12 has no land cover with a curve number (all water)." : "The soil survey gives no hydrologic group in this HU12."}</p>`; return; }
-    const vol = (R.q / 1000) * R.land * 1e6;
-    M.cn = R;
-    T().basin_landcover = { title: `Land cover and curve numbers, HU12 ${M.hu.huc12} (NLCD 2021; TR-55 Table 2-2; ${fmt(M.P, 0)} mm storm)`,
-      header: ["NLCD code", "NLCD class", "Share of land (%)", "Area (km2)", "TR-55 cover type", "CN A", "CN B", "CN C", "CN D", "CN for the HU12's soil groups", `Runoff Q for ${r0(M.P)} mm (mm)`, "RUSLE C", "C literature range"],
-      rows: R.cls.map(c => [c.code, c.name, t2(100 * c.share), t2(c.km2), CN_AS[c.code], ...CN[c.code], t2(c.cnMix), t2(c.q), c.code === 82 ? pick.cropC : C_OF[c.code], C_RANGE[c.code]]) };
-    x.innerHTML = `${kv([
-      ["Storm", P_U(M.P), `24-hour, ${storm() !== "own" ? `${storm()}-year (NOAA Atlas 14)` : "your depth"}`],
-      ["Curve number", fmt(R.cn, 1), `area-weighted, land only`],
-      ["Runoff", P_U(R.q), `${fmt((100 * R.q) / M.P, 0)}% of the rain`],
-      ["Volume", `${fmt(vol / 1233.48, 0)}${small("ac-ft")}`, `${fmt(vol / 1e6, 2)} million m³ from ${fmt(R.land, 1)} km² of land`],
-    ])}
-      <h4 class="sm-h">Land cover in the HU12 and its curve numbers</h4>
-      ${SM.grid([SM.th("Land cover", "NLCD 2021"), SM.th("Share", "% of land"), SM.th("CN", "A · B · C · D"), SM.th("CN here", "soil mix"), SM.th("Runoff", UN.sym("precip"))],
-        R.cls.filter(c => c.share >= 0.001).map(c => [`<i class="bs-sw" style="background:${c.color}"></i>${esc(c.name)}`, fmt(100 * c.share, 1), CN[c.code].join(" · "), fmt(c.cnMix, 1), UN.num("precip", c.q)]))}
-      <p class="fine">Hydrologic soil groups in the HU12 (SSURGO, area-weighted, dual groups as undrained): ${HSG.map(g => `${g} ${fmt(100 * R.h[g], 0)}%`).join(" · ")}${R.hsgCover < 0.995 ? `; ${fmt(100 * (1 - R.hsgCover), 0)}% of the area has no group (urban land, water, pits) and is left out` : ""}. ${R.water > 0.005 ? `Open water (${fmt(R.water, 1)} km²) is left out. ` : ""}<button class="link" data-sm-csv="basin_landcover">land cover table (CSV)</button></p>
-      <p class="fine"><b>Method:</b> SCS curve number (NRCS TR-55, 1986): Q = (P − Ia)² ÷ (P − Ia + S), S = 1000/CN − 10 in, Ia = 0.2 S, with the curve numbers of TR-55 Table 2-2 for average wetness (AMC II) for each NLCD 2021 class (wetlands, which the table lacks, 78 assumed; MRLC WCS, counted in 30 m cells inside the HU12) and soil group. Runoff is worked out for each land cover and soil group and then averaged (Q is not linear in CN; at the mean CN it would be ${P_U(R.qAtCn)}). Land cover and soils are taken as independent inside the HU12 (no cell-by-cell overlay). <b>Limits:</b> an event method for one storm on average wetness, not a forecast or a yearly total; crude for cracking clays such as the Vertisols of the Blackland Prairie, and for frozen or very wet ground.</p>`;
+    /* the point first: it needs only the storm, its own cell and the survey's dominant soil */
+    const pt = pointCn(), hasP = ok(M.P);
+    const lcK = pt.lc === undefined ? ["…", "reading the NLCD 2021 cell"] : pt.lc instanceof Error ? ["—", "the NLCD cell could not be read"]
+      : pt.cls ? [`<i class="bs-sw" style="background:${pt.cls[2]}"></i>${esc(pt.cls[1])}`, `NLCD 2021, the 30 m cell${pt.lc.src ? ` (${esc(pt.lc.src)})` : ""}`] : ["—", "no NLCD class here"];
+    const gK = !pt.s ? ["…", "reading the soil survey"] : !pt.d ? ["—", "no survey soil here"]
+      : pt.g ? [`${pt.g}${String(pt.d.hydgrp || "").includes("/") ? small(`${pt.d.hydgrp}, undrained`) : ""}`, `${esc(pt.d.compname)}, the dominant soil (SSURGO)`] : ["—", `${esc(pt.d.compname)}: the survey gives no group`];
+    const cnK = ok(pt.cn) ? [String(pt.cn), `TR-55: ${esc(CN_AS[pt.cls[0]])}`] : ["—", pt.cls && !CN[pt.cls[0]] ? "open water or ice: no curve number" : pt.lc === undefined || !pt.s ? "waiting for the cell and the soil" : "needs a land cover and a soil group"];
+    const qK = ok(pt.q) ? [P_U(pt.q), `${fmt((100 * pt.q) / M.P, 0)}% of the rain · S ${P_U(pt.S)}, Ia ${P_U(0.2 * pt.S)}`] : ["—", !hasP ? "choose or type the storm above" : ""];
+    const here = `<h4 class="sm-h">Here, at the point</h4>${kv([["Land cover", ...lcK], ["Hydrologic soil group", ...gK], ["Curve number", ...cnK], ["Runoff", ...qK]])}`;
+    const foot = `${helpBox("What the letters mean", CN_VARS)}
+      <p class="fine"><b>Method:</b> SCS curve number (NRCS TR-55, 1986): Q = (P − Ia)² ÷ (P − Ia + S), S = 1000/CN − 10 in, Ia = 0.2 S, with the curve numbers of TR-55 Table 2-2 for average wetness (AMC II) for each NLCD 2021 class (wetlands, which the table lacks, 78 assumed) and soil group. At the point: its own 30 m cell and the dominant soil of its map unit. In the HU12: its classes counted in 30 m cells inside it (MRLC WCS) and the survey's groups by area; runoff is worked out for each land cover and soil group and then averaged (Q is not linear in CN), with land cover and soils taken as independent (no cell-by-cell overlay). <b>Limits:</b> an event method for one storm on average wetness, not a forecast or a yearly total; crude for cracking clays such as the Vertisols of the Blackland Prairie, and for frozen or very wet ground.</p>`;
+    /* then the whole HU12 in one line: its design storm needs the shares of every class and soil group */
+    const hu = () => {
+      if (M.err.soils || M.err.lc) return `<p class="fine">Could not read ${esc([M.err.soils && "the soil survey (SDA)", M.err.lc && "the land cover (MRLC)"].filter(Boolean).join(" or "))}: ${esc((M.err.soils || M.err.lc).message || "")}. Pick the location again to retry.</p>`;
+      const miss = [!M.soils && "the soil survey's hydrologic groups", !M.lc && "the HU12's land cover"].filter(Boolean);
+      if (miss.length) return `<p class="fine">Reading ${esc(miss.join(" and "))}…</p>`;
+      if (M.a14 === undefined) return `<p class="fine">Reading the NOAA Atlas 14 depths…</p>`;
+      if (!hasP) return `<p class="fine">Type the storm's 24-hour depth above (NOAA's point estimate: ${pfds()}).</p>`;
+      const R = cnModel();
+      if (!R || R.noHsg || R.noLand) return `<p class="fine">${R && R.noLand ? "The HU12 has no land cover with a curve number (all water)." : "The soil survey gives no hydrologic group in this HU12."}</p>`;
+      const vol = (R.q / 1000) * R.land * 1e6;
+      M.cn = R;
+      T().basin_landcover = { title: `Land cover and curve numbers, HU12 ${M.hu.huc12} (NLCD 2021; TR-55 Table 2-2; ${fmt(M.P, 0)} mm storm)`,
+        header: ["NLCD code", "NLCD class", "Share of land (%)", "Area (km2)", "TR-55 cover type", "CN A", "CN B", "CN C", "CN D", "CN for the HU12's soil groups", `Runoff Q for ${r0(M.P)} mm (mm)`, "RUSLE C", "C literature range"],
+        rows: R.cls.map(c => [c.code, c.name, t2(100 * c.share), t2(c.km2), CN_AS[c.code], ...CN[c.code], t2(c.cnMix), t2(c.q), c.code === 82 ? pick.cropC : C_OF[c.code], C_RANGE[c.code]]) };
+      return `<p class="bs-hu">Curve number <b>${fmt(R.cn, 1)}</b> (area-weighted, land only) · runoff <b>${P_U(R.q)}</b>, ${fmt((100 * R.q) / M.P, 0)}% of the rain · <b>${fmt(vol / 1233.48, 0)} ac-ft</b> (${fmt(vol / 1e6, 2)} million m³) from ${fmt(R.land, 1)} km² of land</p>
+        <p class="fine">Hydrologic soil groups in the HU12 (SSURGO, by area): ${HSG.map(g => `${g} ${fmt(100 * R.h[g], 0)}%`).join(" · ")}${R.hsgCover < 0.995 ? `; ${fmt(100 * (1 - R.hsgCover), 0)}% of the area has no group (urban land, water, pits) and is left out` : ""}. ${R.water > 0.005 ? `Open water (${fmt(R.water, 1)} km²) is left out. ` : ""}Each land cover's share and curve numbers: <button class="link" data-sm-csv="basin_landcover">land cover table (CSV)</button>; for a state or your own boundary, <button class="link" data-bs-act="nlcd">turn on Land cover (NLCD)</button> and its map legend lists each class with its curve numbers.</p>`;
+    };
+    x.innerHTML = `${here}<h4 class="sm-h">The whole HU12</h4>${hu()}${foot}`;
     summary();
   }
+  const RUSLE_VARS = [
+    ["A", "Soil loss", "The long-term average yearly loss by sheet and rill erosion on the slopes: A = R × K × LS × C × P. Not gullies, stream banks or the sediment that reaches a stream.", "t/ac/yr (× 2.2417 = t/ha/yr)", "computed"],
+    ["R", "Rainfall-runoff erosivity", "How hard the rain hits: each storm's energy times its greatest 30-minute intensity, summed over the year and averaged over many years.", "hundreds of ft·tonf·in/(ac·h·yr) (× 17.02 = MJ·mm/(ha·h·yr))", "USGS RF7100 for the point's NHDPlus V2 catchment, or typed"],
+    ["K", "Soil erodibility", "How easily the soil is detached and carried, measured on a standard bare plot: silts and very fine sands high (0.4 and up), clays and coarse sands low (under 0.2).", "t·ac·h/(hundreds·ac·ft·tonf·in)", "SSURGO surface horizon Kw (Kf where Kw is blank)"],
+    ["LS", "Slope length and steepness", "The slope against the standard plot, 72.6 ft (22.1 m) long at 9%: longer and steeper slopes lose more (LS 1 on the standard plot).", "none", "SSURGO slope and USLE slope length; S of McCool et al. (1987), L = (λ ÷ 22.13)^m"],
+    ["C", "Cover-management", "Loss under the plant cover and its management against tilled bare fallow (C 1): canopy, residue, roots and tillage. About 0.001–0.005 forest, 0.01–0.05 pasture and range, 0.1–0.4 crops, 0.3–0.6 bare land.", "none", "NLCD 2021 class values from the literature; cropland's is yours (0.24 by default)"],
+    ["P", "Support practice", "Loss with a practice against farming straight up and down the slope (P 1). Contour farming (tillage and rows across the slope): 0.5–0.9 by slope, 1 where the slope is longer than contours hold. Contour strip cropping (strips of row crop and meadow or small grain across the slope): about half of contouring. Terraces (ridges and channels across the slope, contour-farmed): the contouring P times 0.5–0.9 by their spacing, for the soil that settles in the terrace channels.", "none", "your choice in the list, by each soil's slope and slope length; applied to cropland only (other land P = 1)"],
+    ["T", "Tolerable soil loss", "The most a soil can lose each year and keep its productivity: 1 to 5 t/ac/yr, more for deep soils. A above T calls for a change of cover or practice.", "t/ac/yr", "SSURGO component (tfact)"]];
+  // AH 537 Tables 13 and 14: P by slope for contour farming and contour strip cropping, each with the longest slope it holds for
+  const P_TABLE = `<h4 class="sm-h">P by slope (Wischmeier &amp; Smith 1978, AH 537, Tables 13 and 14)</h4>${SM.grid([SM.th("Slope", "%"), SM.th("Contour farming"), SM.th("Longest slope", "ft"), SM.th("Strip cropping"), SM.th("Longest slope", "ft")],
+    [["1–2", "0.60", "400", "0.30", "800"], ["3–5", "0.50", "300", "0.25", "600"], ["6–8", "0.50", "200", "0.25", "400"], ["9–12", "0.60", "120", "0.30", "240"], ["13–16", "0.70", "80", "0.35", "160"], ["17–20", "0.80", "60", "0.40", "120"], ["21–25", "0.90", "50", "0.45", "100"], ["over 25", "1.0", "—", "1.0", "—"]])}
+    <p class="fine">Strip cropping: a 4-year rotation of row crop, small grain with meadow seeding and 2 years of meadow (alternate strips of row crop and winter grain: as contour farming). Where a soil's USLE slope length (SSURGO) is longer than the limit, rows overtop in big storms and the practice is taken to fail there: P 1. <b>Terraces</b> (contour-farmed, closed outlets): the contouring P for the slope, its limit checked against the terrace spacing, times a subfactor for the soil that settles in the terrace channels, by spacing: under 110 ft 0.5, 110–140 ft 0.6, 140–180 ft 0.7, 180–225 ft 0.8, 225–300 ft 0.9, over 300 ft 1.0 (Foster &amp; Highfill 1983, as in RUSLE, AH 703, chapter 6). Terraces also shorten the slope length to their spacing, which this app does not do, so A with terraces is on the high side. RUSLE works P out from ridge height, storm erosivity and furrow grade; these are the classic values.</p>`;
   // the soil loss by RUSLE
   function drawRusle() {
     const x = box("bsRusleOut");
     if (!x) return;
-    if (M.err.soils || M.err.lc) { x.innerHTML = `<p class="fine">Could not read ${esc([M.err.soils && "the soil survey (SDA)", M.err.lc && "the land cover (MRLC)"].filter(Boolean).join(" or "))}. Pick the location again to retry.</p>`; return; }
+    if (M.err.soils || M.err.lc) { x.innerHTML = `<p class="fine">Could not read ${esc([M.err.soils && "the soil survey (SDA)", M.err.lc && "the land cover (MRLC)"].filter(Boolean).join(" or "))}. Pick the location again to retry.</p>${helpBox("What the letters mean", RUSLE_VARS, P_TABLE)}`; return; }
     const miss = [!M.soils && "the soil survey's K, slope and slope length", !M.lc && "the land cover", M.R === undefined && "the R factor (NLDI, RF7100)"].filter(Boolean);
-    if (miss.length) { x.innerHTML = `<p class="fine">Reading ${esc(miss.join(", "))}…</p>`; return; }
+    if (miss.length) { x.innerHTML = `<p class="fine">Reading ${esc(miss.join(", "))}…</p>${helpBox("What the letters mean", RUSLE_VARS, P_TABLE)}`; return; }
     const S = M.soils, K = wmean(S, c => c.K), Ls = wmean(S, c => c.LS), KLS = wmean(S, c => (ok(c.K) && ok(c.LS) ? c.K * c.LS : null)), Tf = wmean(S, c => c.T);
+    // P on cropland: by each soil's slope, or one value; K × LS × P averaged as K × LS is
+    const KLSP = wmean(S, c => (ok(c.K) && ok(c.LS) && ok(pOf(c)) ? c.K * c.LS * pOf(c) : null));
     const cls = WG.landcover.CLASSES.map((c, i) => ({ code: c[0], name: c[1], km2: M.lc.km2[i] })).filter(c => c.code in C_OF && c.km2 > 0), land = cls.reduce((s, c) => s + c.km2, 0);
     const cOf = c => (c.code === 82 ? pick.cropC : C_OF[c.code]), C = land ? cls.reduce((s, c) => s + (c.km2 / land) * cOf(c), 0) : null, crop = cls.find(c => c.code === 82);
-    const R = M.Rv, P = pick.P, okAll = ok(R) && ok(KLS.v) && ok(C);
-    const A = okAll ? R * KLS.v * C * P : null, Ac = ok(R) && ok(KLS.v) ? R * KLS.v * pick.cropC * P : null, tons = ok(A) ? A * land * 247.105 : null;
+    const cCrop = crop && land ? (crop.km2 / land) * pick.cropC : 0, P = ok(KLSP.v) && KLS.v ? KLSP.v / KLS.v : null, R = M.Rv, okAll = ok(R) && ok(KLS.v) && ok(C) && ok(P);
+    const A = okAll ? R * (KLS.v * (C - cCrop) + KLSP.v * cCrop) : null, Ac = ok(R) && ok(KLSP.v) ? R * KLSP.v * pick.cropC : null, tons = ok(A) ? A * land * 247.105 : null;
     M.rusle = { R, K, Ls, KLS, Tf, C, P, A, Ac, land, tons, crop };
     const ta = v => (ok(v) ? `${fmt(v, v < 10 ? 2 : 1)}${small("t/ac/yr")}` : "—"), th_ = v => (ok(v) ? `${fmt(v * 2.2417, v * 2.2417 < 10 ? 2 : 1)} t/ha/yr` : "");
-    const pct = v => `${fmt(100 * v, 0)}% of the area`;
+    const pct = v => `${fmt(100 * v, 0)}% of the area`, byS = !["own", "none"].includes(pick.pm);
     const rows = [
-      ["R, rainfall erosivity", ok(R) ? fmt(R, 1) : "—", "hundreds ft·tonf·in/(ac·h·yr)", ok(R) ? fmt(R * 17.02, 0) : "—", "MJ·mm/(ha·h·yr)", M.Rsrc || "", ""],
-      ["K, soil erodibility", ok(K.v) ? fmt(K.v, 3) : "—", "t·ac·h/(hundreds·ac·ft·tonf·in)", ok(K.v) ? fmt(K.v * 0.1317, 4) : "—", "t·ha·h/(ha·MJ·mm)", "SSURGO surface horizon Kw (Kf where Kw is blank), by component and map-unit area", pct(K.cover)],
-      ["LS, slope length and steepness", ok(Ls.v) ? fmt(Ls.v, 3) : "—", "", "", "", "SSURGO slope and USLE slope length of each component; S of McCool et al. (1987), L exponent by slope class", pct(Ls.cover)],
-      ["K × LS, averaged by component", ok(KLS.v) ? fmt(KLS.v, 4) : "—", "", "", "", "the product of each component's K and LS, then averaged (used for A)", pct(KLS.cover)],
-      ["C, cover and management", ok(C) ? fmt(C, 3) : "—", "", "", "", `NLCD 2021 classes with literature C values; cropland ${pick.cropC}`, `${fmt(land, 1)} km² of land`],
-      ["P, support practice", fmt(P, 2), "", "", "", "1 = no contouring, strips or terraces (your choice)", ""],
+      ["R, rainfall erosivity", ok(R) ? fmt(R, 1) : "—", "hundreds ft·tonf·in/(ac·h·yr)", ok(R) ? fmt(R * 17.02, 0) : "—", "MJ·mm/(ha·h·yr)", M.Rsrc || "", "", "how hard the rain hits, a yearly sum"],
+      ["K, soil erodibility", ok(K.v) ? fmt(K.v, 3) : "—", "t·ac·h/(hundreds·ac·ft·tonf·in)", ok(K.v) ? fmt(K.v * 0.1317, 4) : "—", "t·ha·h/(ha·MJ·mm)", "SSURGO surface horizon Kw (Kf where Kw is blank), by component and map-unit area", pct(K.cover), "how easily the soil washes off"],
+      ["LS, slope length and steepness", ok(Ls.v) ? fmt(Ls.v, 3) : "—", "", "", "", "SSURGO slope and USLE slope length of each component; S of McCool et al. (1987), L exponent by slope class", pct(Ls.cover), "1 on a 72.6 ft slope of 9%"],
+      ["K × LS, averaged by component", ok(KLS.v) ? fmt(KLS.v, 4) : "—", "", "", "", "the product of each component's K and LS, then averaged (used for A)", pct(KLS.cover), ""],
+      ["C, cover and management", ok(C) ? fmt(C, 3) : "—", "", "", "", `NLCD 2021 classes with literature C values; cropland ${pick.cropC}`, `${fmt(land, 1)} km² of land`, "1 = tilled bare soil; plants and residue lower it"],
+      ["P, support practice", ok(P) ? fmt(P, 2) : "—", "", "", "", `${pName()}${byS ? ", by each soil's slope and slope length (mean over the HU12's soils)" : ""}; cropland only`, crop ? `${fmt(crop.km2, 1)} km² of cropland` : "no cropland", "1 = farmed up and down the slope"],
     ];
     T().basin_rusle = { title: `RUSLE soil loss, HU12 ${M.hu.huc12} (gross sheet and rill erosion)`, header: ["Factor", "Value (US)", "US unit", "Value (SI)", "SI unit", "Source", "Coverage"],
-      rows: [...rows.map(r => r.map((v, i) => (i === 1 || i === 3 ? num(String(v).replace(/,/g, "")) : v))),
-        ["A, all land", t2(A), "t/ac/yr", t2(ok(A) ? A * 2.2417 : null), "t/ha/yr", "R × (K × LS) × C × P", ""], ["A, cropland", t2(Ac), "t/ac/yr", t2(ok(Ac) ? Ac * 2.2417 : null), "t/ha/yr", `the same with C = ${pick.cropC}`, crop ? `${fmt(crop.km2, 1)} km² of cropland` : "no cropland"],
+      rows: [...rows.map(r => r.slice(0, 7).map((v, i) => (i === 1 || i === 3 ? num(String(v).replace(/,/g, "")) : v))),
+        ["A, all land", t2(A), "t/ac/yr", t2(ok(A) ? A * 2.2417 : null), "t/ha/yr", "R × (K × LS) × C × P, P on cropland only", ""], ["A, cropland", t2(Ac), "t/ac/yr", t2(ok(Ac) ? Ac * 2.2417 : null), "t/ha/yr", `the same with C = ${pick.cropC}`, crop ? `${fmt(crop.km2, 1)} km² of cropland` : "no cropland"],
         ["T, tolerable soil loss", t2(Tf.v), "t/ac/yr", t2(ok(Tf.v) ? Tf.v * 2.2417 : null), "t/ha/yr", "SSURGO tfact, by component and map-unit area", pct(Tf.cover)],
         ["A / T, all land", t2(ok(A) && Tf.v ? A / Tf.v : null), "", "", "", "", ""], ["Soil moved each year, all land", t2(tons), "short tons/yr", t2(ok(tons) ? tons * 0.90718 : null), "t/yr", "A × the HU12's land area", ""]] };
-    T().basin_soils = { title: `Soil components in HU12 ${M.hu.huc12} (SSURGO by SDA)`, header: ["Map unit", "Map unit name", "Map unit share of HU12 (%)", "Component", "Component (%)", "Kind", "Major", "Hydrologic group", "K", "K source", "Slope (%)", "USLE slope length (m)", "L", "S", "LS", "T (t/ac/yr)"],
-      rows: S.map(c => [c.sym, c.mu, t2(100 * c.muShare), c.name, c.pct, c.kind || "", c.major ? "yes" : "no", c.hydgrp || "", c.K, c.kSrc === "kw" ? "Kw" : c.kSrc === "kf" ? "Kf" : "", c.slope, c.lam, t2(c.L), t2(c.S), t2(c.LS), c.T]) };
+    T().basin_soils = { title: `Soil components in HU12 ${M.hu.huc12} (SSURGO by SDA)`, header: ["Map unit", "Map unit name", "Map unit share of HU12 (%)", "Component", "Component (%)", "Kind", "Major", "Hydrologic group", "K", "K source", "Slope (%)", "USLE slope length (m)", "L", "S", "LS", "T (t/ac/yr)", "P on cropland"],
+      rows: S.map(c => [c.sym, c.mu, t2(100 * c.muShare), c.name, c.pct, c.kind || "", c.major ? "yes" : "no", c.hydgrp || "", c.K, c.kSrc === "kw" ? "Kw" : c.kSrc === "kf" ? "Kf" : "", c.slope, c.lam, t2(c.L), t2(c.S), t2(c.LS), c.T, t2(pOf(c))]) };
     const noR = !ok(R) ? `<p class="fine"><b>No R factor${ok(M.comid) ? ` for NHDPlus V2 COMID ${M.comid}` : ""}</b>${M.err.R ? ` (${esc(M.err.R.message || String(M.err.R))})` : ""}: type one above (US units; the USGS RF7100 grid or NRCS AH 703's isoerodent maps).</p>` : "";
     x.innerHTML = `${noR}${kv([
       ["Soil loss, all land", ta(A), th_(A)],
-      crop && ["Cropland", ta(Ac), `${th_(Ac)} · C ${pick.cropC}`],
+      crop && ["Cropland", ta(Ac), `${th_(Ac)} · C ${pick.cropC} · P ${ok(P) ? fmt(P, 2) : "—"}`],
       ["Compared with T", ok(A) && Tf.v ? `${fmt(A / Tf.v, A / Tf.v < 1 ? 2 : 1)}${small("× T")}` : "—", ok(Tf.v) ? `T ${fmt(Tf.v, 1)} t/ac/yr (survey)${crop && ok(Ac) ? ` · cropland ${fmt(Ac / Tf.v, 1)} × T` : ""}` : ""],
       ["Soil moved each year", ok(tons) ? `${fmt(tons / 1000, tons < 1e4 ? 1 : 0)}${small("thousand t")}` : "—", ok(tons) ? `short tons from ${fmt(land * 247.105, 0)} ac of land` : ""],
     ])}
       <h4 class="sm-h">The factors</h4>
-      ${SM.grid([SM.th("Factor"), SM.th("Value", "US units"), SM.th("SI"), SM.th("Source"), SM.th("Covers")], rows.map(r => [esc(r[0]), `${r[1]}${r[2] ? ` <small>${esc(r[2])}</small>` : ""}`, r[3] ? `${r[3]} <small>${esc(r[4])}</small>` : "", esc(r[5]), esc(r[6])]))}
-      <p class="fine">A = R × K × LS × C × P (RUSLE, USDA Agriculture Handbook 703) in short tons per acre per year; × 2.2417 = metric tonnes per hectare. K and LS are taken together for each soil component, and land cover as independent of the soils inside the HU12. <button class="link" data-sm-csv="basin_soils">soil components (CSV)</button> · <button class="link" data-sm-csv="basin_rusle">factors (CSV)</button></p>
-      <p class="fine"><b>Limits:</b> gross sheet and rill erosion on the slopes, a long-term yearly average; not gullies, stream banks or channels, and not the sediment that leaves the HU12 (only part of it reaches the stream). LS comes from the survey's representative slope and slope length for each soil, not from a terrain model; C from land-cover classes is coarse (crops, residue and tillage change it ten-fold, so set cropland's C from your rotation); RUSLE fits rangeland, urban land and wetlands poorly. R: USGS RF7100 (Wieczorek & LaMotte 2010; the PRISM-based 1971–2000 R of Daly & Taylor) for the point's NHDPlus V2 catchment (USGS NLDI), kept to 1%.</p>`;
+      ${SM.grid([SM.th("Factor"), SM.th("Value", "US units"), SM.th("SI"), SM.th("Source"), SM.th("Covers")], rows.map(r => [`${esc(r[0])}${r[7] ? `<small class="bs-mean">${esc(r[7])}</small>` : ""}`, `${r[1]}${r[2] ? ` <small>${esc(r[2])}</small>` : ""}`, r[3] ? `${r[3]} <small>${esc(r[4])}</small>` : "", esc(r[5]), esc(r[6])]))}
+      ${helpBox("What the letters mean", RUSLE_VARS, P_TABLE)}
+      <p class="fine">A = R × K × LS × C × P (RUSLE, USDA Agriculture Handbook 703) in short tons per acre per year; × 2.2417 = metric tonnes per hectare. K and LS are taken together for each soil component, and land cover as independent of the soils inside the HU12; P applies to the cropland (NLCD cultivated crops), as the practices are ways of farming it. <button class="link" data-sm-csv="basin_soils">soil components (CSV)</button> · <button class="link" data-sm-csv="basin_rusle">factors (CSV)</button></p>
+      <p class="fine"><b>Limits:</b> gross sheet and rill erosion on the slopes, a long-term yearly average; not gullies, stream banks or channels, and not the sediment that leaves the HU12 (only part of it reaches the stream). LS comes from the survey's representative slope and slope length for each soil, not from a terrain model; C from land-cover classes is coarse (crops, residue and tillage change it ten-fold, so set cropland's C from your rotation); RUSLE fits rangeland, urban land and wetlands poorly. R: USGS RF7100 (Wieczorek &amp; LaMotte 2010; the PRISM-based 1971–2000 R of Daly &amp; Taylor) for the point's NHDPlus V2 catchment (USGS NLDI), kept to 1%.</p>`;
     summary();
   }
   // the part's summary table: every result so far, with its unit and source
@@ -414,8 +485,11 @@ WG.basins = (function () {
       ["Point's drainage area", N.here && N.here.a ? t2(num(N.here.a.totdasqkm)) : null, "km2", "NHDPlus HR VAA"], ["Upstream catchments in the HU12 (with the point's)", N.here ? N.upN + 1 : null, "", "hydroseq"], ["Upstream area in the HU12", N.here ? t2(N.upKm2) : null, "km2", ""]);
     if (C && ok(M.P)) rows.push(["Storm depth, 24 h", t2(M.P), "mm", storm() !== "own" ? `NOAA Atlas 14, ${storm()}-yr` : "typed"], ["Curve number (area-weighted)", t2(C.cn), "", "TR-55, NLCD 2021 x SSURGO groups"], ["Storm runoff Q", t2(C.q), "mm", "per land cover and soil group, averaged"],
       ["Storm runoff volume", t2((C.q / 1000) * C.land * 1e6), "m3", ""], ...HSG.map(g => [`Hydrologic group ${g}`, t2(100 * C.h[g]), "% of area with a group", "SSURGO"]));
-    if (R) rows.push(["NHDPlus V2 COMID", ok(M.comid) ? String(M.comid) : "", "", "USGS NLDI"], ["R", t2(R.R), "hundreds ft-tonf-in/(ac-h-yr)", "USGS RF7100"], ["K", t2(R.K.v), "US", "SSURGO"], ["LS", t2(R.Ls.v), "", "SSURGO slope, slope length"], ["C", t2(R.C), "", "NLCD 2021"], ["P", R.P, "", "user"],
+    if (R) rows.push(["NHDPlus V2 COMID", ok(M.comid) ? String(M.comid) : "", "", "USGS NLDI"], ["R", t2(R.R), "hundreds ft-tonf-in/(ac-h-yr)", "USGS RF7100"], ["K", t2(R.K.v), "US", "SSURGO"], ["LS", t2(R.Ls.v), "", "SSURGO slope, slope length"], ["C", t2(R.C), "", "NLCD 2021"], ["P", t2(R.P), "", `${pName()}, cropland only`],
       ["Soil loss A, all land", t2(R.A), "t/ac/yr", "RUSLE, gross sheet and rill"], ["Soil loss A, all land", t2(ok(R.A) ? R.A * 2.2417 : null), "t/ha/yr", ""], ["Soil loss A, cropland", t2(R.Ac), "t/ac/yr", `C = ${pick.cropC}`], ["T", t2(R.Tf.v), "t/ac/yr", "SSURGO tfact"]);
+    const pt = pointCn();
+    if (ok(pt.cn)) rows.push(["Point: land cover", pt.cls[1], "", "NLCD 2021, the 30 m cell"], ["Point: hydrologic soil group", pt.d.hydgrp || pt.g, "", `SSURGO, ${pt.d.compname} (dominant soil)`],
+      ["Point: curve number", pt.cn, "", `TR-55 Table 2-2, ${CN_AS[pt.cls[0]]}`], ["Point: storm runoff Q", t2(pt.q), "mm", ok(M.P) ? `for the ${t2(M.P)} mm storm` : ""]);
     if (ok(M.nldiKm2)) rows.push(["Whole upstream basin (NHDPlus V2)", t2(M.nldiKm2), "km2", `USGS NLDI basin of COMID ${M.nldiComid}, not split at the point`]);
     T().basin = { title: `Basin: runoff and soil loss, HU12 ${hu.huc12} ${hu.name}`, header: ["Quantity", "Value", "Unit", "Source"], rows };
   }
@@ -428,9 +502,10 @@ WG.basins = (function () {
       <label>24-hour depth (${esc(UN.sym("precip"))})<input type="number" min="0" step="any" inputmode="decimal" data-bs="depth" value="${val}"></label></div>
       <p class="fine" style="margin-top:2px">${a ? `NOAA Atlas 14 depths at this point's 0.05° cell (partial-duration series, the mean of the 30″ cells it holds). ` : `No NOAA Atlas 14 grid is built for ${esc(M.st || "this state")} in this app: `}Check or copy the depth from ${pfds()}.</p>`;
   }
-  const rusleControls = () => `<div class="form-grid"><label>R (US units)<input type="number" min="0" step="any" data-bs="R" value="${ok(M.Rv) ? +M.Rv.toFixed(1) : ""}" placeholder="${M.R === undefined ? "reading…" : "type R"}"></label>
-      <label>Cropland C<input type="number" min="0" max="1" step="0.01" data-bs="cropC" value="${pick.cropC}"></label>
-      <label>P, support practice<input type="number" min="0" max="1" step="0.05" data-bs="P" value="${pick.P}"></label></div>`;
+  const rusleControls = () => `<div class="form-grid bs-ctl"><label>R, rainfall erosivity (US units)<input type="number" min="0" step="any" data-bs="R" value="${ok(M.Rv) ? +M.Rv.toFixed(1) : ""}" placeholder="${M.R === undefined ? "reading…" : "type R"}"><small>how hard the rain hits, a yearly sum</small></label>
+      <label>C of cropland (0–1)<input type="number" min="0" max="1" step="0.01" data-bs="cropC" value="${pick.cropC}"><small>1 = tilled bare soil; crops and residue lower it</small></label>
+      <label>P, support practice<select data-bs="pm">${PRACTICES.map(([k, n]) => `<option value="${k}"${k === pick.pm ? " selected" : ""}>${esc(n)}</option>`).join("")}</select><small>how the cropland is farmed across the slope</small></label>
+      <label${pick.pm === "own" ? "" : " hidden"} data-bs-own>Your P (0–1)<input type="number" min="0" max="1" step="0.05" data-bs="P" value="${pick.P}"><small>1 = up and down the slope</small></label></div>`;
 
   /* a new point in the same HU12 reuses its network, soils and land cover (kept for the visit, the last few HU12s) */
   const huSeen = new Map();
@@ -455,6 +530,8 @@ WG.basins = (function () {
       <div class="card">${SM.head("Design-storm runoff (curve number)", "basin_landcover", "TR-55")}<div id="bsCnCtl"></div><div id="bsCnOut"></div></div>
       <div class="card">${SM.head("Soil loss (RUSLE)", "basin_rusle", "sheet and rill")}<div id="bsRusleCtl">${rusleControls()}</div><div id="bsRusleOut"></div></div>`;
     overlay(M);
+    const n0 = WG.state.nlcd;
+    M.ptLc = n0 && n0.src === "nlcd" && n0.code ? { code: n0.code, src: "MRLC" } : undefined;
     summary();
     drawNet(); drawCn(); drawRusle();
     const done = (k, f) => v => { if (!mine()) return; M[k] = v; f(); }, fail = (k, f) => e => { console.warn("basins", k, e); if (!mine()) return; M.err[k] = e instanceof Error ? e : new Error(String(e)); f(); };
@@ -462,6 +539,7 @@ WG.basins = (function () {
     const jobs = [
       perHu(hu.huc12, "hr", () => hrIn(hu)).then(hr => { if (!mine()) return; M.net = network(hr, hu, lat, lon); overlay(M); drawNet(); summary(); T().basin_catchments = catTable(); }, fail("net", drawNet)),
       perHu(hu.huc12, "soils", () => soilsIn(hu)).then(done("soils", both), fail("soils", both)),
+      M.ptLc ? null : Wx.once("bs:lcpt", () => WG.landcover.classAt(lat, lon)).then(code => { if (mine()) { M.ptLc = { code, src: "MRLC WCS" }; drawCn(); } }, e => { console.warn("basins point land cover", e); if (mine()) { M.ptLc = e instanceof Error ? e : new Error(String(e)); drawCn(); } }),
       WG.landcover.boundaryShares(hu.polys).then(done("lc", both), fail("lc", both)),
       (A14.has(st) ? a14File(st) : Promise.resolve(null)).then(j => { if (!mine()) return; M.a14 = j ? a14At(j, lat, lon) : null; const c = box("bsCnCtl"); if (c) c.innerHTML = stormControls(); drawCn(); }),
       Wx.once("bs:comid", () => comidAt(lat, lon)).then(async c => { const r = await rAt(st, c); if (!mine()) return; M.comid = c; M.R = r; M.Rv = r ? r.R : null; M.Rsrc = M.Rsrc0 = r ? `USGS RF7100, NHDPlus V2 COMID ${c} (NLDI)${r.st !== st ? `, ${r.st} file` : ""}` : ""; },
@@ -492,15 +570,19 @@ WG.basins = (function () {
       if (s) s.value = "own";
       drawCn();
     } else if (k === "cropC" && ok(v) && v >= 0 && v <= 1) { pick.cropC = v; keep(); drawRusle(); drawCn(); }
+    else if (k === "pm") { pick.pm = t.value; const o = M.el.querySelector("[data-bs-own]"); if (o) o.hidden = pick.pm !== "own"; keep(); drawRusle(); }
     else if (k === "P" && ok(v) && v >= 0 && v <= 1) { pick.P = v; keep(); drawRusle(); }
     else if (k === "R") { M.Rv = ok(v) && v > 0 ? v : null; M.Rsrc = M.R && ok(M.Rv) && Math.abs(M.Rv - M.R.R) < 0.06 ? M.Rsrc0 : "typed by you"; drawRusle(); }
   }
-  ["input", "change"].forEach(ev => document.addEventListener(ev, e => { const t = e.target.closest && e.target.closest("[data-bs]"); if (t) onInput(t); }));
+  // a list answers on "change", a box on "input" (each fires both, which would draw the results twice)
+  ["input", "change"].forEach(ev => document.addEventListener(ev, e => { const t = e.target.closest && e.target.closest("[data-bs]"); if (t && (ev === "change") === (t.tagName === "SELECT")) onInput(t); }));
+  document.addEventListener("wg-soil", () => { if (M && M.live() && M.tok === WG.state.token) drawCn(); });
   document.addEventListener("click", async e => {
     const b = e.target.closest && e.target.closest("[data-bs-act]");
     if (!b || !M || !M.live()) return;
     e.preventDefault();
     if (b.dataset.bsAct === "zoom") { WG.map.fitBounds(L.latLngBounds(ll(M.hu.rings).flat()), { padding: [24, 24] }); return; }
+    if (b.dataset.bsAct === "nlcd") { SM.landCover(); return; }
     if (b.dataset.bsAct === "nldi" && !M.nldi) {
       const me = M;
       b.textContent = "Reading the upstream basin from USGS NLDI…";
@@ -519,6 +601,6 @@ WG.basins = (function () {
     }
   });
 
-  SM.addPart({ key: "basin", wait: "the watershed (HU12) at the point", render });
-  return { hu12At, hrIn, network, soilsIn, comidAt, rAt, rFile, a14At, ls, scsQ, CN, C_OF, RUN, A14 };
+  SM.addPart({ key: "basin", wait: "the watershed (HU12) at the point", render, tab: "soilbasin" });
+  return { hu12At, hrIn, network, soilsIn, comidAt, rAt, rFile, a14At, ls, scsQ, CN, CN_AS, C_OF, RUN, A14, pContour, pStrip, P_TERR };
 })();

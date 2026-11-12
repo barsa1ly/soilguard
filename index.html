@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-  <link rel="stylesheet" href="css/app.css?v=69">
+  <link rel="stylesheet" href="css/app.css?v=70">
 </head>
 <body>
 <div id="app" class="app">
@@ -122,9 +122,11 @@
       <button role="tab" data-tab="practices" data-for="erosion">Practices</button>
       <button role="tab" data-tab="drought" data-for="drought" hidden>Drought</button>
       <button role="tab" data-tab="soiloverview" data-for="soilmaps" hidden>Overview</button>
-      <!-- phones: the theme already says soil, so "Maps" and "Profile" keep its four tabs in one row (css .tabs .short) -->
-      <button role="tab" data-tab="soilmaps" data-for="soilmaps" hidden><span class="full">Soil maps</span><span class="short">Maps</span></button>
-      <button role="tab" data-tab="soilprofile" data-for="soilmaps" hidden><span class="full">Soil profile</span><span class="short">Profile</span></button>
+      <!-- Soil: the dominant soil, its horizons and chemistry (js/soilmaps.js with js/app.js's profile); Basin: js/basins.js's
+           watershed, runoff and soil loss. Phones: the theme already says soil, so "Moisture" keeps its tabs in one row (css .tabs .short) -->
+      <button role="tab" data-tab="soilmaps" data-for="soilmaps" hidden>Soil</button>
+      <button role="tab" data-tab="soilbasin" data-for="soilmaps" hidden>Basin</button>
+      <button role="tab" data-tab="soilmoist" data-for="soilmaps" hidden><span class="full">Soil moisture</span><span class="short">Moisture</span></button>
       <button role="tab" data-tab="download" data-for="erosion drought soilmaps" class="tab-dl" title="Soil and weather files for crop and watershed models, tables and series" aria-label="Download data for models">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11M7.5 9.5 12 14l4.5-4.5M4 15v4.5h16V15"/></svg><span class="tab-dl-text"><b>DOWNLOAD</b><small>data for models</small></span></button>
     </nav>
@@ -267,7 +269,7 @@
         <p class="source" id="windSource"></p>
       </section>
 
-      <!-- SOIL: only what sets the wind erodibility; the rest of the profile is on the Soil maps theme's Soil profile tab -->
+      <!-- SOIL: only what sets the wind erodibility; the rest of the profile is in the Soil maps theme's Soil tab -->
       <section class="tab" id="tab-soil" role="tabpanel" hidden>
         <div class="card">
           <div class="card-h">
@@ -290,7 +292,7 @@
             <label>CaCO₃ %<input type="number" id="inCaco3" min="0" max="80" step="1"></label>
           </div>
           <div class="derived" id="soilDerived"></div>
-          <p class="fine">Edits recalculate texture class, Wind Erodibility Group and index (the survey's group stays unless your values change what the texture rules give), RWEQ erodible fraction and crust factor, the risk and the practice plan. Silt fills automatically if sand + clay are given. The edited surface layer also goes into the soil profile (Soil maps › Soil profile, where pH is edited and the layer's water retention comes from Saxton &amp; Rawls 2006) and into the model files.</p>
+          <p class="fine">Edits recalculate texture class, Wind Erodibility Group and index (the survey's group stays unless your values change what the texture rules give), RWEQ erodible fraction and crust factor, the risk and the practice plan. Silt fills automatically if sand + clay are given. The edited surface layer also goes into the soil profile (Soil maps › Soil, where pH is edited and the layer's water retention comes from Saxton &amp; Rawls 2006) and into the model files.</p>
         </div>
 
         <div class="card" id="wegCard">
@@ -320,27 +322,13 @@
 
       <!-- DROUGHT: filled by js/weather.js when shown -->
       <section class="tab" id="tab-drought" role="tabpanel" hidden></section>
-      <!-- SOIL MAPS: filled by js/soilmaps.js when shown; its Overview draws the Soil maps tab too, hidden, and reads from it -->
+      <!-- SOIL MAPS: filled by js/soilmaps.js when shown (the Soil tab with js/app.js renderSoilDetail's dominant soil and pH box;
+           the Basin tab with js/basins.js's parts); its Overview draws the Soil and Basin tabs too, hidden, and reads from them -->
       <section class="tab" id="tab-soiloverview" role="tabpanel" hidden></section>
       <section class="tab" id="tab-soilmaps" role="tabpanel" hidden></section>
-      <!-- SOIL PROFILE: the survey read for the wind erosion (state.soil, no request of its own), drawn by js/app.js
-           renderSoilDetail while on show; pH is edited here, the other surface values on Wind erosion › Soil -->
-      <section class="tab" id="tab-soilprofile" role="tabpanel" hidden>
-        <div class="card">
-          <div class="card-h"><h3>Dominant soil</h3><span class="tag" id="profSrcTag">SSURGO</span></div>
-          <div id="profSoil" class="soil-summary"><span class="skeleton"></span></div>
-        </div>
-        <div class="card">
-          <div class="card-h"><h3>Surface pH — edit with your soil test</h3><button class="link reset-soil" hidden>Reset to survey</button></div>
-          <div class="soil-edit" id="soilEditPh">
-            <label>pH (1:1 water)<input type="number" id="inPh" min="3" max="10" step="0.1"></label>
-          </div>
-          <p class="fine">pH goes into the surface horizon (✎) and the model files; it does not change the wind erodibility. Sand, silt, clay, organic matter and CaCO₃ are edited on Wind erosion › Soil, and show here too. Reset to survey undoes every edit of the surface layer.</p>
-        </div>
-        <div id="profileDetail" class="profile-detail"></div>
-        <p class="source" id="profSource"></p>
-      </section>
-
+      <section class="tab" id="tab-soilbasin" role="tabpanel" hidden></section>
+      <!-- SOIL MOISTURE: filled by js/soilmoisture.js (Wx.RENDER.soilmoist) when shown -->
+      <section class="tab" id="tab-soilmoist" role="tabpanel" hidden></section>
       <!-- DOWNLOAD MODEL DATA: the data sheet (js/datasheet.js) -->
       <section class="tab" id="tab-download" role="tabpanel" hidden>
         <div class="dl-head"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11M7.5 9.5 12 14l4.5-4.5M4 15v4.5h16V15"/></svg>
@@ -399,7 +387,7 @@
     <nav class="seg-nav" id="unitPresets" aria-label="Unit systems"></nav>
     <div class="sheet-body">
       <div class="table-wrap"><table class="grid units-table" id="unitsTable"></table></div>
-      <p class="fine">Numbers on screen, the charts and the CSV downloads of charts and tables follow this table, and your choice is remembered on this device. Two CSV files keep fixed units, named in their columns: the soil profile from the Soil profile tab (cm, cm/h) and the area analysis (acres, t/ac/yr). Model files (DSSAT, SWAT+, EPIC, APEX, APSIM, AquaCrop) always use each model's own units. Erodibility I is an NRCS figure in tons per acre per year, and the risk classes are this app's own, set in the same unit. Practice specifications come from Texas NRCS standards and keep the original in brackets when converted.</p>
+      <p class="fine">Numbers on screen, the charts and the CSV downloads of charts and tables follow this table, and your choice is remembered on this device. Two CSV files keep fixed units, named in their columns: the soil profile from the Soil maps › Soil tab (cm, cm/h) and the area analysis (acres, t/ac/yr). Model files (DSSAT, SWAT+, EPIC, APEX, APSIM, AquaCrop) always use each model's own units. Erodibility I is an NRCS figure in tons per acre per year, and the risk classes are this app's own, set in the same unit. Practice specifications come from Texas NRCS standards and keep the original in brackets when converted.</p>
     </div>
   </div>
 
@@ -463,36 +451,36 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-<script src="js/config.js?v=69"></script>
-<script src="data/states.js?v=69"></script>
-<script src="js/util.js?v=69"></script>
-<script src="js/units.js?v=69"></script>
-<script src="js/export.js?v=69"></script>
-<script src="js/soil.js?v=69"></script>
-<script src="js/wind.js?v=69"></script>
-<script src="js/charts.js?v=69"></script>
-<script src="js/practices.js?v=69"></script>
-<script src="js/methods.js?v=69"></script>
-<script src="js/timemap.js?v=69"></script>
-<script src="js/h5range.js?v=69"></script>
-<script src="js/weather.js?v=69"></script>
-<script src="js/soilmaps.js?v=69"></script>
-<script src="js/basins.js?v=69"></script>
-<script src="js/soilmoisture.js?v=69"></script>
-<script src="js/landcover.js?v=69"></script>
-<script src="js/places.js?v=69"></script>
-<script src="js/app.js?v=69"></script>
-<script src="js/downloads.js?v=69"></script>
-<script src="js/models.js?v=69"></script>
-<script src="js/writers.js?v=69"></script>
-<script src="js/century.js?v=69"></script>
-<script src="js/daycent.js?v=69"></script>
-<script src="js/preview.js?v=69"></script>
-<script src="js/templates.js?v=69"></script>
-<script src="js/datasheet.js?v=69"></script>
-<script src="js/area.js?v=69"></script>
-<script src="js/gridfiles.js?v=69"></script>
-<script src="js/grid.js?v=69"></script>
-<script src="js/stats.js?v=69"></script>
+<script src="js/config.js?v=70"></script>
+<script src="data/states.js?v=70"></script>
+<script src="js/util.js?v=70"></script>
+<script src="js/units.js?v=70"></script>
+<script src="js/export.js?v=70"></script>
+<script src="js/soil.js?v=70"></script>
+<script src="js/wind.js?v=70"></script>
+<script src="js/charts.js?v=70"></script>
+<script src="js/practices.js?v=70"></script>
+<script src="js/methods.js?v=70"></script>
+<script src="js/timemap.js?v=70"></script>
+<script src="js/h5range.js?v=70"></script>
+<script src="js/weather.js?v=70"></script>
+<script src="js/soilmaps.js?v=70"></script>
+<script src="js/basins.js?v=70"></script>
+<script src="js/soilmoisture.js?v=70"></script>
+<script src="js/landcover.js?v=70"></script>
+<script src="js/places.js?v=70"></script>
+<script src="js/app.js?v=70"></script>
+<script src="js/downloads.js?v=70"></script>
+<script src="js/models.js?v=70"></script>
+<script src="js/writers.js?v=70"></script>
+<script src="js/century.js?v=70"></script>
+<script src="js/daycent.js?v=70"></script>
+<script src="js/preview.js?v=70"></script>
+<script src="js/templates.js?v=70"></script>
+<script src="js/datasheet.js?v=70"></script>
+<script src="js/area.js?v=70"></script>
+<script src="js/gridfiles.js?v=70"></script>
+<script src="js/grid.js?v=70"></script>
+<script src="js/stats.js?v=70"></script>
 </body>
 </html>
