@@ -119,7 +119,7 @@
       layer: L.tileLayer(usgs("USGSHydroCached"), { pane: "refs", maxZoom: 19, maxNativeZoom: 16, opacity: 0.9 }), on: false }, // off at first, as the roads
     counties: { name: "County lines", sub: "U.S. Census TIGER, exact at every zoom",
       layer: new CensusCounties(TIGER_COUNTIES, { pane: "refs", maxZoom: 19, opacity: 0.85, className: "county-lines", attribution: "Counties: U.S. Census TIGER" }),
-      on: true },
+      on: false }, // off at first, as the roads and water: a cleaner map
   };
 
   const imgOpts = { pane: "thematic", opacity: 0.6, className: "thematic-img", interactive: false };
