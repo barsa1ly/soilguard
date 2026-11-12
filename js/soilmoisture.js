@@ -96,6 +96,14 @@ WG.soilmoisture = (function () {
   /* ---------- the layers and their legends ---------- */
   const M3 = "m³/m³ = volume of water in a volume of soil: 0.25 is 25% water by volume.";
   const SMAP_NOTE = (depth, more) => `NASA SMAP Level-4 analysis (NASA GMAO, product SPL4SMAU): the SMAP satellite's microwave readings merged into a land surface model, 9 km, the day's 12:00 UTC value; ${depth}. ${more} ${M3} Daily since 31 March 2015, about 3 days behind, with a few gaps. Through NASA GIBS (NASA open data). A model-and-satellite estimate, not a measurement at a field.`;
+  /* what a m³/m³ value means for this soil: the dominant soil's surface horizon, wilting point (15 bar, LL) and field capacity
+     (1/3 bar, DUL), from the survey already read for the wind erosion (no request); else typical values */
+  const soilRange = () => {
+    let r = null;
+    try { const d = WG.state.soil && !WG.state.soil.error ? WG.state.soil.dominant : null, l = d ? WG.soil.profileLayers(d)[0] : null; r = l && ok(l.ll) && ok(l.dul) ? l : null; } catch (e) { r = null; }
+    return r ? `this soil: wilting point about ${fmt(r.ll, 2)}, field capacity about ${fmt(r.dul, 2)}` : "roughly: under 0.10 dry, 0.20–0.35 moist, 0.40–0.50 near saturation; clays hold more";
+  };
+  const pctW = v => (ok(v) ? ` = ${fmt(100 * v, 0)}% water by volume` : "");
   const PCT_NOTE = "A percentile ranks today's soil moisture against the same time of year in the model's record: 10 means drier than 90% of those days. It says how unusual the moisture is, not how much water there is.";
   let lastLegend = null;
   const ctlHtml = D => {
@@ -115,15 +123,15 @@ WG.soilmoisture = (function () {
   const smapWhen = () => smapDays().then(D => { const d = pick.date || D.latest; return hasMap(D, d) ? `Map of ${d}${pick.date ? "" : ", the latest"}.` : `GIBS has no SMAP map for ${d}: choose another day.`; });
   const item = (key, name, sub, layer, legend, note, o = {}) => ({ key, name, sub, layer, legend, note, drawLegend, opacity: 1.2, ...o });
   const LAYERS = [
-    item("smap_sf", "Soil moisture, surface 0–5 cm", "NASA SMAP L4, 9 km, any day since 2015", smapSf, { title: "Soil moisture, 0–5 cm (SMAP L4)", unit: "m³/m³", scale: SMAP_RAMP, ticks: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7].map(v => [v / 0.7, v === 0.7 ? "≥0.7" : String(v)]) },
+    item("smap_sf", "Soil moisture, surface 0–5 cm", "NASA SMAP L4, 9 km, any day since 2015", smapSf, { title: "Soil moisture, 0–5 cm (SMAP L4)", unit: "m³/m³: 0.25 = 25% water by volume", scale: SMAP_RAMP, ticks: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7].map(v => [v / 0.7, v === 0.7 ? "≥0.7" : String(v)]) },
       SMAP_NOTE("surface layer 0–5 cm", ""), { dated: true, when: smapWhen }),
-    item("smap_rz", "Soil moisture, root zone 0–100 cm", "the same, the top metre", smapRz, { title: "Soil moisture, 0–100 cm (SMAP L4)", unit: "m³/m³", scale: SMAP_RAMP, ticks: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7].map(v => [v / 0.7, v === 0.7 ? "≥0.7" : String(v)]) },
+    item("smap_rz", "Soil moisture, root zone 0–100 cm", "the same, the top metre", smapRz, { title: "Soil moisture, 0–100 cm (SMAP L4)", unit: "m³/m³: 0.25 = 25% water by volume", scale: SMAP_RAMP, ticks: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7].map(v => [v / 0.7, v === 0.7 ? "≥0.7" : String(v)]) },
       SMAP_NOTE("root zone 0–100 cm", "The model carries the surface readings down; the satellite itself sees only the top few centimetres."), { dated: true, when: smapWhen }),
-    item("nwm", "Soil saturation 0–40 cm, this hour", "NOAA National Water Model, 1 km, % of saturation", nwmLayer, { title: "Soil saturation, 0–40 cm (NWM)", unit: "% of saturation", rows: NWM_ROWS },
+    item("nwm", "Soil saturation 0–40 cm, this hour", "NOAA National Water Model, 1 km, % of saturation", nwmLayer, { title: "Soil saturation, 0–40 cm (NWM)", unit: "% of saturation: 0 = dry, 100 = all pores full", rows: NWM_ROWS },
       "How full the soil's pores are in the top 40 cm (100% = saturated), from the NOAA National Water Model's hourly land analysis (Noah-MP, 1 km, version 3.0; public domain). A model: its soils and rain differ from a field's, and it often reads wetter than stations in dry country. Only the latest hour is served.", { when: nwmWhen }),
-    item("sport", "Soil moisture percentile 0–100 cm", "NASA SPoRT-LIS, 3 km, today", sport, { title: "Soil moisture percentile, 0–100 cm (SPoRT-LIS)", unit: "percentile", rows: SPORT_ROWS },
+    item("sport", "Soil moisture percentile 0–100 cm", "NASA SPoRT-LIS, 3 km, today", sport, { title: "Soil moisture percentile, 0–100 cm (SPoRT-LIS)", unit: "percentile: 10 = drier than 90% of days at this time of year", rows: SPORT_ROWS },
       `${PCT_NOTE} NASA SPoRT's Land Information System (Noah model, 3 km), daily, against its 1981–2013 record. Through NOAA NIDIS (drought.gov); only the latest day is served.`, { when: nidisWhen("nasa-sport-3km") }),
-    item("grace", "Root-zone moisture percentile", "NASA GRACE-DA, 12 km, weekly", grace, { title: "Root-zone soil moisture percentile (GRACE-DA)", unit: "percentile", rows: GRACE_ROWS },
+    item("grace", "Root-zone moisture percentile", "NASA GRACE-DA, 12 km, weekly", grace, { title: "Root-zone soil moisture percentile (GRACE-DA)", unit: "percentile: 10 = drier than 90% of weeks at this time of year", rows: GRACE_ROWS },
       `${PCT_NOTE} NASA GRACE-FO satellite gravity (total water storage) assimilated into the Catchment land model (NASA GSFC, with the National Drought Mitigation Center), root zone about 0–100 cm, 0.125°, weekly, against 1948–2012. Through NOAA NIDIS (drought.gov); only the latest week is served.`, { when: nidisWhen("nasa-rtzsm-0.125d") }),
     item("stations", "Soil moisture stations", "USDA SCAN and SNOTEL, NOAA USCRN: tap one", stationLayer, { title: "Soil moisture stations", rows: [["#2a78d6", "SCAN (USDA NRCS), 2–40 in"], ["#6250d6", "CSCAN (USDA NRCS cooperative)"], ["#1baf7a", "SNOTEL (USDA NRCS), mountains"], ["#eb6834", "USCRN (NOAA), 5–100 cm"]] },
       "Stations that measure soil moisture by depth and report it every hour. Tap a station (or any point): the Soil moisture tab gives the three nearest, their latest readings and their daily means over the chosen period. List of active stations made with tools/build_moisture.py."),
@@ -557,10 +565,10 @@ WG.soilmoisture = (function () {
       if (tb && (sumR || sumErr)) {
         const m = sumR && sumR.model, st = sumR && sumR.station;
         tb.innerHTML = `<div class="card">${head("Today here", "", "model · station")}<div class="wx-kv">
-          <div><span>${esc(D(0, 7))}, ${m && m.date === iso(t1) ? "today" : "latest"}</span><b>${m ? v2(m.top) : "—"}</b><span>${m ? `m³/m³ · ${esc(m.src)}, ${esc(m.date)}` : "the models did not answer"}</span></div>
-          <div><span>${esc(D(28, 100))}, ${m && m.date === iso(t1) ? "today" : "latest"}</span><b>${m ? v2(m.root) : "—"}</b><span>${m ? `m³/m³ · ${esc(m.src)}` : ""}</span></div>
-          <div><span>Nearest station${st ? `, ${esc(st.depth)}` : ""}</span><b>${st ? v2(st.value) : "—"}</b><span>${st ? `${ptLink(st, stSub(st.net, st.id, st.km, st.dir))} (${esc(st.net)}), ${dist(st.km)} ${esc(st.dir)} · ${esc(st.time)}` : "no station reading within 400 km"}</span></div></div>
-          <p class="fine">Models: ECMWF IFS's mean of today's hours (partly forecast), or ERA5-Land's latest day; station: its latest hourly reading at its shallowest sensor. The cards below give every depth over the period.</p></div>`;
+          <div><span>${esc(D(0, 7))}, ${m && m.date === iso(t1) ? "today" : "latest"}</span><b>${m ? v2(m.top) : "—"}</b><span>${m ? `m³/m³${pctW(num(m.top))} · ${esc(m.src)}, ${esc(m.date)}` : "the models did not answer"}</span></div>
+          <div><span>${esc(D(28, 100))}, ${m && m.date === iso(t1) ? "today" : "latest"}</span><b>${m ? v2(m.root) : "—"}</b><span>${m ? `m³/m³${pctW(num(m.root))} · ${esc(m.src)}` : ""}</span></div>
+          <div><span>Nearest station${st ? `, ${esc(st.depth)}` : ""}</span><b${st && ok(num(st.value)) ? ` title="m³/m³${pctW(num(st.value))}"` : ""}>${st ? v2(st.value) : "—"}</b><span>${st ? `${ptLink(st, stSub(st.net, st.id, st.km, st.dir))} (${esc(st.net)}), ${dist(st.km)} ${esc(st.dir)} · ${esc(st.time)}` : "no station reading within 400 km"}</span></div></div>
+          <p class="fine">Values are m³ of water per m³ of soil (0.27 = 27% water by volume); ${esc(soilRange())}. Models: ECMWF IFS's mean of today's hours (partly forecast), or ERA5-Land's latest day; station: its latest hourly reading at its shallowest sensor. The cards below give every depth over the period.</p></div>`;
       }
 
       /* the models over the period: all the chosen depths on one chart, and their numbers */
@@ -713,5 +721,5 @@ WG.soilmoisture = (function () {
     } catch (e) { console.warn("NWM", e); b.disabled = false; b.textContent = "Read the National Water Model here (try again)"; WG.util.toast(`The National Water Model could not be read: ${e.message}`, 5000); }
   }
 
-  return { layers: LAYERS, pick, stations, nearest, readStations, era5At, era5Range, ifsAt, smapAt, nwmAt, summary, period: per };
+  return { layers: LAYERS, pick, stations, nearest, readStations, era5At, era5Range, ifsAt, smapAt, nwmAt, summary, soilRange, period: per };
 })();

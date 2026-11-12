@@ -1101,6 +1101,7 @@ table.grid.sm-table td small { color: var(--muted); }
 .bs-help table.grid.sm-table td:nth-child(3) { min-width: 220px; }
 .bs-ctl label small { font-weight: 400; color: var(--muted); font-size: 11px; line-height: 1.3; }
 .bs-ctl label[hidden] { display: none; }
+.bs-ctl label small.bs-warn { color: #b3261e; font-weight: 600; }
 table.grid.sm-table small.bs-mean { display: block; font-weight: 400; white-space: normal; }
 
 /* the Soil tab (js/soilmaps.js): the Horizons card's two views, and a place from a table shown on the map */

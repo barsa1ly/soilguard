@@ -1318,10 +1318,10 @@
     const est = !r.cSrc.startsWith("NRCS"), tDp = UN.sym("soilLoss") === "t/ha/yr" ? 1 : 0;
     $("#riskFacts").innerHTML = facts([
       ["Soil erodibility I", UN.fmt("soilLoss", r.I, 0), `WEG ${r.weg || "—"} (1 most, 8 least erodible)`],
-      ["Climatic factor C", `${est ? "≈ " : ""}${fmtC(r.C)}`, `${est ? "estimated · " : "NRCS · "}Garden City, KS = 100`],
-      ["E = I × C ÷ 100", UN.fmtCls("soilLoss", r.E, 0), "bare, smooth, unsheltered ground"],
+      ["Wind climatic factor C", `${est ? "≈ " : ""}${fmtC(r.C)}`, `${est ? "estimated · " : "NRCS · "}Garden City, KS = 100; windier and drier = more; not RUSLE's C`],
+      ["E = I × C ÷ 100", UN.fmtCls("soilLoss", r.E, 0), "a yearly loss from bare, smooth, unsheltered ground, not your field's"],
       r.T ? ["Tolerable loss T", UN.fmt("soilLoss", r.T, tDp), "NRCS rating for this soil"] : null,
-      r.EI ? ["Erodibility index C·I/T", `${est ? "≈ " : ""}${fmt(r.EI, 1)}`, r.EI >= 8 ? "highly erodible land (8 or more)" : "highly erodible land starts at 8"] : null,
+      r.EI ? ["Erodibility index C·I/T", `${est ? "≈ " : ""}${fmt(r.EI, 1)}`, r.EI >= 8 ? "C·I ÷ T: 8 or more = highly erodible land (HEL), NRCS" : "C·I ÷ T: highly erodible land (HEL) starts at 8, NRCS"] : null,
       peak ? ["Highest-risk months", peak, ""] : null,
     ]);
     $("#riskUnit").textContent = "Cover, residue, roughness and barriers can cut this by 80–99%.";
@@ -1766,9 +1766,9 @@
     ];
     const rw = S.rweq(surf), rw0 = S.rweq(base);
     if (rw) cells.push(
-      ["RWEQ erodible fraction EF", `${fmt(rw.ef * 100, 0)}% < 0.84 mm${rw.inRange ? "" : " *"}`, ch(rw.ef.toFixed(3), rw0 && rw0.ef.toFixed(3))],
-      ["RWEQ crust factor SCF (0–1, lower = firmer crust)", `${fmt(rw.scf, 2)}${rw.inRange ? "" : " *"}`, ch(rw.scf.toFixed(3), rw0 && rw0.scf.toFixed(3))]);
-    $("#soilDerived").innerHTML = cells.map(([k, v, c]) => `<div><span>${esc(k)}</span><b class="${c}">${esc(v)}</b></div>`).join("")
+      ["RWEQ erodible fraction EF (more = blows easier)", `${fmt(rw.ef * 100, 0)}% < 0.84 mm${rw.inRange ? "" : " *"}`, ch(rw.ef.toFixed(3), rw0 && rw0.ef.toFixed(3)), "EF: the share of the surface soil in clods and grains finer than 0.84 mm, which wind can lift; more blows more easily (typically 20–80%)."],
+      ["RWEQ crust factor SCF (1 = no crust, 0 = full crust)", `${fmt(rw.scf, 2)}${rw.inRange ? "" : " *"}`, ch(rw.scf.toFixed(3), rw0 && rw0.scf.toFixed(3)), "SCF: 1 = no crust, 0 = a crust that fully protects the soil; clay and lime crusts lower it. 0.80 means the crust takes little off."]);
+    $("#soilDerived").innerHTML = cells.map(([k, v, c, t]) => `<div><span${t ? ` title="${esc(t)}"` : ""}>${esc(k)}</span><b class="${c}">${esc(v)}</b></div>`).join("")
       + (surf.calc ? `<div style="grid-column:1/-1"><span>WEG rule applied</span><b>${esc(surf.calc.why)}</b></div>` : "")
       + (surf.kept ? `<div style="grid-column:1/-1"><span>Wind erodibility group</span><b>The survey's group is kept: your values give the same texture-rule result as the survey's.</b></div>` : "")
       + (rw && !rw.inRange ? `<div style="grid-column:1/-1"><span>* RWEQ check</span><b>This soil is outside the range of soils the RWEQ equations were fitted to; read EF and SCF as rough.</b></div>` : "");

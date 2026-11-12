@@ -267,29 +267,43 @@ WG.basins = (function () {
   // ft: the slope length the practice is judged by (null: not known, no limit applied); strips hold for twice the length
   const pContour = (s, ft, k = 1) => { if (!ok(s)) return null; const r = P_CONTOUR.find(x => s < x[0]); return ok(ft) && ft > r[2] * k ? 1 : r[1]; };
   const pStrip = (s, ft) => { const p = pContour(s, ft, 2); return ok(p) ? (p >= 1 ? 1 : p / 2) : null; };
-  const PRACTICES = [["none", "None: up and down the slope (P 1)"], ["contour", "Contour farming (P 0.5–0.9 by slope)"], ["strip", "Contour strip cropping (P 0.25–0.45)"],
-    ["t110", "Terraces < 110 ft apart (P contour × 0.5)"], ["t140", "Terraces 110–140 ft apart (P contour × 0.6)"], ["t180", "Terraces 140–180 ft apart (P contour × 0.7)"], ["t225", "Terraces 180–225 ft apart (P contour × 0.8)"],
-    ["t300", "Terraces 225–300 ft apart (P contour × 0.9)"], ["own", "Your own P"]];
   // terraces: the widest spacing of the class (ft) and Foster & Highfill's subfactor for closed outlets
   const P_TERR = { t110: [110, 0.5], t140: [140, 0.6], t180: [180, 0.7], t225: [225, 0.8], t300: [300, 0.9] };
+  /* [key, name, the P range it gives]: P is a fraction, soil lost with the practice ÷ soil lost farming up and down the
+     slope, so 1 saves nothing and 0.5 halves the loss; the range is contouring's 0.5-0.9 (1 on slopes over 25%) times the
+     strip or terrace subfactor */
+  const terr = (k, from, to) => [k, `Terraces ${from}${to} ft apart`, `P ${(0.5 * P_TERR[k][1]).toFixed(2)}–${(0.9 * P_TERR[k][1]).toFixed(2)} (contour × ${P_TERR[k][1]})`];
+  const PRACTICES = [["none", "None: farmed up and down the slope", "P 1, no saving"], ["contour", "Contour farming", "P 0.5–0.9 by slope"], ["strip", "Contour strip cropping", "P 0.25–0.45 by slope"],
+    terr("t110", "under ", 110), terr("t140", "110–", 140), terr("t180", "140–", 180), terr("t225", "180–", 225), terr("t300", "225–", 300), ["own", "Your own P", "any value from 0.01 to 1"]];
+  const P_SCALE = "P is a fraction from 0 to 1: the soil lost with the practice ÷ the soil lost when farmed up and down the slope. 1 = no saving; 0.85 = 15% less soil loss; 0.5 = half; 0.25 = a quarter. It is never above 1 (1.5 or 100 are not P values) and never 0.";
 
   /* the user's choices, kept on this device: the storm, cropland's C, the support practice and its own P */
   const pick = { storm: "2", cropC: 0.24, P: 1, ...(WG.util.cache.get("basins") || {}) };
   if (!["2", "10", "100", "own"].includes(pick.storm)) pick.storm = "2";
-  if (!ok(pick.cropC) || pick.cropC < 0 || pick.cropC > 1) pick.cropC = 0.24;
+  if (!ok(pick.cropC) || pick.cropC <= 0 || pick.cropC > 1) pick.cropC = 0.24;
   if (!ok(pick.P) || pick.P < 0 || pick.P > 1) pick.P = 1;
   if (!PRACTICES.some(p => p[0] === pick.pm)) pick.pm = pick.P === 1 ? "none" : "own"; // a P typed before the practices were offered stays
   const keep = () => WG.util.cache.set("basins", { storm: pick.storm === "own" ? "2" : pick.storm, cropC: pick.cropC, P: pick.P, pm: pick.pm });
   /* a soil component's P on cropland under the practice chosen (null: no slope to choose it by); contouring and strips are
      judged by the component's USLE slope length (m, to ft), terraces by their spacing */
-  const pOf = c => {
-    const pm = pick.pm, ft = ok(c.lam) ? c.lam * 3.2808 : null, t = P_TERR[pm];
+  const pOf = (c, pm = pick.pm) => {
+    const ft = ok(c.lam) ? c.lam * 3.2808 : null, t = P_TERR[pm];
     if (pm === "own") return pick.P;
     if (pm === "none") return 1;
     if (t) { const p = pContour(c.slope, t[0]); return ok(p) ? p * t[1] : null; }
     return pm === "strip" ? pStrip(c.slope, ft) : pContour(c.slope, ft);
   };
-  const pName = () => (PRACTICES.find(p => p[0] === pick.pm) || PRACTICES[0])[1].replace(/ \(P .*\)$/, "");
+  /* cropland's C, like P a fraction; the ranges are rough typical ones from the handbooks, not table values, so no preset sets one */
+  const C_SCALE = "C = the soil lost under your crop and tillage ÷ the soil lost from tilled bare fallow, from 0 to 1: 1 = bare tilled soil; 0.24 = 76% less; lower = more cover or residue. Typical ranges (rough): conventional-till row crops about 0.2–0.5, conservation or mulch tillage about 0.1–0.25, no-till about 0.02–0.15, small grain about 0.05–0.2, hay or meadow under about 0.02. Your rotation, yields and residue change it: NRCS RUSLE2 gives exact values for a field.";
+  const cNote = c => `C ${fmt(c, 2)}: ${fmt(100 * (1 - c), 0)}% less than bare tilled soil`;
+  const R_SCALE = "higher = more erosive rain; the US yearly R runs from under 50 in the dry West to about 300–700 along the Gulf Coast (USDA AH 703); this point's value is USGS RF7100's";
+  const pName = () => (PRACTICES.find(p => p[0] === pick.pm) || PRACTICES[0])[1];
+  // the practice's P over this HU12's soils (K × LS-weighted, as drawRusle takes it), and the share of soil loss it saves
+  const pHere = pm => { if (!M || !M.soils) return null; const a = wmean(M.soils, c => (ok(c.K) && ok(c.LS) && ok(pOf(c, pm)) ? c.K * c.LS * pOf(c, pm) : null)), b = wmean(M.soils, c => (ok(c.K) && ok(c.LS) ? c.K * c.LS : null)); return ok(a.v) && b.v ? a.v / b.v : null; };
+  const saves = P => (P >= 0.995 ? "no saving" : `${fmt(100 * (1 - P), 0)}% less soil loss`);
+  const pLabel = ([k, n, r]) => { const h = k === "own" ? pick.P : k === "none" ? null : pHere(k); return `${n} · ${r}${ok(h) ? ` · ${k === "own" ? "now" : "here"} P ${fmt(h, 2)}, ${saves(h)}` : ""}`; };
+  // the list's labels follow the soils once they are in (the controls are drawn before)
+  const relabel = () => { const s = M && M.el && M.el.querySelector('select[data-bs="pm"]'); if (s) [...s.options].forEach((o, i) => { o.textContent = pLabel(PRACTICES[i]); }); };
 
   /* ---------- the map overlay: the HU12, its catchments by runoff, its flowlines and the upstream outline ----------
      on the map while the Soil maps theme is on and the point is the same; off when the theme changes (back when it
@@ -392,7 +406,7 @@ WG.basins = (function () {
     const gK = !pt.s ? ["…", "reading the soil survey"] : !pt.d ? ["—", "no survey soil here"]
       : pt.g ? [`${pt.g}${String(pt.d.hydgrp || "").includes("/") ? small(`${pt.d.hydgrp}, undrained`) : ""}`, `${esc(pt.d.compname)}, the dominant soil (SSURGO)`] : ["—", `${esc(pt.d.compname)}: the survey gives no group`];
     const cnK = ok(pt.cn) ? [String(pt.cn), `TR-55: ${esc(CN_AS[pt.cls[0]])}`] : ["—", pt.cls && !CN[pt.cls[0]] ? "open water or ice: no curve number" : pt.lc === undefined || !pt.s ? "waiting for the cell and the soil" : "needs a land cover and a soil group"];
-    const qK = ok(pt.q) ? [P_U(pt.q), `${fmt((100 * pt.q) / M.P, 0)}% of the rain · S ${P_U(pt.S)}, Ia ${P_U(0.2 * pt.S)}`] : ["—", !hasP ? "choose or type the storm above" : ""];
+    const qK = ok(pt.q) ? [P_U(pt.q), `${fmt((100 * pt.q) / M.P, 0)}% of the rain · <span title="S: the water the soil can still store once runoff starts. Ia: the rain absorbed before any runoff starts (0.2 S).">S ${P_U(pt.S)}, Ia ${P_U(0.2 * pt.S)}</span>`] : ["—", !hasP ? "choose or type the storm above" : ""];
     const here = `<h4 class="sm-h">Here, at the point</h4>${kv([["Land cover", ...lcK], ["Hydrologic soil group", ...gK], ["Curve number", ...cnK], ["Runoff", ...qK]])}`;
     const foot = `${helpBox("What the letters mean", CN_VARS)}
       <p class="fine"><b>Method:</b> SCS curve number (NRCS TR-55, 1986): Q = (P − Ia)² ÷ (P − Ia + S), S = 1000/CN − 10 in, Ia = 0.2 S, with the curve numbers of TR-55 Table 2-2 for average wetness (AMC II) for each NLCD 2021 class (wetlands, which the table lacks, 78 assumed) and soil group. At the point: its own 30 m cell and the dominant soil of its map unit. In the HU12: its classes counted in 30 m cells inside it (MRLC WCS) and the survey's groups by area; runoff is worked out for each land cover and soil group and then averaged (Q is not linear in CN), with land cover and soils taken as independent (no cell-by-cell overlay). <b>Limits:</b> an event method for one storm on average wetness, not a forecast or a yearly total; crude for cracking clays such as the Vertisols of the Blackland Prairie, and for frozen or very wet ground.</p>`;
@@ -432,6 +446,7 @@ WG.basins = (function () {
   function drawRusle() {
     const x = box("bsRusleOut");
     if (!x) return;
+    relabel();
     if (M.err.soils || M.err.lc) { x.innerHTML = `<p class="fine">Could not read ${esc([M.err.soils && "the soil survey (SDA)", M.err.lc && "the land cover (MRLC)"].filter(Boolean).join(" or "))}. Pick the location again to retry.</p>${helpBox("What the letters mean", RUSLE_VARS, P_TABLE)}`; return; }
     const miss = [!M.soils && "the soil survey's K, slope and slope length", !M.lc && "the land cover", M.R === undefined && "the R factor (NLDI, RF7100)"].filter(Boolean);
     if (miss.length) { x.innerHTML = `<p class="fine">Reading ${esc(miss.join(", "))}…</p>${helpBox("What the letters mean", RUSLE_VARS, P_TABLE)}`; return; }
@@ -465,7 +480,7 @@ WG.basins = (function () {
       ["Soil loss, all land", ta(A), th_(A)],
       crop && ["Cropland", ta(Ac), `${th_(Ac)} · C ${pick.cropC} · P ${ok(P) ? fmt(P, 2) : "—"}`],
       ["Compared with T", ok(A) && Tf.v ? `${fmt(A / Tf.v, A / Tf.v < 1 ? 2 : 1)}${small("× T")}` : "—", ok(Tf.v) ? `T ${fmt(Tf.v, 1)} t/ac/yr (survey)${crop && ok(Ac) ? ` · cropland ${fmt(Ac / Tf.v, 1)} × T` : ""}` : ""],
-      ["Soil moved each year", ok(tons) ? `${fmt(tons / 1000, tons < 1e4 ? 1 : 0)}${small("thousand t")}` : "—", ok(tons) ? `short tons from ${fmt(land * 247.105, 0)} ac of land` : ""],
+      ["Soil moved each year", ok(tons) ? `${fmt(tons / 1000, tons < 1e4 ? 1 : 0)}${small("thousand short tons")}` : "—", ok(tons) ? `short tons from ${fmt(land * 247.105, 0)} ac of land` : ""],
     ])}
       <h4 class="sm-h">The factors</h4>
       ${SM.grid([SM.th("Factor"), SM.th("Value", "US units"), SM.th("SI"), SM.th("Source"), SM.th("Covers")], rows.map(r => [`${esc(r[0])}${r[7] ? `<small class="bs-mean">${esc(r[7])}</small>` : ""}`, `${r[1]}${r[2] ? ` <small>${esc(r[2])}</small>` : ""}`, r[3] ? `${r[3]} <small>${esc(r[4])}</small>` : "", esc(r[5]), esc(r[6])]))}
@@ -502,10 +517,10 @@ WG.basins = (function () {
       <label>24-hour depth (${esc(UN.sym("precip"))})<input type="number" min="0" step="any" inputmode="decimal" data-bs="depth" value="${val}"></label></div>
       <p class="fine" style="margin-top:2px">${a ? `NOAA Atlas 14 depths at this point's 0.05° cell (partial-duration series, the mean of the 30″ cells it holds). ` : `No NOAA Atlas 14 grid is built for ${esc(M.st || "this state")} in this app: `}Check or copy the depth from ${pfds()}.</p>`;
   }
-  const rusleControls = () => `<div class="form-grid bs-ctl"><label>R, rainfall erosivity (US units)<input type="number" min="0" step="any" data-bs="R" value="${ok(M.Rv) ? +M.Rv.toFixed(1) : ""}" placeholder="${M.R === undefined ? "reading…" : "type R"}"><small>how hard the rain hits, a yearly sum</small></label>
-      <label>C of cropland (0–1)<input type="number" min="0" max="1" step="0.01" data-bs="cropC" value="${pick.cropC}"><small>1 = tilled bare soil; crops and residue lower it</small></label>
-      <label>P, support practice<select data-bs="pm">${PRACTICES.map(([k, n]) => `<option value="${k}"${k === pick.pm ? " selected" : ""}>${esc(n)}</option>`).join("")}</select><small>how the cropland is farmed across the slope</small></label>
-      <label${pick.pm === "own" ? "" : " hidden"} data-bs-own>Your P (0–1)<input type="number" min="0" max="1" step="0.05" data-bs="P" value="${pick.P}"><small>1 = up and down the slope</small></label></div>`;
+  const rusleControls = () => `<div class="form-grid bs-ctl"><label>R, rainfall erosivity (US units)<input type="number" min="0" step="any" data-bs="R" value="${ok(M.Rv) ? +M.Rv.toFixed(1) : ""}" placeholder="${M.R === undefined ? "reading…" : "type R"}"><small>how hard the rain hits, a yearly sum; ${esc(R_SCALE)}</small></label>
+      <label>C of cropland (more than 0, at most 1)<input type="number" min="0.01" max="1" step="0.01" data-bs="cropC" value="${pick.cropC}"><small>${esc(C_SCALE)}</small><small data-bs-cnote>${esc(cNote(pick.cropC))}</small></label>
+      <label>P, support practice<select data-bs="pm">${PRACTICES.map(p => `<option value="${p[0]}"${p[0] === pick.pm ? " selected" : ""}>${esc(pLabel(p))}</option>`).join("")}</select><small>how the cropland is farmed across the slope. ${esc(P_SCALE)}</small></label>
+      <label${pick.pm === "own" ? "" : " hidden"} data-bs-own>Your P (more than 0, at most 1)<input type="number" min="0.01" max="1" step="0.01" data-bs="P" value="${pick.P}"><small data-bs-pnote>${esc(`P ${fmt(pick.P, 2)}: ${saves(pick.P)} on cropland than farming up and down the slope`)}</small></label></div>`;
 
   /* a new point in the same HU12 reuses its network, soils and land cover (kept for the visit, the last few HU12s) */
   const huSeen = new Map();
@@ -569,9 +584,19 @@ WG.basins = (function () {
       const s = M.el.querySelector('[data-bs="storm"]');
       if (s) s.value = "own";
       drawCn();
-    } else if (k === "cropC" && ok(v) && v >= 0 && v <= 1) { pick.cropC = v; keep(); drawRusle(); drawCn(); }
+    } else if (k === "cropC") {
+      const good = ok(v) && v > 0 && v <= 1, n = M.el.querySelector("[data-bs-cnote]");
+      t.setCustomValidity(good ? "" : "C is more than 0 and at most 1");
+      if (n) { n.textContent = good ? cNote(v) : `${t.value || "This"} is not a C value: C is more than 0 and at most 1 (0.24 = 76% less than bare tilled soil). The last valid C, ${fmt(pick.cropC, 2)}, is kept.`; n.classList.toggle("bs-warn", !good); }
+      if (good) { pick.cropC = v; keep(); drawRusle(); drawCn(); }
+    }
     else if (k === "pm") { pick.pm = t.value; const o = M.el.querySelector("[data-bs-own]"); if (o) o.hidden = pick.pm !== "own"; keep(); drawRusle(); }
-    else if (k === "P" && ok(v) && v >= 0 && v <= 1) { pick.P = v; keep(); drawRusle(); }
+    else if (k === "P") {
+      const good = ok(v) && v > 0 && v <= 1, n = M.el.querySelector("[data-bs-pnote]");
+      t.setCustomValidity(good ? "" : "P is from 0.01 to 1");
+      if (n) { n.textContent = good ? `P ${fmt(v, 2)}: ${saves(v)} on cropland than farming up and down the slope` : `${t.value || "This"} is not a P value: P is more than 0 and at most 1 (0.85 = 15% less soil loss, 0.5 = half). The last valid P, ${fmt(pick.P, 2)}, is kept.`; n.classList.toggle("bs-warn", !good); }
+      if (good) { pick.P = v; keep(); drawRusle(); relabel(); }
+    }
     else if (k === "R") { M.Rv = ok(v) && v > 0 ? v : null; M.Rsrc = M.R && ok(M.Rv) && Math.abs(M.Rv - M.R.R) < 0.06 ? M.Rsrc0 : "typed by you"; drawRusle(); }
   }
   // a list answers on "change", a box on "input" (each fires both, which would draw the results twice)

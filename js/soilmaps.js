@@ -31,6 +31,11 @@ WG.soilmaps = (function () {
   const SAL = ["Non-saline", "Very slightly saline", "Slightly saline", "Moderately saline", "Strongly saline"];
   const salinity = v => (ok(v) ? SAL[[2, 4, 8, 16].filter(l => v >= l).length] : "");
   // U.S. Salinity Laboratory (Handbook 60): saline at EC 4 dS/m or more; sodic at SAR 13 or ESP 15 or more
+  // what the soil chemistry values mean, as title tooltips (rough, typical ranges)
+  const SAR_TIP = "SAR = sodium adsorption ratio of the saturated-paste extract; ESP = % of the CEC held by sodium. Sodic (poor structure, crusting) at SAR 13 or more, or ESP 15% or more; below that, not sodic.";
+  const CEC_TIP = "CEC: how many nutrient cations the soil holds. Rough ranges: sand under 5, loam 10–25, clay or high organic matter 25–40+ cmol(+)/kg. Higher holds more nutrients and buffers pH better.";
+  const BS_TIP = "Base saturation: the share of the CEC filled by Ca, Mg, K and Na. 100 or more in calcareous soils; below about 50–60% means acid, leached soil (rough).";
+  const OM_TIP = "Organic matter, typical: under 1% low, 1–3% usual in cropland, over 4% high (rich, wet or grass soils).";
   function sodicity(ec, sar, esp) {
     const sod = (ok(sar) && sar >= 13) || (ok(esp) && esp >= 15), sal = ok(ec) && ec >= 4;
     if (!ok(sar) && !ok(esp)) return sal ? "Saline" : "";
@@ -516,14 +521,14 @@ WG.soilmaps = (function () {
       const kv = l15 ? `<div class="wx-kv">
           <div><span>pH${l15.cacl2 ? " (CaCl₂)" : ""}</span><b>${P(l15.ph, false)}</b><span>${esc(l15.cacl2 ? "classes are for water pH, about 0.5 higher" : reaction(l15.ph))}</span></div>
           <div><span>Salinity, EC</span><b>${vu(l15.ec, 1, "dS/m")}</b><span>${esc(salinity(l15.ec))}</span></div>
-          <div><span>Sodicity, SAR · ESP</span><b>${fmt(l15.sar, 1)} · ${vu(l15.esp, 0, "%")}</b><span>${esc(sod)}</span></div>
-          <div><span>${l15.ecec ? "ECEC" : "CEC at pH 7"}</span><b>${vu(l15.cec, 1, "cmol(+)/kg")}</b><span>${ok(l15.bs) ? `base saturation ${fmt(Math.min(100, l15.bs), 0)}%` : ""}</span></div>
-          <div><span>Organic matter</span><b>${vu(l15.om, 1, "%")}</b><span>${ok(l15.caco3) ? `CaCO₃ ${fmt(l15.caco3, 0)}%` : ""}${ok(l15.gyps) && l15.gyps > 0 ? ` · gypsum ${fmt(l15.gyps, 0)}%` : ""}</span></div></div>` : "";
+          <div><span title="${SAR_TIP}">Sodicity, SAR · ESP</span><b>${fmt(l15.sar, 1)} · ${vu(l15.esp, 0, "%")}</b><span>${esc(sod)}</span></div>
+          <div><span title="${CEC_TIP}">${l15.ecec ? "ECEC" : "CEC at pH 7"}</span><b>${vu(l15.cec, 1, "cmol(+)/kg")}</b><span>${ok(l15.bs) ? `<span title="${BS_TIP}">base saturation ${fmt(Math.min(100, l15.bs), 0)}%</span>` : ""}</span></div>
+          <div><span title="${OM_TIP}">Organic matter</span><b>${vu(l15.om, 1, "%")}</b><span>${ok(l15.caco3) ? `CaCO₃ ${fmt(l15.caco3, 0)}%` : ""}${ok(l15.gyps) && l15.gyps > 0 ? ` · gypsum ${fmt(l15.gyps, 0)}%` : ""}</span></div></div>` : "";
       const cols = [th("Component"), th("Share", "%"), th("Depth"), th("pH"), th("Reaction"), th("EC", "dS/m"), th("Salinity"), th("SAR"), th("ESP", "%"), th("Sodicity"), th("CEC", "cmol(+)/kg"), th("Base sat.", "%"), th("OM", "%"), th("CaCO₃", "%"), th("Gypsum", "%")];
       x.innerHTML = `<div class="card">${head("Soil chemistry, 0–15 and 0–30 cm", "survey", `${S.mu.sym} · ${S.mu.area}`)}
           <p class="fine" style="margin-top:0">${top ? `${esc(top.name)} (${fmt(top.pct, 0)}% of the map unit), 0–15 cm, the survey's values:` : "No horizon data."}</p>${kv}
           <h4 class="sm-h">Each major component, depth-weighted</h4>${grid(cols, rowsHtml)}
-          <p class="fine">Depth-weighted over the horizons with a value; each horizon is in Horizons › Chemistry below. Base saturation is the sum of bases over CEC at pH 7 (shown as 100+ in calcareous soils, where bases exceed it). "CaCl₂": the survey gives only pH in calcium chloride (common in New England), about 0.5 below water pH. "ECEC": effective CEC, given where CEC at pH 7 is not (acid soils). Classes: Soil Survey Manual (reaction, salinity); sodic at SAR 13 or ESP 15 or more, saline at EC 4 dS/m or more (U.S. Salinity Laboratory, Handbook 60). USDA-NRCS SSURGO through Soil Data Access, representative values of the map unit's major components, public domain. ${SURVEY_NOTE}</p></div>`;
+          <p class="fine">Depth-weighted over the horizons with a value; each horizon is in Horizons › Chemistry below. Base saturation is the sum of bases over CEC at pH 7 (shown as 100+ in calcareous soils, where bases exceed it). "CaCl₂": the survey gives only pH in calcium chloride (common in New England), about 0.5 below water pH. "ECEC": effective CEC, given where CEC at pH 7 is not (acid soils). Classes: Soil Survey Manual (reaction, salinity); sodic at SAR 13 or ESP 15 or more, saline at EC 4 dS/m or more (U.S. Salinity Laboratory, Handbook 60). SAR is the sodium adsorption ratio of the saturated-paste extract, ESP the % of the CEC held by sodium. Rough guides: CEC under 5 in sand, 10–25 in loam, 25–40+ in clay or high-organic soils; organic matter under 1% low, 1–3% usual in cropland, over 4% high. USDA-NRCS SSURGO through Soil Data Access, representative values of the map unit's major components, public domain. ${SURVEY_NOTE}</p></div>`;
       if (hz) drawChem(hz, S);
     }, e => { fail("smSurvey", "the soil survey's chemistry")(e); const hz = at("smHzChem"); if (hz) hz.innerHTML = `<p class="fine">Could not read the survey's chemistry: ${esc(e.message || String(e))}. Pick the location again to retry.</p>`; });
 
@@ -563,7 +568,7 @@ WG.soilmaps = (function () {
       const unit = el => (DS_COL[el].endsWith("_pct") ? "%" : "mg/kg");
       const shows = (v, el) => (v === null ? "—" : typeof v === "string" ? esc(v) : fmt(v, unit(el) === "%" ? 2 : v < 10 ? 1 : 0)); // as the lab reports them
       const depthOf = (s, hz) => (s.p[hz] && s.p[hz].depth_cm ? `${s.p[hz].depth_cm} cm` : "");
-      const cols = [th("Element"), ...sites.flatMap((s, i) => [th(`Site ${i + 1}, top 5 cm`, depthOf(s, "top5cm")), th(`Site ${i + 1}, A horizon`, depthOf(s, "ahorizon"))]), th("US median", "top 5 cm")];
+      const cols = [th("Element"), ...sites.flatMap((s, i) => [th(`Site ${i + 1}, top 5 cm`, depthOf(s, "top5cm")), th(`Site ${i + 1}, A horizon`, depthOf(s, "ahorizon"))]), th("US median", "top 5 cm, same unit as the row")];
       const rows = ELS.map(([el, n]) => [`${showBtn("chem", el, { el, hz: "Top5" })} <small>${esc(n)}, ${unit(el)}</small>`, ...sites.flatMap(s => [shows(val(s, "top5cm", el), el), shows(val(s, "ahorizon", el), el)]),
         lg && lg.elements[el] ? esc(String(lg.elements[el].Top5.median)) : "—"]);
       tables.usgs = { title: "USGS DS-801 soil geochemistry, nearest sites: TOTAL element (not plant-available)", header: ["Element", "Unit", ...sites.flatMap((s, i) => [`Site ${i + 1} (#${s.id}, ${r1(s.km)} km ${s.dir}, ${s.p.colldate || ""}) top 5 cm`, `Site ${i + 1} A horizon`]), "US median top 5 cm"],
@@ -571,7 +576,7 @@ WG.soilmaps = (function () {
       const sLine = sites.map((s, i) => { const p = s.p; return `<b>${pinBtn(s.lat, s.lon, `USGS site ${i + 1} (#${s.id})`, [`soil geochemistry, sampled ${p.colldate || "2007–2010"}`, `${dist(s.km)} ${s.dir} of the point`], `Site ${i + 1}`)}</b> #${esc(s.id)}: ${dist(s.km)} ${esc(s.dir)}, sampled ${esc(p.colldate || "")}${p.landcover1 ? `, ${esc(p.landcover1)}${p.landcover2 ? ` (${esc(p.landcover2)})` : ""}` : ""}`; }).join("; ");
       x.innerHTML = `<div class="card">${head("Nearest USGS soil geochemistry sites", "usgs", "TOTAL element")}
         <p class="fine" style="margin-top:0">${sLine}.</p>${grid(cols, rows)}
-        <p class="fine"><b>Total element in the soil, not plant-available:</b> a near-total four-acid digest (ICP-AES/MS) that counts the element held in minerals; K, Ca, Mg, S, Fe and Na in % by weight (1% = 10,000 mg/kg), the others in mg/kg. A soil test (available P, K …) reads tens to hundreds of times lower and is not predicted by these. "&lt;": below the detection limit. USGS Data Series 801 (Smith et al. 2013, doi:10.3133/ds801), public domain, one site per about 1,600 km², sampled 2007–2010. Click an element to map it, or a site to see where it is.</p></div>`;
+        <p class="fine"><b>Total element in the soil, not plant-available:</b> a near-total four-acid digest (ICP-AES/MS) that counts the element held in minerals; K, Ca, Mg, S, Fe and Na in % by weight (1% = 10,000 mg/kg), the others in mg/kg. A soil test (available P, K …) reads tens to hundreds of times lower and is not predicted by these. Compare a site with the US median: higher means richer in that element, not more available to the crop. "&lt;": below the detection limit. USGS Data Series 801 (Smith et al. 2013, doi:10.3133/ds801), public domain, one site per about 1,600 km², sampled 2007–2010. Click an element to map it, or a site to see where it is.</p></div>`;
     }, fail("smUsgs", "the USGS soil geochemistry sites"));
 
     /* NRCS KSSL pedons */
@@ -590,7 +595,7 @@ WG.soilmaps = (function () {
       tables.kssl = { title: "NRCS KSSL lab-measured pedons nearby, surface layer", header: ["Pedon key", "Lab sample number", "Soil (correlated name)", "Distance (km)", "Direction", "Sampled", "Layer top (cm)", "Layer bottom (cm)", "Horizon", "pH (1:1 water)", "pH (CaCl2)", "EC saturated paste (dS/m)", "Total N (%)", "P Bray-1 (mg/kg)", "P Olsen (mg/kg)", "P Mehlich-3 (mg/kg)", "K NH4OAc pH 7 (cmol(+)/kg)", "Ca NH4OAc pH 7 (cmol(+)/kg)", "Mg NH4OAc pH 7 (cmol(+)/kg)", "Na NH4OAc pH 7 (cmol(+)/kg)", "Total S (%)", "CEC NH4OAc pH 7 (cmol(+)/kg)", "CaCO3 equivalent (%)", "Latitude", "Longitude"],
         rows: rows.map(r => [r.pedon_key, r.pedlabsampnum, r.corr_name || r.samp_name || "", r1(r.km), r.dir, r.obsdate ? String(r.obsdate).split(" ")[0] : "", n(r, "hzn_top"), n(r, "hzn_bot"), r.hzn_desgn || "", ...["ph_h2o", "ph_cacl2", "ec", "n_pct", "p_bray1", "p_olsen", "p_m3", "k", "ca", "mg", "na", "s_pct", "cec7", "caco3"].map(k => n(r, k)), num(r.lat), num(r.lon)]) };
       x.innerHTML = `<div class="card">${head("Lab-measured pedons nearby", "kssl", "NRCS soil lab")}${grid(cols, html)}
-        <p class="fine">Measured at the USDA-NRCS Kellogg Soil Survey Laboratory on each pedon's surface layer (public domain, through Soil Data Access): K, Ca, Mg and Na exchangeable by ammonium acetate at pH 7 (1 cmol(+)/kg K = 391 mg/kg; Ca 200; Mg 122), P by the Bray-1, Olsen or Mehlich-3 extraction where run, total N and S by combustion. <b>Caveats:</b> pedons are sparse and often old (the year is the sampling date), sampled to describe the soil series rather than a field's fertility; blank cells were not measured. Click a pedon's name to see where it is on the map. *Ammonium acetate dissolves carbonates, so Ca reads high in calcareous soils (CaCO₃ 1% or more, or pH 7.8 or more).</p></div>`;
+        <p class="fine">Measured at the USDA-NRCS Kellogg Soil Survey Laboratory on each pedon's surface layer (public domain, through Soil Data Access): K, Ca, Mg and Na exchangeable by ammonium acetate at pH 7 (1 cmol(+)/kg K = 391 mg/kg; Ca 200; Mg 122), P by the Bray-1, Olsen or Mehlich-3 extraction where run, total N and S by combustion. <b>Caveats:</b> pedons are sparse and often old (the year is the sampling date), sampled to describe the soil series rather than a field's fertility; blank cells were not measured. Click a pedon's name to see where it is on the map. The P tests differ: Bray-1 suits acid soils and Olsen calcareous soils (pH 7.4 or more); read only the method that fits the pH. *Ammonium acetate dissolves carbonates, so Ca marked * reads high in calcareous soils (CaCO₃ 1% or more, or pH 7.8 or more).</p></div>`;
     }, fail("smKssl", "the NRCS soil lab's pedons"));
 
     await Promise.allSettled([pSurvey, pUsfs, pN, pUsgs, pKssl, ...runParts(list, at, live, lat, lon)]);
@@ -630,7 +635,7 @@ WG.soilmaps = (function () {
     const { lat, lon } = WG.state.site, tabEl = k => document.getElementById(`tab-${k}`);
     const pTab = Promise.all(["soilmaps", "soilbasin"].map(k => (tabEl(k) && (k === "soilmaps" || partsOf(k).length) ? Wx.show(k, tabEl(k)) : null)));
     // soil moisture: js/soilmoisture.js's summary, or (a page where it is still a part of the Soil tab) its tables
-    const SMM = WG.soilmoisture && WG.soilmoisture.summary, partOf = k => PARTS.find(p => p.key === k);
+    const SMM = WG.soilmoisture && WG.soilmoisture.summary, wet = () => (WG.soilmoisture && WG.soilmoisture.soilRange ? `<br>${esc(WG.soilmoisture.soilRange())}` : ""), vol = v => (ok(v) ? ` <small>= ${fmt(100 * v, 0)}% water by volume</small>` : ""), partOf = k => PARTS.find(p => p.key === k);
     const has = k => (!k ? true : k === "moisture" ? !!(SMM || partOf(k)) : !!partOf(k)), tiles = TILES.filter(t => has(t[5]));
     // the tab a tile's Details open: its own where the page has that tab button, else the tab that holds its part
     const goTo = t => (document.querySelector(`.tabs [data-tab="${t[3]}"]`) ? t[3] : t[5] && partOf(t[5]) ? partOf(t[5]).tab || "soilmaps" : "soilmaps");
@@ -672,14 +677,14 @@ WG.soilmaps = (function () {
       else {
         tile("ph", ok(l.ph) ? `${fmt(l.ph, 1)}${l.cacl2 ? " <small>CaCl₂</small>" : ""}` : "—", `<b>${esc(l.cacl2 ? "in CaCl₂, about 0.5 below water pH" : reaction(l.ph))}</b> · ${esc(top.name)}`);
         const sod = sodicity(l.ec, l.sar, l.esp);
-        tile("salt", ok(l.ec) ? u(fmt(l.ec, 1), "dS/m") : "—", `<b>${esc(salinity(l.ec) || "No EC")}</b>${sod ? ` · <b>${esc(sod)}</b>` : ""} · SAR ${fmt(l.sar, 1)}, ESP ${ok(l.esp) ? `${fmt(l.esp, 0)}%` : "—"}`);
-        tile("cec", ok(l.cec) ? u(fmt(l.cec, 1), `cmol(+)/kg${l.ecec ? " ECEC" : ""}`) : "—", `Organic matter <b>${ok(l.om) ? `${fmt(l.om, 1)}%` : "—"}</b>${ok(l.bs) ? ` · base saturation ${fmt(Math.min(100, l.bs), 0)}%` : ""}`);
+        tile("salt", ok(l.ec) ? u(fmt(l.ec, 1), "dS/m") : "—", `<b>${esc(salinity(l.ec) || "No EC")}</b>${sod ? ` · <b>${esc(sod)}</b>` : ""} · <span title="${SAR_TIP}">SAR ${fmt(l.sar, 1)}, ESP ${ok(l.esp) ? `${fmt(l.esp, 0)}%` : "—"}</span>`);
+        tile("cec", ok(l.cec) ? `<span title="${CEC_TIP}">${u(fmt(l.cec, 1), `cmol(+)/kg${l.ecec ? " ECEC" : ""}`)}</span>` : "—", `<span title="${OM_TIP}">Organic matter</span> <b>${ok(l.om) ? `${fmt(l.om, 1)}%` : "—"}</b>${ok(l.bs) ? ` · <span title="${BS_TIP}">base saturation ${fmt(Math.min(100, l.bs), 0)}%</span>` : ""}`);
       }
       /* SoilGrids' total N, 0-5 cm */
       const n0 = N && !(N instanceof Error) ? N.find(r => r.t === 0) : null;
       if (N === undefined) tile("n", undefined, "Reading SoilGrids…");
       else if (N instanceof Error) tile("n", "—", bad(N));
-      else tile("n", n0 && ok(n0.mean) ? u(fmt(n0.mean, 2), "g/kg") : "—", n0 && ok(n0.mean) ? `<b>${esc(nClass(n0.mean))}</b> (Landon 1991) · ${fmt(n0.mean / 10, 3)}% · SoilGrids` : "SoilGrids gives no value at this point");
+      else tile("n", n0 && ok(n0.mean) ? u(fmt(n0.mean, 2), "g/kg") : "—", n0 && ok(n0.mean) ? `<b>${esc(nClass(n0.mean))}</b> (Landon 1991) · ${fmt(n0.mean / 10, 3)}% (1 g/kg = 0.1%) · total N, not what the crop can use · SoilGrids` : "SoilGrids gives no value at this point");
       /* the parts of other files: their tables, or how the part ended */
       const T = tables, st = k => (run.tok === WG.state.token ? run.parts[k] : undefined);
       const later = (k, id, what, f) => { const s = st(k); if (s instanceof Error) return tile(id, "—", bad(s)); const r = f(); if (r) return tile(id, ...r); tile(id, s === "done" ? "—" : undefined, s === "done" ? "Not given here: its card says why" : `Reading ${esc(what)}…`); };
@@ -699,14 +704,14 @@ WG.soilmaps = (function () {
         if (MS === undefined) { tile("smm", undefined, "Reading soil moisture models…"); tile("stn", undefined, "Looking for a station within 400 km…"); }
         else if (MS instanceof Error) ["smm", "stn"].forEach(k => tile(k, "—", bad(MS)));
         else {
-          tile("smm", m && ok(num(m.top)) ? u(fmt(num(m.top), 2), "m³/m³") : "—", m ? `top layer · root zone <b>${ok(num(m.root)) ? fmt(num(m.root), 2) : "—"}</b>${m.src ? ` · ${esc(m.src)}` : ""}${m.date ? `, ${esc(String(m.date))}` : ""}` : "No model value here");
+          tile("smm", m && ok(num(m.top)) ? `${u(fmt(num(m.top), 2), "m³/m³")}${vol(num(m.top))}` : "—", m ? `top layer · root zone <b>${ok(num(m.root)) ? fmt(num(m.root), 2) : "—"}</b>${m.src ? ` · ${esc(m.src)}` : ""}${m.date ? `, ${esc(String(m.date))}` : ""}${wet()}` : "No model value here");
           tile("stn", s && ok(num(s.value)) ? u(fmt(num(s.value), 2), "m³/m³") : "—", s ? `${ok(num(s.depthIn)) ? `${esc(UN.fmt("depth", num(s.depthIn) * 2.54))} · ` : ""}${s.time ? `${esc(String(s.time))} · ` : ""}<b>${esc(s.name || "")}</b>${s.net ? `, ${esc(s.net)}` : ""}${ok(num(s.km)) ? `, ${dist(num(s.km))}${s.dir ? ` ${esc(s.dir)}` : ""}` : ""}` : "No station within 400 km");
         }
       } else if (has("moisture")) {
         const M = T.moisture_models, ifs = M ? M.rows.filter(r => /^ECMWF IFS/.test(r[0])) : [], era = M ? M.rows.filter(r => /^ERA5/.test(r[0])) : [], use = ifs.length ? ifs : era;
         const day = use.reduce((m, r) => (r[4] > m ? r[4] : m), ""), at = (a, b) => { const r = use.find(x => x[2] === a && x[3] === b && x[4] === day); return r && ok(r[5]) ? r[5] : null; };
         const v0 = at(0, 7), v28 = at(28, 100);
-        later("moisture", "smm", "soil moisture models", () => (ok(v0) ? [u(fmt(v0, 2), "m³/m³"), `0–7 cm · 28–100 cm <b>${ok(v28) ? fmt(v28, 2) : "—"}</b> · ${ifs.length ? "ECMWF IFS, today" : `ERA5-Land, ${esc(day)}`}`] : null));
+        later("moisture", "smm", "soil moisture models", () => (ok(v0) ? [`${u(fmt(v0, 2), "m³/m³")}${vol(v0)}`, `0–7 cm · 28–100 cm <b>${ok(v28) ? fmt(v28, 2) : "—"}</b> · ${ifs.length ? "ECMWF IFS, today" : `ERA5-Land, ${esc(day)}`}${wet()}`] : null));
         const Sx = T.moisture_stations, rows = Sx && Sx.rows.length ? Sx.rows.filter(r => r[0] === Sx.rows[0][0] && ok(r[7])) : [], cm = rows.length ? Math.min(...rows.map(r => r[5])) : null;
         const atD = rows.filter(r => r[5] === cm), last = atD.find(r => /latest/.test(r[9])) || atD.reduce((m, r) => (!m || r[6] > m[6] ? r : m), null);
         later("moisture", "stn", "soil moisture station within 400 km", () => (last ? [u(fmt(last[7], 2), "m³/m³"), `${esc(last[4])} · ${esc(String(last[6]))} · <b>${esc(last[0])}</b>, ${esc(last[1])}, ${dist(last[3])}`] : null));
