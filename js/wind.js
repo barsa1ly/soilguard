@@ -154,13 +154,71 @@ WG.wind = (function () {
      variable a year (pr_2025.nc ..., 50 to 100 MB, chunks of about 60 days by 100 by 230 cells), read in place by byte
      ranges (js/h5range.js), only the chunks that hold the cells asked: about 2 to 5 MB a variable a year for one cell,
      and hardly more for a box of cells in the same chunks. Their variables are named by CF standard names, not THREDDS's.
-     Values as from THREDDS: raw x scale_factor + add_offset, the fill value missing. Once THREDDS has failed in this
-     visit, every read goes to the file server. */
+     Values as from THREDDS: raw x scale_factor + add_offset, the fill value missing. Which server is read: below. */
   const MDATA = "https://www.northwestknowledge.net/metdata/data/";
   const GM_FILE = { pr: "precipitation_amount", pet: "potential_evapotranspiration", etr: "potential_evapotranspiration", tmmx: "air_temperature", tmmn: "air_temperature",
     srad: "surface_downwelling_shortwave_flux_in_air", rmax: "relative_humidity", rmin: "relative_humidity", vs: "wind_speed", sph: "specific_humidity", th: "wind_from_direction" };
-  let gmDown = false;
-  const gmFailed = e => { if (!gmDown) console.warn(`gridMET: THREDDS did not answer (${(e && e.message) || e || "no answer"}); reading its yearly files from the file server instead`); gmDown = true; };
+  /* Which of gridMET's two servers is read, for the weather here and the Drought tab's indices (js/weather.js). THREDDS
+     sends a cell's days as a few kilobytes of text where the file server sends megabytes of chunks, so it is read while
+     it answers. From 11 Nov 2026 its connections have timed out for days on end, and waiting 8 s for it on every visit
+     was most of the Drought tab's time. So the outcome is kept in this browser (fg.gmsrc): THREDDS failed less than 6
+     hours ago, the file server at once; it answered less than a day ago, THREDDS at once; else a check of at most 2.5 s
+     (rain's .dds, a few hundred bytes, which also gives gridMET's last day). A read that fails on one server goes to the
+     other at once. Only THREDDS itself not answering is kept as down (its check, no connection, a time limit, a 5xx or
+     429): an answer that one read could not use (a 4xx, text that does not parse) sends that read alone to the file
+     server. While the file server is read, THREDDS is checked again quietly once a visit, 30 s in: at most every 30
+     minutes while it is remembered down, always after it failed in this visit (one slow start must not cost 6 hours of
+     megabytes). That answer is kept, and a THREDDS that answers again is read for the rest of the visit too. */
+  const GM_MEM = "fg.gmsrc", GM_DOWN = 6 * 36e5, GM_UP = 864e5, GM_PROBE = 2500, GM_DDS = `${GRIDMET}pr_1979_CurrentYear_CONUS.nc.dds`;
+  const gmMem = () => { try { return JSON.parse(localStorage.getItem(GM_MEM)) || {}; } catch (e) { return {}; } };
+  const gmKeep = o => { try { localStorage.setItem(GM_MEM, JSON.stringify({ ...gmMem(), ...o })); } catch (e) { /* storage off: checked again next visit */ } };
+  let gmDown = false, gmSure = false, gmPick = null, gmDds = null, gmRechecked = false;
+  const gmFailed = e => { if (!gmDown) console.warn(`gridMET: THREDDS did not answer (${(e && e.message) || e || "no answer"}); reading its files on the file server instead`); gmDown = true; gmPick = Promise.resolve(false); gmKeep({ down: Date.now() }); gmRecheck(true); };
+  // THREDDS itself not answering (fetch's TypeError, fetchText's time limit, a 5xx or 429, its check), not one answer gone wrong
+  const gmGone = e => !!e && (e instanceof TypeError || e.name === "AbortError" || /^(5\d\d|429)\b|did not answer/.test(e.message || ""));
+  // rain's .dds on THREDDS, asked once a visit (and again by gmRecheck): its text, or "" when THREDDS did not start answering within ms
+  const gmProbe = ms => (gmDds = gmDds || fetchText(GM_DDS, 15000, ms).then(t => {
+    if (!/day = \d+\]/.test(t)) throw new Error("no day axis in its answer");
+    gmKeep({ up: Date.now(), down: 0 });
+    gmDown = false; gmPick = Promise.resolve(true); // also when it was asked because the file server failed, or again later
+    return t;
+  }).catch(e => { gmFailed(e); return ""; }));
+  // THREDDS (true) or the file server (false), decided once a visit as above
+  function gmThredds() {
+    return gmPick || (gmPick = (() => {
+      const m = gmMem(), now = Date.now();
+      if (m.down && now - m.down < GM_DOWN) { gmDown = gmSure = true; gmRecheck(false); return Promise.resolve(false); }
+      if (m.up && now - m.up < GM_UP) { gmSure = true; return Promise.resolve(true); } // the reads go at once; gmRead's check runs beside them
+      return gmProbe(GM_PROBE).then(t => { gmSure = true; return !!t; });
+    })());
+  }
+  // the server this visit reads, once decided: "thredds" or "files" (null while THREDDS is being checked)
+  const gmServer = () => (gmThredds(), gmDown ? "files" : gmSure ? "thredds" : null);
+  // now: THREDDS failed in this visit, so it is checked again whenever it was last asked
+  function gmRecheck(now) {
+    const m = gmMem();
+    if (gmRechecked || (!now && Date.now() - Math.max(m.probe || 0, m.down || 0) < 30 * 60e3)) return;
+    gmRechecked = true;
+    setTimeout(() => { gmKeep({ probe: Date.now() }); gmDds = null; gmProbe(3000); }, 30000);
+  }
+  /* f(true) reads THREDDS, f(false) the file server: the server chosen first, the other at once when it fails (THREDDS
+     after its check, which a visit makes once). On THREDDS the check goes first in its line, and when it fails no read
+     waits for its own requests' limits (the Drought tab sends 8 at once: 6 s in line behind each other). */
+  async function gmRead(f) {
+    const t = await gmThredds();
+    try {
+      if (!t) return await f(false);
+      const down = gmProbe(GM_PROBE).then(x => (x ? new Promise(() => {}) : Promise.reject(new Error("THREDDS did not answer its check"))));
+      return await Promise.race([f(true), down]);
+    } catch (e) {
+      if (t) {
+        if (gmGone(e)) gmFailed(e); else console.warn(`gridMET: an answer from THREDDS could not be used (${e.message || e}); this read from the file server`);
+        return f(false);
+      }
+      if (!(await gmProbe(GM_PROBE))) throw e;
+      return f(true);
+    }
+  }
   /* one variable over days a..b (epoch days) for the cells ja..jb by ia..ib, from the yearly files: put(j, i, k, value),
      k = day - a, null where the file holds its fill value */
   async function gmFileBox(v, ja, jb, ia, ib, a, b, put) {
@@ -177,12 +235,12 @@ WG.wind = (function () {
         const w = raw[(t * nj + q) * ni + r];
         put(ja + q, ia + r, s - a + t, w === fill ? null : w * scale + add);
       }
-    }));
+    }, { keep: true }));
   }
   // the last day in the current year's file (the year before's while the new year's file is not there yet)
   async function gmFileLast() {
     for (const y of [yearOf(today()), yearOf(today()) - 1]) {
-      try { return await WG.h5range.withFile(`${MDATA}pr_${y}.nc`, async F => epochDay(y, 0, 1) + (await F.dataset("day")).shape[0] - 1); } catch (e) { /* the next year back */ }
+      try { return await WG.h5range.withFile(`${MDATA}pr_${y}.nc`, async F => epochDay(y, 0, 1) + (await F.dataset("day")).shape[0] - 1, { keep: true }); } catch (e) { /* the next year back */ }
     }
     throw new Error("gridMET's file server did not answer");
   }
@@ -195,17 +253,14 @@ WG.wind = (function () {
   // ACIS can have more, up to today - 1 (its PRISM date, today, ended at 1200 UTC), so later days are asked, not refused
   const prismLast = () => today() - 3;
 
-  /* gridMET's last day, read once from the length of its day axis (it is about two days behind): THREDDS's, waiting 8 s
-     for its first answer, else the current year's file on the file server. The visit's first gridMET request, so it also
-     finds out whether THREDDS answers. */
+  /* gridMET's last day, read once from the length of its day axis (it is about two days behind): THREDDS's .dds of rain,
+     the check above (2.5 s for its first answer), else the current year's file on the file server */
   let gmLast = null;
   function gridmetLast() {
     return gmLast || (gmLast = (async () => {
-      if (!gmDown) {
-        const dds = await fetchText(`${GRIDMET}pr_1979_CurrentYear_CONUS.nc.dds`, 15000, 8000).catch(e => { gmFailed(e); return ""; });
-        const n = +((dds.match(/day = (\d+)\]/) || [])[1]);
+      if (await gmThredds()) {
+        const n = +(((await gmProbe(GM_PROBE)).match(/day = (\d+)\]/) || [])[1]);
         if (n > 0) return GM_DAY0 + n - 1;
-        if (dds) gmFailed(new Error("no day axis in its answer"));
       }
       return gmFileLast().catch(() => today() - 4);
     })());
@@ -241,19 +296,19 @@ WG.wind = (function () {
   async function gridmetVar(v, j, i, d0, d1) {
     const B = gmBox, kept = B && B.vals[v] && d0 >= B.a && d1 <= B.b ? B.vals[v].get(j * 2000 + i) : null;
     if (kept) return kept.slice(d0 - B.a, d1 - B.a + 1);
-    if (!gmDown) {
-      try {
+    return gmRead(async thredds => {
+      if (thredds) {
         const name = GM[v], url = `${GRIDMET}${v}_1979_CurrentYear_CONUS.nc`;
         const [pk, txt] = await Promise.all([packOf(v),
           gmGate(() => fetchText(`${url}.ascii?${name}[${d0 - GM_DAY0}:1:${d1 - GM_DAY0}][${j}:1:${j}][${i}:1:${i}]`, 45000, 15000))]);
         const out = [];
         for (const m of txt.matchAll(/^\[(\d+)\]\[0\], (-?\d+(?:\.\d+)?)/gm)) out[+m[1]] = +m[2] === pk.fill ? null : +m[2] * pk.scale + pk.add;
         return out;
-      } catch (e) { gmFailed(e); }
-    }
-    const out = new Array(d1 - d0 + 1).fill(null);
-    await gmFileBox(v, j, j, i, i, d0, d1, (jj, ii, k, x) => { out[k] = x; });
-    return out;
+      }
+      const out = new Array(d1 - d0 + 1).fill(null);
+      await gmFileBox(v, j, j, i, i, d0, d1, (jj, ii, k, x) => { out[k] = x; });
+      return out;
+    });
   }
   /* gridMET's variables for many cells at once: a box of cells in one request a variable (each row's span instead when
      the box would be mostly empty), split by years so no answer passes 2 million values; a failed request is tried
@@ -274,7 +329,7 @@ WG.wind = (function () {
     const vars = ["pr", "tmmx", "tmmn", "srad", "rmax", "rmin", "vs", "sph", "pet"], jobs = vars.flatMap(v => reqs.map(r => [v, ...r]));
     const box = { a, b, vals: {} }, bad = new Set();
     let done = 0;
-    if (gmDown) {
+    if (!(await gmThredds())) {
       // the yearly files: a box (or each row's span) a variable, every year's file in turn; the chunks are what it costs
       const fjobs = vars.flatMap(v => boxes.map(x => [v, ...x]));
       await pool(fjobs, 2, async ([v, ja, jb, ia, ib]) => {
@@ -1071,6 +1126,6 @@ WG.wind = (function () {
 
   return { fetchWind, analyze, yearsFor, findStation, fetchModelAt, calibrate, stationRaw, compare, nearestStations, towerFirst, exposure, trainSpan,
     wtmOn: WTM_ON, wtmEnabled: ENABLE_WTM, wtmTrial: WTM_TRIAL, TOWER_YEARS, EXPOSURE_MIN,
-    resolvePeriod, limits, isoDay, parseDay, dayLabel, today, span, setZone, zoneHours, zoneLabel, gridmetLast, gridmetBox, gridmetFromFiles: () => gmDown, GM_DAY0, PRISM_DAY0, prismLast, prismCredit, prismNote, epochDay, dailyWeather, fao56 };
+    resolvePeriod, limits, isoDay, parseDay, dayLabel, today, span, setZone, zoneHours, zoneLabel, gridmetLast, gridmetBox, gridmetFromFiles: () => gmServer() === "files", gridmetServer: gmServer, gridmetRead: gmRead, GM_DAY0, PRISM_DAY0, prismLast, prismCredit, prismNote, epochDay, dailyWeather, fao56 };
 })();
 

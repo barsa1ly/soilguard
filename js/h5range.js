@@ -9,11 +9,13 @@
    deflate, shuffle and Fletcher-32 filters; compact, contiguous and chunked layouts, chunks indexed by a v1 B-tree or
    by layout 4's single-chunk and implicit indexes. Anything else stops with an Error that names it.
    Bytes: metadata through a cache of 64 KB blocks, missing neighbours fetched in one request; chunk-index nodes and
-   chunks as exact ranges; at most 4 requests in flight. The server rewrites these files every few days, so every answer
-   must carry the first one's Last-Modified: a read that meets a new version drops that file's cache and runs again once
-   (withFile). Parsed metadata (headers, attributes, B-tree nodes) is kept per URL and Last-Modified for the visit. */
+   chunks as exact ranges; at most 6 requests in flight to a server (util.js's own limit), the files of the tab on show
+   ahead of a background analysis's (o.pri). The server rewrites these files every few days, so every answer must carry
+   the first one's Last-Modified: a read that meets a new version drops that file's cache and runs again once
+   (withFile). Parsed metadata (headers, attributes, B-tree nodes) is kept per URL and Last-Modified for the visit, and
+   with o.keep the layout (datasets and chunk-index nodes) for later visits too. */
 WG.h5range = (function () {
-  const BLOCK = 65536, FLY = 4, HEAD_MS = 20000, KEEP = 16e6, UNDEF = -1;
+  const BLOCK = 65536, FLY = 6, HEAD_MS = 20000, KEEP = 16e6, UNDEF = -1;
   const files = new Map(); // url -> the state of the version being read
   const stats = { requests: 0, bytes: 0 };
   const td = new TextDecoder();
@@ -26,15 +28,21 @@ WG.h5range = (function () {
   const short32 = x => { if (!Number.isFinite(x)) return x; for (let p = 1; p < 10; p++) { const y = +x.toPrecision(p); if (Math.fround(y) === x) return y; } return x; };
 
   /* ---------- requests ---------- */
-  let fly = 0;
-  const queue = [];
-  const slot = sig => new Promise((res, rej) => {
-    if (fly < FLY) { fly++; res(); return; }
-    const q = { res };
-    queue.push(q);
-    if (sig) sig.addEventListener("abort", () => { const k = queue.indexOf(q); if (k >= 0) { queue.splice(k, 1); rej(stopped(sig)); } }, { once: true });
+  /* a line a server: FLY in flight, the rest waiting by priority (a read's o.pri for its chunks and index nodes, the
+     file's highest for its other metadata), first come first served within one. A Drought tab's read then does not
+     wait behind the 40 yearly weather files the wind analysis reads from the same server at the same time (12 Nov
+     2026: its whole series came some 11 s later for that alone), and its This-week values do not wait behind its
+     whole series. */
+  const lines = new Map(); // host -> { fly, queue }
+  const slot = (S, sig, pri = S.pri) => new Promise((res, rej) => {
+    let L = lines.get(S.host);
+    if (!L) lines.set(S.host, (L = { fly: 0, queue: [] }));
+    if (L.fly < FLY) { L.fly++; res(); return; }
+    const q = { res, pri }, at = L.queue.findIndex(x => x.pri < q.pri);
+    L.queue.splice(at < 0 ? L.queue.length : at, 0, q);
+    if (sig) sig.addEventListener("abort", () => { const k = L.queue.indexOf(q); if (k >= 0) { L.queue.splice(k, 1); rej(stopped(sig)); } }, { once: true });
   });
-  const release = () => { const q = queue.shift(); if (q) q.res(); else fly--; }; // a waiting request takes the slot over
+  const release = S => { const L = lines.get(S.host), q = L.queue.shift(); if (q) q.res(); else L.fly--; }; // a waiting request takes the slot over
   function staleErr(S, lm) {
     S.dead = true;
     if (files.get(S.url) === S) files.delete(S.url);
@@ -47,9 +55,9 @@ WG.h5range = (function () {
      file (6 GB and more here), so it is stopped at once, never downloaded. Sent through util.js's line for the server
      (shared with the app's other requests to it) and asked again when the server is busy; HEAD_MS counts from when it
      is sent, not while it waits in either line. */
-  async function get(S, a, n, sig, short) {
+  async function get(S, a, n, sig, short, pri) {
     if (S.dead) throw staleErr(S);
-    await slot(sig);
+    await slot(S, sig, pri);
     const ctrl = new AbortController(), late = () => ctrl.abort(new Error(`${S.host} did not answer in time`)), stop = () => ctrl.abort(stopped(sig));
     let t = 0;
     if (sig) sig.addEventListener("abort", stop, { once: true });
@@ -72,7 +80,7 @@ WG.h5range = (function () {
     } finally {
       clearTimeout(t);
       if (sig) sig.removeEventListener("abort", stop);
-      release();
+      release(S);
     }
   }
 
@@ -103,14 +111,15 @@ WG.h5range = (function () {
     if (u.length < off + n) fail(`read past the end of the file at ${a + n}`);
     return u.subarray(off, off + n);
   }
-  // an exact range, for chunk-index nodes deep in the file among the chunks, where a 64 KB block would be mostly chunk data
-  function exact(S, a, n) {
+  // an exact range, for chunk-index nodes deep in the file among the chunks, where a 64 KB block would be mostly chunk data;
+  // pri: the priority of the read that first asks for it
+  function exact(S, a, n, pri) {
     n = Math.min(n, S.eof - a);
     for (const e of S.ext) if (a >= e.a && a + n <= e.a + e.n) return e.p.then(u => u.subarray(a - e.a, a - e.a + n));
     let cached = true;
     for (let k = Math.floor(a / BLOCK); k <= Math.floor((a + n - 1) / BLOCK); k++) if (!S.blocks.has(k)) cached = false;
     if (cached) return bytes(S, a, n);
-    const e = { a, n, p: get(S, a, n, null) };
+    const e = { a, n, p: get(S, a, n, null, false, pri) };
     S.ext.push(e);
     e.p.catch(() => { S.ext = S.ext.filter(x => x !== e); });
     return e.p;
@@ -121,13 +130,13 @@ WG.h5range = (function () {
      whole series */
   const kept = [];
   let keptBytes = 0;
-  function chunkBytes(S, a, n, sig) {
+  function chunkBytes(S, a, n, sig, pri) {
     let c = S.chunks.get(a), cached = true;
     for (let k = Math.floor(a / BLOCK); k <= Math.floor((a + n - 1) / BLOCK); k++) if (!S.blocks.has(k)) cached = false;
     if (!c && cached) return bytes(S, a, n); // a small chunk among the metadata already read (a coordinate's)
     if (!c) {
       c = { users: 0, ctrl: new AbortController(), n };
-      c.p = get(S, a, n, c.ctrl.signal);
+      c.p = get(S, a, n, c.ctrl.signal, false, pri);
       S.chunks.set(a, c);
       c.p.then(() => {
         kept.push([S, a, c]);
@@ -149,10 +158,41 @@ WG.h5range = (function () {
     sig.addEventListener("abort", off, { once: true });
     p.then(v => { sig.removeEventListener("abort", off); res(v); }, e => { sig.removeEventListener("abort", off); rej(e); });
   }));
+  // a parsed dataset (d:path) or chunk-index node (t + address) is noted for the layout kept between visits
   const memo = (S, k, f) => {
-    if (!S.memo.has(k)) { const p = f(); S.memo.set(k, p); p.catch(() => { if (S.memo.get(k) === p) S.memo.delete(k); }); }
+    if (!S.memo.has(k)) { const p = f(); S.memo.set(k, p); p.then(v => { if (S.keep && (k[0] === "t" || k.startsWith("d:"))) { S.val.set(k, v); S.dirty = true; } }, () => { if (S.memo.get(k) === p) S.memo.delete(k); }); }
     return S.memo.get(k);
   };
+
+  /* ---------- the layout kept between visits ----------
+     A file read with o.keep (gridMET's) keeps what was worked out of its metadata, the superblock's sizes, the datasets
+     and the chunk-index nodes read, in the app's box in this browser (util.js stash) with the file's Last-Modified. A
+     later visit then asks for the chunks at once, not first for the superblock, the headers and the index nodes, which
+     are 4 to 6 requests one after another (a second each when the browser's own copy has to be checked). It is trusted
+     only as far as the first answer: every byte range must carry that Last-Modified, so a file rewritten since is
+     caught at its first request, and the read runs again from the file (withFile), whose new layout is then kept. */
+  const LAYOUT = url => `${url}?fg-h5-layout`, LAYOUT_V = 1; // LAYOUT_V: raised when what is kept changes shape, so an older copy is not used
+  const restore = S => S.restoring || (S.restoring = WG.util.stashGet(LAYOUT(S.url)).then(x => {
+    if (!x || x.v !== LAYOUT_V || !x.lm || !x.sb || !Array.isArray(x.memo) || S.lm !== null || S.dead || S.fresh) return; // a read under way, or one after a rewrite, keeps its own
+    Object.assign(S, x.sb);
+    S.lm = x.lm;
+    S.memo.set("sb", Promise.resolve());
+    for (const [k, v] of x.memo) { S.memo.set(k, Promise.resolve(v)); S.val.set(k, v); }
+    // its first byte is asked for at once, and F.dataset waits for it: a caller that only looks at the layout (a file's
+    // last day) must not take an old version's; F.read's own requests check it as they go
+    S.check = get(S, 0, 1, null, true);
+    S.check.catch(() => {});
+  }));
+  function save(S) {
+    if (!S.keep || !S.dirty || S.saving || S.dead) return;
+    S.saving = setTimeout(() => { // once a few reads have added to it, not after each
+      S.saving = 0;
+      if (S.dead || !S.lm || S.root === UNDEF) return;
+      S.dirty = false;
+      const memo = [...S.val].filter(([k, v]) => k[0] === "t" || (v.layout && v.layout.cls !== 0)); // a compact dataset holds its bytes: not kept
+      WG.util.stashPut(LAYOUT(S.url), { v: LAYOUT_V, lm: S.lm, sb:{ O: S.O, L: S.L, base: S.base, eof: S.eof, root: S.root }, memo });
+    }, 2000);
+  }
 
   /* ---------- a little-endian cursor; O and L are the file's sizes of offsets and lengths ---------- */
   function Cur(u, S) { this.u = u; this.dv = new DataView(u.buffer, u.byteOffset, u.byteLength); this.p = 0; this.O = S ? S.O : 8; this.L = S ? S.L : 8; this.base = S ? S.base : 0; }
@@ -518,16 +558,16 @@ WG.h5range = (function () {
   /* ---------- chunks ---------- */
   /* the stored chunks among want (chunk offsets in elements) by the v1 B-tree: child k of a node holds the chunks from
      key k up to, not including, key k + 1, so only the branches that can hold a wanted chunk are read */
-  async function btree1(S, ds, want) {
+  async function btree1(S, ds, want, pri) {
     const r = ds.rank, ks = 8 + 8 * (r + 1), hd = 8 + 2 * S.O, found = new Map();
     const cmp = (x, y) => { for (let d = 0; d < r; d++) if (x[d] !== y[d]) return x[d] - y[d]; return 0; };
     const node = a => memo(S, `t${a}`, async () => {
-      let u = await exact(S, a, hd + 64 * (ks + S.O) + ks); // room for 64 entries (HDF5's default K of 32); more are read when present
+      let u = await exact(S, a, hd + 64 * (ks + S.O) + ks, pri); // room for 64 entries (HDF5's default K of 32); more are read when present
       const n = new Cur(u, S);
       n.sig("TREE");
       if (n.u8() !== 1) fail("chunk B-tree node type");
       const level = n.u8(), e = n.u16(), need = hd + e * (ks + S.O) + ks;
-      if (u.length < need) u = await exact(S, a, need);
+      if (u.length < need) u = await exact(S, a, need, pri);
       const c = new Cur(u, S), keys = [], kids = [];
       c.p = hd;
       for (let k = 0; k <= e; k++) {
@@ -541,7 +581,7 @@ WG.h5range = (function () {
     });
     const walk = async (a, ts) => {
       const N = await node(a);
-      await Promise.all(N.kids.map(async (ka, k) => {
+      await Promise.all(N.kids.map((ka, k) => [ka, k]).reverse().map(async ([ka, k]) => { // newest first, as the chunks
         const lo = N.keys[k].off, hi = N.keys[k + 1].off;
         if (!N.level) { const t = ts.find(x => !cmp(x, lo)); if (t) found.set(t.join(), { addr: ka, size: N.keys[k].size, mask: N.keys[k].mask }); return; }
         const sub = ts.filter(x => cmp(x, lo) >= 0 && cmp(x, hi) < 0);
@@ -551,9 +591,9 @@ WG.h5range = (function () {
     if (ds.layout.addr !== UNDEF) await walk(ds.layout.addr, want);
     return found;
   }
-  async function chunksAt(S, ds, want) {
+  async function chunksAt(S, ds, want, pri) {
     const L = ds.layout, csize = prod(ds.chunk) * ds.type.size, found = new Map();
-    if (L.index === "btree1") return btree1(S, ds, want);
+    if (L.index === "btree1") return btree1(S, ds, want, pri);
     if (L.index === "single") { if (L.addr !== UNDEF) found.set(ds.chunk.map(() => 0).join(), { addr: L.addr, size: L.fsize || csize, mask: L.fmask || 0 }); return found; }
     if (L.index === "implicit") { // every chunk allocated, unfiltered, in row-major order of chunks
       const nc = ds.shape.map((s, d) => Math.ceil(s / ds.chunk[d])), st = strides(nc);
@@ -585,7 +625,7 @@ WG.h5range = (function () {
   }
 
   /* ---------- reads: the raw values of a hyperslab, row-major, as numbers; never-written chunks are the fill value ---------- */
-  async function read(S, ds, start, count, sig) {
+  async function read(S, ds, start, count, sig, pri) {
     if (!ds.rank) { ds = { ...ds, rank: 1, shape: [1] }; start = [0]; count = [1]; }
     const r = ds.rank, n = prod(count), g = getter(ds.type), size = ds.type.size, L = ds.layout, last = r - 1, os = strides(count);
     if (!g) fail(`${ds.path}: values of type class ${ds.type.cls} and ${size} bytes are not read`);
@@ -622,7 +662,7 @@ WG.h5range = (function () {
         if (d < 0) break;
       }
       await Promise.all(groups.map(async G => {
-        const u = await get(S, L.addr + G.a * size, (G.b - G.a) * size, sig), dv = new DataView(u.buffer, u.byteOffset, u.byteLength);
+        const u = await get(S, L.addr + G.a * size, (G.b - G.a) * size, sig, false, pri), dv = new DataView(u.buffer, u.byteOffset, u.byteLength);
         for (const [e, oi] of G.runs) for (let k = 0; k < count[last]; k++) out[oi + k] = g(dv, (e - G.a + k) * size);
       }));
       return out;
@@ -635,11 +675,12 @@ WG.h5range = (function () {
       while (d >= 0 && ++x[d] > hi[d]) { x[d] = lo[d]; d--; }
       if (d < 0) break;
     }
-    const at = await chunksAt(S, ds, want), csize = prod(cd) * size;
-    await Promise.all(want.map(async o => {
+    const at = await chunksAt(S, ds, want, pri), csize = prod(cd) * size;
+    // asked newest first: a series' last chunk is also what a read of its latest values waits for
+    await Promise.all(want.slice().reverse().map(async o => {
       const c = at.get(o.join());
       if (!c) return;
-      const u = await unfilter(await chunkBytes(S, c.addr, c.size, sig), ds, c.mask);
+      const u = await unfilter(await chunkBytes(S, c.addr, c.size, sig, pri), ds, c.mask);
       if (u.length < csize) fail(`${ds.path}: a chunk of ${u.length} bytes, not ${csize}`);
       copy(u, o, cd);
     }));
@@ -651,7 +692,7 @@ WG.h5range = (function () {
     let S = files.get(url);
     if (!S || S.dead || (fresh && !S.fresh)) {
       S = { url, host: new URL(url, location.href).host, fresh: !!fresh, lm: null, dead: false, eof: Infinity, O: 8, L: 8, base: 0, root: UNDEF,
-        blocks: new Map(), ext: [], memo: new Map(), chunks: new Map(), requests: 0, bytes: 0 };
+        blocks: new Map(), ext: [], memo: new Map(), chunks: new Map(), requests: 0, bytes: 0, pri: 0, keep: false, val: new Map(), dirty: false, saving: 0, restoring: null, check: null };
       files.set(url, S);
     }
     return S;
@@ -659,13 +700,17 @@ WG.h5range = (function () {
   /* fn(F) reads the file at url through F: F.dataset(path) gives { shape, chunk, type, attrs, fill, … } and F.read(ds,
      start, count) the raw values of a hyperslab (a Float64Array, row-major). When the file changes on the server while it
      is read, its cache is dropped and fn runs again once on the new version (bypassing the browser's cache). o.signal
-     stops the chunk fetches. */
+     stops the chunk fetches; o.pri (1, 2 …) puts this read's chunks, and the file's metadata, ahead of the requests of
+     lower priority waiting for the same server; o.keep keeps its layout in this browser for later visits (a file that
+     is rewritten in place, not one a day under a new name). */
   async function withFile(url, fn, o = {}) {
     for (let k = 0; ; k++) {
       const S = state(url, k > 0), sig = o.signal;
+      if (o.pri > S.pri) S.pri = o.pri;
+      if (o.keep) { S.keep = true; if (!k) await restore(S); } // not after a rewrite was met: what is kept is the old version's
       const F = { url, get lastModified() { return S.lm; }, get requests() { return S.requests; }, get bytes() { return S.bytes; },
-        dataset: path => race(dataset(S, path), sig), read: (ds, start, count) => race(read(S, ds, start, count, sig), sig) };
-      try { return await fn(F); }
+        dataset: path => race(S.check ? S.check.then(() => dataset(S, path)) : dataset(S, path), sig), read: (ds, start, count) => race(read(S, ds, start, count, sig, o.pri || 0), sig) };
+      try { const v = await fn(F); save(S); return v; }
       catch (e) { if (!e.stale || k) throw e; console.warn(`${url}: ${e.message}; read again`); }
     }
   }

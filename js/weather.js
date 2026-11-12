@@ -161,8 +161,9 @@ WG.weather = (function () {
      This week: the U.S. Drought Monitor's class at the point (its WMS GetFeatureInfo) and NOAA CPC's drought outlooks.
      Between years: gridMET Drought (University of Idaho) at the 4 km cell, every 5 days since 1980, read over OPeNDAP as
      the app reads gridMET's weather: SPI and SPEI over several windows, and the Palmer Drought Severity Index. When its
-     THREDDS server does not answer, the same NetCDF-4 files are read on the University's file server by byte ranges
-     (js/h5range.js), only the chunks that hold the cell. SPI and SPEI take the U.S. Drought Monitor's classes for them
+     THREDDS server does not answer (js/wind.js keeps which server answered), the same NetCDF-4 files are read on the
+     University's file server by byte ranges (js/h5range.js), only the chunks that hold the cell. The tab says which in a
+     few words; docs/METHODS.md §8 has the rest. SPI and SPEI take the U.S. Drought Monitor's classes for them
      (droughtmonitor.unl.edu, Drought Classification); PDSI has none there, so it is shown as values only. */
   const MET = "https://thredds.northwestknowledge.net/thredds/dodsC/agg_met_", MDATA = "https://www.northwestknowledge.net/metdata/data/", DAY1900 = Date.UTC(1900, 0, 1) / 864e5;
   const DRI = [ // dataset, label, variable on THREDDS, USDM classes apply, variable in the file on the file server
@@ -175,11 +176,12 @@ WG.weather = (function () {
   const DCLASS = [["D4", -2.0, "Exceptional drought", "#730000", [115, 0, 0]], ["D3", -1.6, "Extreme drought", "#e60000", [230, 0, 0]], ["D2", -1.3, "Severe drought", "#ffaa00", [255, 170, 0]],
     ["D1", -0.8, "Moderate drought", "#fcd37f", [255, 211, 127]], ["D0", -0.5, "Abnormally dry", "#ffff00", [255, 255, 0]]];
   const dclass = v => (ok(v) ? DCLASS.find(c => v <= c[1] + 1e-9) || null : null);
-  /* THREDDS: the cell's values and dates in one OPeNDAP request after the variable's .dds and .das (head), which get 8 s
-     to start answering before the file server is read instead. latest: only the last 73 steps (a year), for This week. */
-  const metHead = ds => { const url = `${MET}${ds}_1979_CurrentYear_CONUS.nc`; return Promise.all([WG.util.fetchText(`${url}.dds`, 20000, 8000), WG.util.fetchText(`${url}.das`, 20000, 8000)]); };
-  const metThredds = async (ds, v, j, i, latest, head) => {
-    const url = `${MET}${ds}_1979_CurrentYear_CONUS.nc`, [dds, das] = await (head || metHead(ds));
+  /* THREDDS: the cell's values and dates in one OPeNDAP request after the variable's .dds and .das (head, kept an hour
+     for each index), which get 3 s to start answering before the file server is read instead. latest: only the last 73
+     steps (a year), for This week. */
+  const metHead = ds => fresh(`head:${ds}`, 60, () => { const url = `${MET}${ds}_1979_CurrentYear_CONUS.nc`; return Promise.all([WG.util.fetchText(`${url}.dds`, 20000, 3000), WG.util.fetchText(`${url}.das`, 20000, 3000)]); });
+  const metThredds = async (ds, v, j, i, latest) => {
+    const url = `${MET}${ds}_1979_CurrentYear_CONUS.nc`, [dds, das] = await metHead(ds);
     const N = +((dds.match(/day = (\d+)\]/) || [])[1]);
     if (!(N > 0)) throw new Error(`no time axis in ${ds}`);
     const k0 = das.indexOf(`${v} {`), block = das.slice(k0, das.indexOf("}", k0)), att = (k, d) => { const m = block.match(new RegExp(`${k} (-?[\\d.eE+-]+);`)); return m ? +m[1] : d; };
@@ -195,40 +197,48 @@ WG.weather = (function () {
   /* the file server: the same NetCDF-4 file (6 to 7.5 GB) read in place by byte ranges, only the chunks that hold the
      cell, each 311 five-day steps of a 49 × 116 block: about 0.6 MB for SPI and SPEI, 1.9 MB for PDSI. The whole series
      is all of them (11 or 12 since 1980); latest: only the last, and the one before when the last holds no value here yet.
-     Values as from THREDDS: raw × scale_factor + add_offset, the fill value missing. */
-  const metFiles = (ds, v, j, i, latest) => WG.h5range.withFile(`${MDATA}${ds}.nc`, async F => {
+     Values as from THREDDS: raw × scale_factor + add_offset, the fill value missing. The dates are read with the values,
+     not after them. The tab's reads go ahead of the wind analysis's on the same server, This week's ahead of the series
+     (o.pri), and the files' layout is kept for later visits (o.keep). signal: stops the chunks' download. */
+  const metFiles = (ds, v, j, i, latest, signal) => WG.h5range.withFile(`${MDATA}${ds}.nc`, async F => {
     const [day, x] = await Promise.all([F.dataset("day"), F.dataset(v)]), N = x.shape[0], A = x.attrs, T = x.chunk ? x.chunk[0] : N;
     if (x.rank !== 3 || x.shape[1] !== 585 || x.shape[2] !== 1386 || day.shape[0] !== N) throw new Error(`${ds}.nc is not laid out as gridMET's grid`);
     const att = (k, d) => (Number.isFinite(A[k]) ? A[k] : d), scale = att("scale_factor", 1), add = att("add_offset", 0), fill = att("_FillValue", 32767);
-    let a = latest ? Math.floor((N - 1) / T) * T : 0, raw;
-    for (;;) {
-      raw = await F.read(x, [a, j, i], [N - a, 1, 1]);
-      if (!latest || !a || raw.some(r => r !== fill)) break;
-      a = Math.max(0, a - T);
+    for (let a = latest ? Math.floor((N - 1) / T) * T : 0; ; a = Math.max(0, a - T)) {
+      const [raw, d] = await Promise.all([F.read(x, [a, j, i], [N - a, 1, 1]), F.read(day, [a], [N - a])]);
+      if (!latest || !a || raw.some(r => r !== fill)) return { days: Array.from(d, t => Math.round(t) + DAY1900), vals: Array.from(raw, r => (r === fill ? null : +(r * scale + add).toFixed(2))), src: "files" };
     }
-    const d = await F.read(day, [a], [N - a]);
-    return { days: Array.from(d, t => Math.round(t) + DAY1900), vals: Array.from(raw, r => (r === fill ? null : +(r * scale + add).toFixed(2))), src: "files" };
-  });
-  /* THREDDS first, as for gridMET's weather. The visit's first read asks it alone and the others wait for its answer, so
-     a server that is down is asked once; once THREDDS has failed in this visit, every read goes to the file server. */
-  let metUp = null, metDown = false;
-  const metFailed = e => { if (!metDown) console.warn(`gridMET Drought: THREDDS did not answer (${e.message || e}); reading the file server instead`); metDown = true; metUp = Promise.resolve(false); return false; };
+  }, { pri: latest ? 3 : 2, keep: true, signal });
+  /* THREDDS or the file server, as gridMET's weather is read (js/wind.js: the server that answered last is kept in this
+     browser, THREDDS is checked in 2.5 s at most, and a read that fails goes to the other at once). While THREDDS is
+     being checked the file server is read already: taken if it is in first, stopped if THREDDS answers first.
+     A cell's answer is kept in this browser for 6 hours (util.js stash): gridMET Drought adds a step every 5 days, so a
+     visit within hours of another at the same cell asks no server at all for it. */
+  const CELL_MS = 6 * 36e5;
   const metRead = async (key, latest, onFiles) => {
     const [ds, , v, , fv] = DRI.find(x => x[0] === key), { lat, lon } = WG.state.site;
     const j = Math.round((49.4 - lat) * 24), i = Math.round((lon + 124.7666666333) * 24); // gridMET's 1/24° grid from 49.4 N, 124.767 W
     if (j < 0 || j > 584 || i < 0 || i > 1385) throw new Error("this point is outside gridMET (contiguous US only)");
-    const head = metUp ? null : metHead(ds);
-    if (head) metUp = head.then(() => true, metFailed);
-    if (await metUp) {
-      try { return await metThredds(ds, v, j, i, latest, head); }
-      catch (e) { metFailed(e); }
-    }
-    if (onFiles) onFiles();
-    return metFiles(ds, fv, j, i, latest);
+    const ck = `${MDATA}${ds}.nc?fg-cell=${j},${i}${latest ? ",latest" : ""}`, kept = await WG.util.stashGet(ck, CELL_MS);
+    if (kept && Array.isArray(kept.days) && kept.days.length && Array.isArray(kept.vals) && kept.vals.length === kept.days.length) return kept;
+    let early = null, took = false;
+    if (Wd.gridmetServer() === null) { const stop = new AbortController(); early = { stop, p: metFiles(ds, fv, j, i, latest, stop.signal) }; early.p.catch(() => {}); }
+    const read = Wd.gridmetRead(thredds => {
+      if (thredds) { if (took) return null; if (early) { early.stop.abort(); early = null; } return metThredds(ds, v, j, i, latest); }
+      if (onFiles) onFiles();
+      const p = early ? early.p : metFiles(ds, fv, j, i, latest);
+      early = null;
+      return p;
+    });
+    // a file read done before THREDDS's check has answered is taken at once: THREDDS cannot be the faster then
+    const r = await (early ? Promise.race([read, early.p.then(x => { took = true; return x; }, () => new Promise(() => {}))]) : read);
+    WG.util.stashPut(ck, r);
+    return r;
   };
   const metSeries = (key, onFiles) => once(`dri:${key}`, () => metRead(key, false, onFiles));
-  // This week needs only the latest values: the whole series when it is read or being read, else only the series' end
-  const metLatest = key => (cache.has(`${WG.state.token}:dri:${key}`) ? metSeries(key) : once(`driL:${key}`, () => metRead(key, true)));
+  /* This week needs only the latest values, read on their own so that a row does not wait for a whole series: from the
+     file server their chunk is the series' last, fetched once for both (js/h5range.js) */
+  const metLatest = key => once(`driL:${key}`, () => metRead(key, true));
   /* The Drought Monitor's class at a point (-1 none, 0 to 4 D0 to D4) on this week's map, or on the map of week d (its
      date, a Tuesday): MapServer's GetFeatureInfo on a box of ±0.0001°, 3 × 3 pixels of about 7 m. A wider box lets the
      query's tolerance reach the class next door, and the worse of the two was then taken (±0.01° did so in about one
@@ -372,8 +382,10 @@ WG.weather = (function () {
   const usdmMapUrl = (d, b, width, height) => { const w = ymdStr(d); return `${USDM(`usdm_${w}_wms`)}&SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=usdm${w}&STYLES=&CRS=EPSG:4326&BBOX=${b[1]},${b[0]},${b[3]},${b[2]}&WIDTH=${width}&HEIGHT=${height}&FORMAT=image/png&TRANSPARENT=true`; };
   const droughtOutlook = (lat, lon) => Promise.all([1, 4].map(l => outlook("cpc_drought_outlk", l, lat, lon).catch(() => undefined)));
   let driKey = "spei90d", driYears = null, driFrom = null, driTo = null, driVer = 0;
-  // Between years, while waiting: from the file server the whole series is every chunk of the file at the cell
-  const yearsWait = () => wait(metDown ? `gridMET's drought index since 1980 from its file server, as its THREDDS server did not answer: the 11 or 12 chunks of the file that hold this cell (311 five-day steps each), about ${driKey === "pdsi" ? "20" : "6 to 7"} MB` : "gridMET's drought index since 1980");
+  // Between years, while waiting (the file server sends some 7 MB for a series, 20 MB for PDSI's)
+  const yearsWait = () => wait(`gridMET's drought index since 1980${Wd.gridmetServer() === "files" ? `, about ${driKey === "pdsi" ? "20" : "7"} MB from its file server` : ""}`);
+  // the server a part was read from, in a few words
+  const viaText = srcs => (srcs.has("files") && srcs.has("thredds") ? "via THREDDS and its file server" : srcs.has("files") ? "via its file server" : "via THREDDS");
 
   /* the tab in two parts, each drawn as its sources answer: this week (the Drought Monitor, the latest indices one by
      one, CPC's outlooks) and between years (the chosen index's whole series, from and to the chosen years) */
@@ -383,13 +395,14 @@ WG.weather = (function () {
         <div class="usdm-now" id="drNow"><span class="skeleton" style="width:50%"></span></div>
         <div class="wx-kv" style="margin-top:10px" id="drLatest">${["spi30d", "spei90d", "spei1y", "pdsi"].map(k => `<div id="drL_${k}"><span>${esc(DRI.find(x => x[0] === k)[1])}</span><b>…</b><span></span></div>`).join("")}</div>
         <div class="wx-kv" style="margin-top:8px" id="drOutl"><div><span>Drought outlook, this month</span><b style="font-size:14px">…</b></div><div><span>Drought outlook, this season</span><b style="font-size:14px">…</b></div></div>
-        <p class="fine">The Drought Monitor's class here this week; gridMET's latest indices at the 4 km cell<span id="drLSrc"></span> (negative is drier than usual for the time of year); and NOAA CPC's drought outlooks. ${esc(USDM_CREDIT)}</p></div>
+        <p class="fine">Indices below 0 are drier than usual for the time of year. Sources: U.S. Drought Monitor; gridMET Drought (University of Idaho, 4 km)<span id="drLSrc"></span>; NOAA CPC outlooks. ${esc(USDM_CREDIT)}</p></div>
       <div id="drUsdm"></div>
       <div id="drYears">${yearsWait()}</div>`;
     const at = id => (live() ? el.querySelector(`#${id}`) : null);
-    // the chosen index's whole series first, so that its This-week row waits on it rather than reading the file's end again
+    // each row and part drawn as its own answer comes; This week's values asked first (js/h5range.js also puts them first)
+    const latest = ["spi30d", "spei90d", "spei1y", "pdsi"].map(k => [k, metLatest(k)]);
     const series = metSeries(driKey, () => { const x = at("drYears"); if (x && x.querySelector(".skeleton")) x.innerHTML = yearsWait(); });
-    const srcs = new Set(), srcNote = () => { const x = at("drLSrc"); if (x) x.textContent = !srcs.has("files") ? ", read through its THREDDS server" : srcs.has("thredds") ? ", read through its THREDDS server or, where that did not answer, from its file server" : ", read from its file server as its THREDDS server did not answer"; };
+    const srcs = new Set(), srcNote = () => { const x = at("drLSrc"); if (x) x.textContent = `, ${viaText(srcs)}`; };
     const latestRow = ([k, v, d]) => { const c = DRI.find(x => x[0] === k), cl = c[3] ? dclass(v) : null; return `<span>${esc(c[1])}</span><b>${ok(v) ? fmt(v, 2) : "—"}</b><span>${cl ? `${cl[0]} ${cl[2].toLowerCase()}` : c[3] && ok(v) ? "no drought class" : ""}${d ? ` · ${Wd.dayLabel(d)}` : ""}</span>`; };
     const outl = a => (a === undefined ? "could not be read" : !a ? "none issued here" : `${String(a.outlook || "—").replace(/_/g, " ")}${a.target ? ` (${a.target})` : ""}`); // CPC writes No_Drought
     const jobs = [
@@ -397,7 +410,7 @@ WG.weather = (function () {
       usdmHere(lat, lon).then(dm => { const x = at("drNow"), c = dm < 0 ? null : DCLASS.find(c => c[0] === `D${dm}`); if (x) x.innerHTML = c ? `<i style="background:${c[3]}"></i><b>${c[0]} · ${esc(c[2])}</b>` : `<i style="background:#fff"></i><b>No drought class: normal or wet</b>`; },
         () => { const x = at("drNow"); if (x) x.innerHTML = "<span>The Drought Monitor could not be read.</span>"; }),
       droughtOutlook(lat, lon).then(([om, os]) => { const x = at("drOutl"); if (x) x.innerHTML = `<div><span>Drought outlook, this month</span><b style="font-size:14px">${esc(outl(om))}</b></div><div><span>Drought outlook, this season</span><b style="font-size:14px">${esc(outl(os))}</b></div>`; }),
-      ...["spi30d", "spei90d", "spei1y", "pdsi"].map(k => metLatest(k).then(x => { let n = x.vals.length - 1; while (n > 0 && !ok(x.vals[n])) n--; srcs.add(x.src); srcNote(); return [k, x.vals[n], x.days[n]]; }).catch(() => [k, null, null])
+      ...latest.map(([k, p]) => p.then(x => { let n = x.vals.length - 1; while (n > 0 && !ok(x.vals[n])) n--; srcs.add(x.src); srcNote(); return [k, x.vals[n], x.days[n]]; }).catch(() => [k, null, null])
         .then(r => { const x = at(`drL_${k}`); if (x) x.innerHTML = latestRow(r); })),
       series.then(S => { if (live()) drawYears(S); }, e => { const x = at("drYears"); if (x) x.innerHTML = failed("gridMET's drought index", e); }),
       usdmHistory(),
@@ -478,7 +491,7 @@ WG.weather = (function () {
         ${card("wxDriHist", `${label}, ${driFrom}–${driTo}`, 220, { file: `drought_${driKey}_history`, x: "Date", sub, foot: (classed ? DCLASS.slice().reverse().map(c => `<span style="display:inline-block;width:10px;height:10px;background:${c[3]};border:1px solid #0002;margin-right:3px"></span>${c[0]} ≤ ${c[1]}`).join(" &nbsp; ") + " &nbsp; Blue: wetter than usual." : "PDSI below 0 is drier than usual (orange), above 0 wetter (blue); the Drought Monitor's classification gives no PDSI ranges, so none are drawn.") + " Click a date to see that week's Drought Monitor map (2000 on)." })}
         ${card("wxDriYears", `${label}, year against year`, 230, { file: `drought_${driKey}_years`, x: "Day of the year", sub, foot: "Click a line to see that week's Drought Monitor map (2000 on)." })}
         ${card("wxDriShare", classed ? `Share of each year in drought (${label})` : `Mean ${label} by year`, 220, { file: `drought_${driKey}_by_year`, x: "Year", sub, foot: classed ? `Each 5-day value in D1 to D4 by the Drought Monitor's SPI and SPEI ranges, as a share of the year; years with 70 or more values${full.length ? ` (${full[0]}–${full[full.length - 1]})` : ""}.` : "" })}
-        <p class="fine">gridMET Drought, University of Idaho (Abatzoglou 2013, doi:10.1002/joc.3413), at the 4 km cell, every 5 days since 1980, ${all.src === "files" ? "read from its NetCDF files on the University's file server (only the chunks that hold this cell), as its THREDDS server did not answer" : "read through its THREDDS server"}; its latest values are provisional. SPI: Standardized Precipitation Index; SPEI: Standardized Precipitation-Evapotranspiration Index, both over the window named. Classes: U.S. Drought Monitor, Drought Classification (droughtmonitor.unl.edu).</p>`;
+        <p class="fine">Source: gridMET Drought (University of Idaho; Abatzoglou 2013, doi:10.1002/joc.3413), 4 km, every 5 days since 1980, ${viaText(new Set([all.src]))}; the latest values are provisional. SPI: Standardized Precipitation Index; SPEI: Standardized Precipitation-Evapotranspiration Index, over the window named. Classes: U.S. Drought Monitor (droughtmonitor.unl.edu).</p>`;
       Ch.draw("wxDriHist", history);
       Ch.draw("wxDriYears", compare);
       Ch.draw("wxDriShare", share);

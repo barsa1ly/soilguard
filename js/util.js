@@ -77,6 +77,23 @@ WG.util = (function () {
     try { const box = await keepOpen(); for (const k of await box.keys()) { const r = await box.match(k); if (!r || !(Date.now() - +r.headers.get("x-fg-kept") < KEEP_MS)) await box.delete(k); } }
     catch (e) { /* storage off */ }
   }, 15000);
+  /* a small JSON object the app works out itself (a file's HDF5 layout, a cell's drought series), kept in the same box
+     under a key of its own (a URL with a query of the app's: it is never fetched) and read back while younger than ms;
+     null when missing, older or unreadable. NaN and the infinities are kept as strings, as JSON has none. */
+  const revive = (k, v) => (v === "__NaN" ? NaN : v === "__Infinity" ? Infinity : v === "__-Infinity" ? -Infinity : v);
+  async function stashGet(key, ms = KEEP_MS) {
+    if (!keepOn) return null;
+    try { const r = await (await keepOpen()).match(key); return r && Date.now() - +r.headers.get("x-fg-kept") < ms ? JSON.parse(await r.text(), revive) : null; } catch (e) { return null; }
+  }
+  function stashPut(key, obj) {
+    if (!keepOn) return;
+    (async () => {
+      try {
+        const s = JSON.stringify(obj, (k, v) => (typeof v === "number" && !Number.isFinite(v) ? `__${v}` : v)); // at once, before the caller can change obj
+        await (await keepOpen()).put(key, new Response(s, { headers: { "Content-Type": "application/json", "x-fg-kept": String(Date.now()) } }));
+      } catch (e) { /* not JSON (a BigInt, a cycle), storage full or off: worked out again next time */ }
+    })();
+  }
   const keptInfo = async () => { try { const box = await keepOpen(); return (await box.keys()).length; } catch (e) { return 0; } };
   const keepClear = () => (keepOn ? caches.delete(KEEP_BOX).then(() => { keepBox = null; }) : Promise.resolve());
 
@@ -308,6 +325,6 @@ WG.util = (function () {
     },
   };
 
-  return { MONTHS, MONTHS_LONG, COMPASS, $, $$, esc, num, fmt, clamp, msToMph, compass, fetchJSON, fetchText, fetchBlob, fetchQ, keptInfo, keepClear, pool, debounce,
+  return { MONTHS, MONTHS_LONG, COMPASS, $, $$, esc, num, fmt, clamp, msToMph, compass, fetchJSON, fetchText, fetchBlob, fetchQ, keptInfo, keepClear, stashGet, stashPut, pool, debounce,
     parseCoords, toast, download, linreg, cache };
 })();
