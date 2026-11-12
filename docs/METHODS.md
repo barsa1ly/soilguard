@@ -397,7 +397,25 @@ The data sheet is the panel's **DOWNLOAD data for models** tab, marked with a do
 The map shows one theme at a time, chosen on the bar under the search box or in the layer sheet: **Wind erosion**, **Soil maps** (§11; with basins, §12, and soil moisture, §13) or **Drought**, in that order. A theme puts its overlay on the map (one at a time, the last one chosen) and gives the panel its tabs: Wind erosion has Overview, Wind, Soil and Practices; Drought has Drought; Soil maps has Overview, Soil, Basin and Soil moisture (§11–13, §4). DOWNLOAD data for models is in all of them. A link to another theme's tab (Wind erosion › Soil to Soil maps › Soil) switches the theme too. A tab row wider than the panel scrolls, and the open tab is scrolled clear of DOWNLOAD; on a phone the Soil maps theme's tabs read Overview, Maps, Profile. The theme is kept in the link (`&map=drought`, `soilmaps`), so a shared link opens on the same theme; a link naming a theme this app does not have opens on Wind erosion. Code: `js/weather.js` (themes, live layers, the Drought tab) and `js/timemap.js` (the Drought Monitor on a past week); the Methods sheet's *Drought* section lists the same.
 
 **Live overlays.** Each is a WMS from the agency that makes it, shown as the producer draws it with the producer's own legend (GetLegendGraphic; `sld_version=1.1.0` is sent because the Drought Monitor's MapServer needs it). Nothing in them is recomputed. All were checked on 9 November 2026 by requesting tiles and legends from a page.
-- *Drought:* the U.S. Drought Monitor from the National Drought Mitigation Center's MapServer (`https://ndmcgeodata.unl.edu/cgi-bin/mapserv.exe?map=/ms4w/apps/usdm/map/usdm_current_wms.map`, layer `usdm_current`); the same week a year and five years before from `usdm_YYYYMMDD_wms.map` (layer `usdmYYYYMMDD`, the Tuesday the map is valid for: this week's date, read from the WMS capabilities' title, minus 52 or 261 weeks). The legend note gives the map's date and the credit the Drought Monitor's terms ask for. NOAA CPC's monthly and seasonal drought outlooks: `…/vector/services/outlooks/cpc_drought_outlk/MapServer/WMSServer`, layers 5 and 2.
+- *Drought:* the U.S. Drought Monitor from the National Drought Mitigation Center's MapServer (`https://ndmcgeodata.unl.edu/cgi-bin/mapserv.exe?map=/ms4w/apps/usdm/map/usdm_current_wms.map`, layer `usdm_current`); the same week a year and five years before from `usdm_YYYYMMDD_wms.map` (layer `usdmYYYYMMDD`, the Tuesday the map is valid for: this week's date, read from the WMS capabilities' title, minus 52 or 261 weeks). The legend's title gives the map's date (below, *Dates in the legend*), and its note the credit the Drought Monitor's terms ask for. NOAA CPC's monthly and seasonal drought outlooks: `…/vector/services/outlooks/cpc_drought_outlk/MapServer/WMSServer`, layers 5 and 2.
+
+**Dates in the legend.** A live overlay of this week, the latest day or this hour writes the date or time it shows in brackets after its legend's title. A title that already ends in brackets takes the date inside them: "Soil moisture, 0–5 cm (SMAP L4, 8 Nov 2026)". So a map that is saved, printed or copied from the screen still says when it was. Code: each layer's `dateOf` in `js/weather.js` and `js/soilmoisture.js`, written by `legend()`.
+- *How it is read:* from the producer's own service, in one small request. The answer is kept for about as long as the source takes to update: 30 minutes for the National Water Model, an hour for the NIDIS percentiles, 6 hours for the drought outlooks, and the visit for the Drought Monitor's week. Drawing the legend again therefore asks nothing twice. The National Water Model, which updates while it is shown, reads its date again every 30 minutes, as it does its pictures.
+- *How it is written:* a time is on the viewer's own clock, with its zone ("12 Nov 2026, 2 pm CST"). A day is the date as the producer gives it ("10 Nov 2026").
+- *If it fails:* a date that cannot be read leaves the title without it. The map itself is not affected, and the next drawing of the legend asks again.
+
+The sources, layer by layer:
+- *Drought Monitor:*
+  - This week: the Tuesday the map is valid for, from the WMS capabilities' title (as above). A year and five years ago take 52 and 261 weeks off it.
+  - A past week: the week chosen on the bar.
+  - The note adds that the map comes out two days after that Tuesday.
+- *Drought outlooks:* "to <day>, issued <day>", from `fcst_date` (the issue date, M/D/YYYY) and `target`. They are read from REST layers 1 (monthly) and 4 (seasonal) of `https://mapservices.weather.noaa.gov/vector/rest/services/outlooks/cpc_drought_outlk/MapServer`, the layers behind WMS layers 5 and 2; the REST and WMS numbers differ.
+  - The seasonal target is a month and day with no year ("January 31"). It takes the issue year, or the next year when its month comes before the issue month.
+  - A target in another form (the monthly outlook's month) is written as given.
+- *Soil moisture maps (§13):*
+  - SMAP L4: the day chosen under the legend, or else the latest day GIBS lists (DescribeDomains). The day picker under the title shows the same day as `YYYY-MM-DD`, labelled with its 12:00 UTC hour, so the day appears twice in two forms.
+  - National Water Model: `idp_validtime` of layer 2 of `https://mapservices.weather.noaa.gov/raster/rest/services/obs/NWM_Land_Analysis/MapServer`.
+  - SPoRT-LIS and GRACE-DA: the `date` (YYYYMMDD) in each product's NIDIS `info.json`.
 
 **A past week (map).** The Drought theme has a layer *a past week*; a bar on the map chooses the week, steps back and forward, and plays the weeks one after another (one request at a time, each map shown for about 1.2 s once drawn). Code: `js/timemap.js`.
 - *Drought Monitor:* any week since 4 January 2000 (`usdm_YYYYMMDD_wms.map`, layer `usdmYYYYMMDD`, the Tuesday the map is valid for). A chosen year and month show the month's last week; a date shows the week on or before it: d − ((d − 4 Jan 2000) mod 7). Clicking the Drought tab's history or year-against-year chart shows that week.
@@ -735,6 +753,51 @@ The charts are inline SVG; hovering over a day lists each line's value.
 Readings are always read live.
 
 **Credits.** NASA GMAO SMAP L4 through NASA GIBS (NASA open data); USDA NASS Crop-CASMA (George Mason University); NOAA Office of Water Prediction National Water Model 3.0 (NOAA map services; NOAA Open Data Dissemination on AWS); NASA SPoRT-LIS and NASA GRACE-DA (NASA GSFC, NDMC) through NOAA NIDIS drought.gov; ERA5-Land (Copernicus C3S) and ECMWF IFS through Open-Meteo (CC BY 4.0); USDA NRCS Air and Water Database (SCAN, SNOTEL); NOAA NCEI USCRN. All public domain except where a license is named.
+
+## 14. The map as an image, and the Plain base
+
+**Plain base.** "Plain (no base map)", the last base in the layer sheet, asks for no tiles. It only marks the map (`plain-base`), and the map's background turns #fcfbf8, a shade lighter than the cover outside the chosen states. The map then holds only:
+- the states' outline and cover;
+- the overlay on show;
+- the reference layers that are on.
+
+Like every base except Satellite, it has no names overlay: place, river and county names go off with it and come back with Satellite. Roads, water and county lines keep their own switches, off by default. Code: `PlainBase` in `js/app.js`. It suits a clean map to read, print or save as an image.
+
+**The map as an image.** The image button among the map tools loads `js/mapimage.js` the first time it is used (27 KB, no library). It draws the map, as it is on the screen, onto a canvas, adds a footer, and saves the result as a PNG. The image is made in the browser, and nothing is sent to a server. The steps:
+1. *Waiting:* until no zoom or pan is moving and no layer is still loading (at most 8 s), then 250 ms for the tiles' fade, and until the page's fonts are ready.
+2. *Size:* the map's size on the screen in CSS pixels times k.
+   - On a phone (767 px wide or less), k is 2, for sharp text and lines.
+   - On a computer, k is the screen's pixel ratio, held between 1 and 2.
+   - k is lowered if needed so the whole image (the map and about 420 px of footer) stays under about 16 million pixels, the canvas limit on some phones.
+3. *Drawing:* the map pane's elements in the browser's painting order: negative z-index first, then 0 and auto in the page's order, then positive. Each is drawn with its opacity and CSS filter.
+   - Pictures (tiles, image overlays) are drawn at their place and size, with their edges on whole pixels so neighbouring tiles meet without a seam.
+   - Canvases are drawn as they are.
+   - SVG (the states' outline and cover, watersheds, catchments, a drawn field, the spring-wind arrows) is serialised, cut to the part on the map, and drawn as a picture.
+   - Boxes are drawn with their background colour, first linear gradient, borders, rounded corners, outer shadows and turn (the pin). Absolutely placed `::before` and `::after` are drawn too (the pin's dot).
+   - Text is drawn word by word where the page laid it out.
+   - A group faded as one (a tile layer at its opacity) is drawn on a layer of its own and laid on at that opacity, as the browser does, so old and new tiles that overlap don't add up.
+   - A tile still fading in is drawn fully shown, as it will be a moment later.
+4. *Not drawn:*
+   - popups and tooltips;
+   - form controls, buttons, video and frames;
+   - Leaflet's own controls (zoom, attribution, scale), which sit outside the map pane; the footer gives its own scale and credits;
+   - CSS beyond the above: background pictures, radial and conic gradients, inset shadows, clip paths, blend modes, text shadows.
+5. *Pictures from other servers:* a canvas that holds a picture from another server can be saved only when that server allowed it with a CORS header (`Access-Control-Allow-Origin`). Otherwise the browser refuses to write the file. So the image handles such pictures this way:
+   - Each one is asked for again in CORS mode, usually from the browser's cache (20 s at most).
+   - If that fails, it is asked for once more with `_cors=1` added to its address, in case the cached copy was kept without the header.
+   - A server that refuses both is not asked again for that image.
+   - Its layer is left out, rather than leaving a blank or a file that cannot be written. It is named in the footer ("Not in this image: …") and in the message, by the app's name for the layer, else its credit, else its server's host.
+   - A canvas layer is tested by drawing it onto a 1-pixel scratch canvas and reading that back. The map's own canvas is never read back, as that would make the browser draw it more slowly from then on.
+   - Pictures from the app's own server, `data:` and `blob:` need no check.
+   - In tests on 12 November 2026, the satellite base, the Drought Monitor, SMAP and the soil pH map all went in.
+6. *Footer:* built as page elements off the screen, at the map's width (`.mi-foot` in `css/app.css`), then drawn the same way under the map. It holds:
+   - The legend on show, in full. It loses its own box, height limit and hidden rows, and a minimised legend is opened. Each choice (a list, a date, a box) is written as "label: value", and the buttons are removed.
+   - The legend's key picture (the producer's GetLegendGraphic image). It gets up to 5 s more to load, then the same CORS check. If it cannot be copied, or did not load, a sentence in its place says which.
+   - The app's name, with the place (county, state) and the point's coordinates (5 decimals), or else the chosen states (their number, above 3).
+   - "Map made YYYY-MM-DD HH:MM (local time) · zoom z".
+   - Two scale bars, metric and imperial, by Leaflet's rule: the longest round length (1, 2, 3 or 5 × 10ⁿ) that fits in max(70, min(160, 0.3 × width)) px. It is measured along the map's middle row; on Web Mercator the scale changes with latitude, so the bars are true at the middle.
+   - The credits of every layer on the map (their attributions, links dropped), and the names of any layer left out.
+7. *File:* a PNG (`canvas.toBlob`) named `soilguard-map-<place>-<YYYY-MM-DD>.png`. The place is the first part of the place's name (its county or town), else the coordinates, else the state or the number of states. It is saved through the browser's own download.
 
 ## Known gaps
 

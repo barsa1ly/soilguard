@@ -35,6 +35,38 @@ WG.weather = (function () {
     if (o.refresh) setInterval(() => { if (l._map) l.setParams({ _t: Date.now() }); }, o.refresh * 60e3); // a fresh image while on the map
     return l;
   }
+
+  /* ---------- the date a layer shows ----------
+     A layer of "this week", "the latest" or "now" gives the date or time it shows (dateOf: a string, or a promise of
+     one), which the legend writes in brackets after its title, so a map saved or printed still says when it was. Each is
+     read from the producer's own service in one small request, kept until the source's next update (fresh), so a legend
+     drawn again and its note ask nothing twice. */
+  const memo = new Map();
+  const fresh = (key, min, f) => {
+    const m = memo.get(key);
+    if (m && Date.now() - m.t < min * 60e3) return m.p;
+    const p = f();
+    memo.set(key, { t: Date.now(), p });
+    p.catch(() => { if ((memo.get(key) || {}).p === p) memo.delete(key); }); // a failed read is asked again next time
+    return p;
+  };
+  // a time on the viewer's own clock, with its zone: "12 Nov 2026, 3 pm CST"; with to, a span: "12 Nov 2026, 6 pm – 13 Nov, 6 pm CST"
+  const CLOCK = new Intl.DateTimeFormat("en-US", { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
+  function timeLabel(t, to) {
+    const p = ms => { const o = {}; CLOCK.formatToParts(new Date(ms)).forEach(x => { o[x.type] = x.value; }); return { d: `${o.day} ${o.month}`, y: o.year, h: `${o.hour}${o.minute === "00" ? "" : `:${o.minute}`} ${(o.dayPeriod || "").toLowerCase()}`, z: o.timeZoneName }; };
+    const a = p(t), b = to === undefined ? null : p(to);
+    return b ? `${a.d} ${a.y}, ${a.h}${a.z === b.z ? "" : ` ${a.z}`} – ${b.d}${b.y === a.y ? "" : ` ${b.y}`}, ${b.h} ${b.z}` : `${a.d} ${a.y}, ${a.h} ${a.z}`;
+  }
+  // the first feature's fields in a layer of NOAA's map services, whose footprints hold the times their images show
+  const restAt = (path, fields, min, where = "1=1") => fresh(`${path}|${fields}|${where}`, min, () => WG.util.fetchJSON(`${NOAA}${path}/query?where=${encodeURIComponent(where)}&outFields=${fields}&returnGeometry=false&f=json`, {}, 20000)
+    .then(j => { const a = ((j.features || [])[0] || {}).attributes; if (!a) throw new Error(`no features in ${path}`); return a; }));
+  /* the REST layer behind each WMS name (the service numbers the two the other way round): the drought outlooks'
+     footprints hold the month or day they run to and their issue date */
+  const droTo = id => () => restAt(`vector/rest/services/outlooks/cpc_drought_outlk/MapServer/${id}`, "fcst_date,target", 360).then(a => {
+    const [m, d, y] = String(a.fcst_date).split("/").map(Number), t = /^([A-Za-z]+) (\d{1,2})$/.exec(a.target || ""), k = t ? MONTHS.findIndex(x => t[1].startsWith(x)) : -1;
+    return `${k >= 0 ? `to ${Wd.dayLabel(Date.UTC(k < m - 1 ? y + 1 : y, k, +t[2]) / 864e5)}` : a.target}, issued ${Wd.dayLabel(Date.UTC(y, m - 1, d) / 864e5)}`; // the seasonal outlook runs to a day with no year ("January 31")
+  });
+
   // the U.S. Drought Monitor: its week from the map's own title; a year ago and five years ago are the same week then
   let usdmWeek = null;
   const usdmDate = () => (usdmWeek = usdmWeek || WG.util.fetchText(`${USDM("usdm_current_wms")}&SERVICE=WMS&VERSION=1.3.0&REQUEST=GetCapabilities`, 20000).then(t => {
@@ -47,22 +79,23 @@ WG.weather = (function () {
     const layer = wms(USDM("usdm_current_wms"), "usdm_current", { attribution: "U.S. Drought Monitor (NDMC, USDA, NOAA)" });
     if (weeksBack) layer.on("add", () => usdmDate().then(d => { const w = ymdStr(d - weeksBack * 7); layer.setUrl(USDM(`usdm_${w}_wms`)); layer.setParams({ layers: `usdm${w}` }); }).catch(() => {}));
     return { key, name, def, layer, sub: weeksBack ? `the same week ${weeksBack === 52 ? "a year" : "five years"} before this week's map` : "this week's map, released Thursdays",
-      note: `D0 abnormally dry, D1 moderate, D2 severe, D3 extreme, D4 exceptional drought. ${USDM_CREDIT}`,
+      note: `D0 abnormally dry, D1 moderate, D2 severe, D3 extreme, D4 exceptional drought. ${USDM_DATED} ${USDM_CREDIT}`,
       legend: { title: name, img: legendImg(USDM("usdm_current_wms"), "usdm_current") },
-      when: () => usdmDate().then(d => `Map of ${Wd.dayLabel(d - (weeksBack || 0) * 7)}.`) };
+      dateOf: () => usdmDate().then(d => Wd.dayLabel(d - (weeksBack || 0) * 7)) };
   };
+  const USDM_DATED = "The date is the Tuesday the map is valid for; it comes out two days later.";
   const layers = {
     drought: [
       usdmLayer("usdm", "Drought Monitor, this week", 0, true),
       usdmLayer("usdm1", "Drought Monitor, a year ago", 52),
       usdmLayer("usdm5", "Drought Monitor, five years ago", 261),
       { key: "usdmPast", name: "Drought Monitor, a past week", sub: "any week since January 2000: choose the year and month", layer: TM.usdmLayer(),
-        note: `D0 abnormally dry, D1 moderate, D2 severe, D3 extreme, D4 exceptional drought. ${USDM_CREDIT}`,
-        legend: { title: "Drought Monitor, a past week", img: legendImg(USDM("usdm_current_wms"), "usdm_current") }, when: () => Promise.resolve(TM.label("usdm") ? `${TM.label("usdm")}.` : "") },
-      { key: "dro1", name: "Drought outlook, this month", sub: "NOAA Climate Prediction Center", layer: wms(DRO, "5", { attribution: "NOAA CPC" }),
+        note: `D0 abnormally dry, D1 moderate, D2 severe, D3 extreme, D4 exceptional drought. ${USDM_DATED} ${USDM_CREDIT}`,
+        legend: { title: "Drought Monitor, a past week", img: legendImg(USDM("usdm_current_wms"), "usdm_current") }, dateOf: () => TM.label("usdm").replace(/^Week of /, "") || null }, // the week chosen on the bar
+      { key: "dro1", name: "Drought outlook, this month", sub: "NOAA Climate Prediction Center", layer: wms(DRO, "5", { attribution: "NOAA CPC" }), dateOf: droTo(1),
         note: "Where drought is expected to persist, improve, end or develop by the end of the month: NOAA Climate Prediction Center's monthly drought outlook, issued on the month's last day.",
         legend: { title: "Monthly drought outlook", img: legendImg(DRO, "5") } },
-      { key: "dro3", name: "Drought outlook, this season", sub: "NOAA Climate Prediction Center, three months", layer: wms(DRO, "2", { attribution: "NOAA CPC" }),
+      { key: "dro3", name: "Drought outlook, this season", sub: "NOAA Climate Prediction Center, three months", layer: wms(DRO, "2", { attribution: "NOAA CPC" }), dateOf: droTo(4),
         note: "The same over the next three months: NOAA Climate Prediction Center's seasonal drought outlook, issued on the third Thursday of the month.",
         legend: { title: "Seasonal drought outlook", img: legendImg(DRO, "2") } },
     ],
@@ -70,9 +103,18 @@ WG.weather = (function () {
 
 
   /* ---------- legend ---------- */
-  /* a live overlay's legend: colour rows, a continuous scale with ticks, or the producer's own legend image */
+  /* a live overlay's legend: colour rows, a continuous scale with ticks, or the producer's own legend image. Its title
+     carries the date the layer shows (dateOf): at once when known, else as soon as it is read (a read already made
+     answers before the page is painted); a layer that updates reads it again at its own interval while its legend is up. */
+  // a date after a title, in brackets; a title that ends in its source's brackets takes it inside them: "(NWM, 12 Nov 2026, 2 pm CST)"
+  const dated = (t, d) => (!d ? t : /\)$/.test(t) ? `${t.slice(0, -1)}, ${d})` : `${t} (${d})`);
+  let dseq = 0, dateT = null; // the legend drawn last, and the timer that dates it again
   function legend(el, it, min, toggle) {
-    const g = it.legend || {};
+    const g = it.legend || {}, my = ++dseq;
+    clearInterval(dateT);
+    const dateNow = () => { try { return it.dateOf ? it.dateOf() : null; } catch (e) { console.warn("legend date", e); return null; } };
+    const head = d => `${esc(dated(g.title || it.name, d))}${g.unit ? ` <small style="font-weight:400;color:#69716a">(${esc(typeof g.unit === "function" ? g.unit() : g.unit)})</small>` : ""}`;
+    const put = d => Promise.resolve(d).then(t => { const s = el.querySelector("h5 > span"); if (my === dseq && it.on && t && s) s.innerHTML = head(t); }, () => {}); // not once another legend is drawn
     if (it.prep && !it.prepped) it.prepped = it.prep(it).then(() => { g.failed = false; if (it.on) legend(el, it, min, toggle); }, e => { console.warn("legend", e); it.prepped = null; g.failed = true; if (it.on) legend(el, it, min, toggle); });
     el.hidden = false;
     el.classList.toggle("min", min);
@@ -80,9 +122,12 @@ WG.weather = (function () {
       : g.scale && !g.scale.length ? `<p class="lnote">${g.failed ? "The colour scale could not be read from the NWS map service; choose the layer again to retry." : "Reading the colour scale…"}</p>`
       : g.scale ? `<div class="rows"><div class="lscale">${g.scale.map(c => `<i style="background:${c}"></i>`).join("")}</div><div class="lticks">${g.ticks.map(([at, t]) => `<span style="left:${(100 * at).toFixed(1)}%">${esc(t)}</span>`).join("")}</div></div>`
         : `<div class="rows">${(g.rows || []).map(([c, l]) => `<div class="row"><i class="sw" style="background:${c}"></i>${esc(l)}</div>`).join("")}</div>`;
-    el.innerHTML = `<h5><span>${esc(g.title || it.name)}${g.unit ? ` <small style="font-weight:400;color:#69716a">(${esc(typeof g.unit === "function" ? g.unit() : g.unit)})</small>` : ""}</span>
+    const d0 = dateNow();
+    el.innerHTML = `<h5><span>${head(typeof d0 === "string" ? d0 : null)}</span>
       <button id="legendMin">${min ? "show" : "hide"}</button></h5>${body}<p class="lnote" id="legendNote">${esc(it.note || "")}</p>`;
     $("#legendMin").onclick = toggle;
+    if (d0 && typeof d0 !== "string") put(d0);
+    if (it.dateOf && it.refresh) dateT = setInterval(() => { if (it.on) put(dateNow()); else clearInterval(dateT); }, it.refresh * 60e3);
     if (it.when) it.when().then(t => { const n = $("#legendNote"); if (n && t && el.contains(n)) n.textContent = `${it.note || ""} ${t}`.trim(); }).catch(() => {});
   }
 
@@ -455,5 +500,5 @@ WG.weather = (function () {
     catch (e) { console.warn(tab, e); if (tok === WG.state.token && el.dataset.key === key) el.innerHTML = failed(`the ${tab} data`, e); }
   }
 
-  return { THEMES, layers, legend, show, RENDER, card, once, siteLine, wait, failed, ok, usdmDate, usdmLast, usdmAt, usdmHere, usdmRange, usdmTable, usdmSrc, usdmMapUrl, DCLASS, USDM_CREDIT, USDM_DAY0, LA_CREDIT };
+  return { THEMES, layers, legend, fresh, timeLabel, show, RENDER, card, once, siteLine, wait, failed, ok, usdmDate, usdmLast, usdmAt, usdmHere, usdmRange, usdmTable, usdmSrc, usdmMapUrl, DCLASS, USDM_CREDIT, USDM_DAY0, LA_CREDIT };
 })();

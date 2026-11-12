@@ -63,13 +63,15 @@ WG.soilmoisture = (function () {
   // the service's 11 classes (its legend, MapServer/legend), in % of saturation
   const NWM_ROWS = [["#a60027", "0–5"], ["#c94d3a", "5–15"], ["#eb8d52", "15–25"], ["#ffbc70", "25–35"], ["#ffde96", "35–45"], ["#ffffbf", "45–55"], ["#dff0d1", "55–65"], ["#bce0e0", "65–75"], ["#91b4d9", "75–85"], ["#606db5", "85–95"], ["#323794", "95–100 (saturated)"]];
   const utcLabel = ms => `${new Date(ms).toISOString().slice(0, 16).replace("T", " ")} UTC`;
-  const nwmWhen = () => fetchJSON(`${NWM_REST}2/query?where=1%3D1&outFields=idp_validtime&returnGeometry=false&f=json`, {}, 20000)
-    .then(j => { const t = num((((j.features || [])[0] || {}).attributes || {}).idp_validtime); return t ? `Valid ${utcLabel(t)}.` : ""; });
+  // the hour the service shows, for the legend's title: kept half an hour, as long as its tiles
+  const nwmDate = () => Wx.fresh("nwm", 30, () => fetchJSON(`${NWM_REST}2/query?where=1%3D1&outFields=idp_validtime&returnGeometry=false&f=json`, {}, 20000)
+    .then(j => { const t = num((((j.features || [])[0] || {}).attributes || {}).idp_validtime); if (!t) throw new Error("no valid time from the National Water Model's service"); return Wx.timeLabel(t); }));
 
   /* ---------- NOAA NIDIS (drought.gov) percentile tiles: the latest day (SPoRT) or week (GRACE) ---------- */
   const NIDIS = "https://storage.googleapis.com/noaa-nidis-drought-gov-data/current-conditions/tile/v1/";
   const US_BOX = L.latLngBounds([24.4, -128.8], [50.3, -66.0]); // the tiles' extent (info.json bbox): no requests outside
-  const nidisWhen = k => () => fetchJSON(`${NIDIS}${k}/info.json`, {}, 20000).then(j => { const d = String(j.date || ""); const s = /^\d{8}$/.test(d) ? `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6)}` : d; return s ? `Map of ${s}.` : ""; });
+  // the day or week the tiles show (their info.json), for the legend's title: kept an hour
+  const nidisDate = k => () => Wx.fresh(`nidis:${k}`, 60, () => fetchJSON(`${NIDIS}${k}/info.json`, {}, 20000)).then(j => { const d = String(j.date || ""); return /^\d{8}$/.test(d) ? WG.wind.dayLabel(dayOf(`${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6)}`)) : null; });
   // classes as drought.gov draws them; colours read from the tiles. Dry classes match the Drought Monitor's D4 to D0.
   const DRY = [["#730000", "0–2 (driest; like D4)"], ["#e60000", "2–5 (D3)"], ["#ffaa00", "5–10 (D2)"], ["#fcd37f", "10–20 (D1)"], ["#ffff00", "20–30 (D0)"]];
   const SPORT_ROWS = [...DRY, ["#c8c8c8", "30–70 near normal"], ["#e1ffff", "70–80"], ["#96d2fa", "80–90"], ["#50a5f5", "90–95"], ["#2882f0", "95–98"], ["#1464d2", "98–100 (wettest)"]];
@@ -120,19 +122,21 @@ WG.soilmoisture = (function () {
     smapDays().then(D => { const b = el.querySelector(".smm-ctl-box"); if (b && it.on) b.innerHTML = ctlHtml(D); }, () => {});
   }
   function redrawLegend() { if (lastLegend && lastLegend[1].on) drawLegend(...lastLegend); }
-  const smapWhen = () => smapDays().then(D => { const d = pick.date || D.latest; return hasMap(D, d) ? `Map of ${d}${pick.date ? "" : ", the latest"}.` : `GIBS has no SMAP map for ${d}: choose another day.`; });
+  // the day shown, in the legend's title: the one chosen, else the latest GIBS holds; the note says only which
+  const smapDate = () => (pick.date ? WG.wind.dayLabel(dayOf(pick.date)) : smapDays().then(D => WG.wind.dayLabel(dayOf(D.latest))));
+  const smapWhen = () => smapDays().then(D => { const d = pick.date || D.latest; return !hasMap(D, d) ? `GIBS has no SMAP map for ${d}: choose another day.` : pick.date ? "" : "The latest map GIBS holds."; });
   const item = (key, name, sub, layer, legend, note, o = {}) => ({ key, name, sub, layer, legend, note, drawLegend, opacity: 1.2, ...o });
   const LAYERS = [
     item("smap_sf", "Soil moisture, surface 0–5 cm", "NASA SMAP L4, 9 km, any day since 2015", smapSf, { title: "Soil moisture, 0–5 cm (SMAP L4)", unit: "m³/m³: 0.25 = 25% water by volume", scale: SMAP_RAMP, ticks: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7].map(v => [v / 0.7, v === 0.7 ? "≥0.7" : String(v)]) },
-      SMAP_NOTE("surface layer 0–5 cm", ""), { dated: true, when: smapWhen }),
+      SMAP_NOTE("surface layer 0–5 cm", ""), { dated: true, when: smapWhen, dateOf: smapDate }),
     item("smap_rz", "Soil moisture, root zone 0–100 cm", "the same, the top metre", smapRz, { title: "Soil moisture, 0–100 cm (SMAP L4)", unit: "m³/m³: 0.25 = 25% water by volume", scale: SMAP_RAMP, ticks: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7].map(v => [v / 0.7, v === 0.7 ? "≥0.7" : String(v)]) },
-      SMAP_NOTE("root zone 0–100 cm", "The model carries the surface readings down; the satellite itself sees only the top few centimetres."), { dated: true, when: smapWhen }),
+      SMAP_NOTE("root zone 0–100 cm", "The model carries the surface readings down; the satellite itself sees only the top few centimetres."), { dated: true, when: smapWhen, dateOf: smapDate }),
     item("nwm", "Soil saturation 0–40 cm, this hour", "NOAA National Water Model, 1 km, % of saturation", nwmLayer, { title: "Soil saturation, 0–40 cm (NWM)", unit: "% of saturation: 0 = dry, 100 = all pores full", rows: NWM_ROWS },
-      "How full the soil's pores are in the top 40 cm (100% = saturated), from the NOAA National Water Model's hourly land analysis (Noah-MP, 1 km, version 3.0; public domain). A model: its soils and rain differ from a field's, and it often reads wetter than stations in dry country. Only the latest hour is served.", { when: nwmWhen }),
+      "How full the soil's pores are in the top 40 cm (100% = saturated), from the NOAA National Water Model's hourly land analysis (Noah-MP, 1 km, version 3.0; public domain). A model: its soils and rain differ from a field's, and it often reads wetter than stations in dry country. Only the latest hour is served.", { dateOf: nwmDate, refresh: 30 }),
     item("sport", "Soil moisture percentile 0–100 cm", "NASA SPoRT-LIS, 3 km, today", sport, { title: "Soil moisture percentile, 0–100 cm (SPoRT-LIS)", unit: "percentile: 10 = drier than 90% of days at this time of year", rows: SPORT_ROWS },
-      `${PCT_NOTE} NASA SPoRT's Land Information System (Noah model, 3 km), daily, against its 1981–2013 record. Through NOAA NIDIS (drought.gov); only the latest day is served.`, { when: nidisWhen("nasa-sport-3km") }),
+      `${PCT_NOTE} NASA SPoRT's Land Information System (Noah model, 3 km), daily, against its 1981–2013 record. Through NOAA NIDIS (drought.gov); only the latest day is served.`, { dateOf: nidisDate("nasa-sport-3km") }),
     item("grace", "Root-zone moisture percentile", "NASA GRACE-DA, 12 km, weekly", grace, { title: "Root-zone soil moisture percentile (GRACE-DA)", unit: "percentile: 10 = drier than 90% of weeks at this time of year", rows: GRACE_ROWS },
-      `${PCT_NOTE} NASA GRACE-FO satellite gravity (total water storage) assimilated into the Catchment land model (NASA GSFC, with the National Drought Mitigation Center), root zone about 0–100 cm, 0.125°, weekly, against 1948–2012. Through NOAA NIDIS (drought.gov); only the latest week is served.`, { when: nidisWhen("nasa-rtzsm-0.125d") }),
+      `${PCT_NOTE} NASA GRACE-FO satellite gravity (total water storage) assimilated into the Catchment land model (NASA GSFC, with the National Drought Mitigation Center), root zone about 0–100 cm, 0.125°, weekly, against 1948–2012. Through NOAA NIDIS (drought.gov); only the latest week is served.`, { dateOf: nidisDate("nasa-rtzsm-0.125d") }),
     item("stations", "Soil moisture stations", "USDA SCAN and SNOTEL, NOAA USCRN: tap one", stationLayer, { title: "Soil moisture stations", rows: [["#2a78d6", "SCAN (USDA NRCS), 2–40 in"], ["#6250d6", "CSCAN (USDA NRCS cooperative)"], ["#1baf7a", "SNOTEL (USDA NRCS), mountains"], ["#eb6834", "USCRN (NOAA), 5–100 cm"]] },
       "Stations that measure soil moisture by depth and report it every hour. Tap a station (or any point): the Soil moisture tab gives the three nearest, their latest readings and their daily means over the chosen period. List of active stations made with tools/build_moisture.py."),
   ];

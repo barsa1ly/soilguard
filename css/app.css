@@ -58,6 +58,7 @@ svg { display: block; }
 
 .map-pane { position: relative; min-width: 0; min-height: 0; overflow: hidden; }
 #map { position: absolute; inset: 0; background: #d9dccf; }
+#map.plain-base { background: #fcfbf8; } /* the Plain base map (js/app.js): no tiles, a background a shade lighter than the cover outside the states */
 
 .panel {
   min-width: 0;
@@ -695,6 +696,7 @@ table.weg-table .here { display: inline-block; margin-left: 4px; padding: 0 7px;
 .base-grid button { border: 1.5px solid var(--line); border-radius: 10px; background: var(--surface); padding: 8px; text-align: left; font-size: 12.5px; font-weight: 600; display: grid; gap: 6px; }
 .base-grid button i { display: block; height: 44px; border-radius: 6px; background-size: cover; background-position: center; }
 .base-grid button.on { border-color: var(--accent); background: var(--accent-soft); }
+.base-grid button i.blank { box-shadow: inset 0 0 0 1px var(--line); } /* the Plain base: an outline on a blank background */
 .toggles { display: grid; gap: 2px; }
 .toggle { display: flex; align-items: center; gap: 10px; padding: 7px 0; font-size: 13.5px; cursor: pointer; }
 .toggle input { width: 18px; height: 18px; accent-color: var(--accent); flex: none; }
@@ -848,12 +850,12 @@ table.weg-table .here { display: inline-block; margin-left: 4px; padding: 0 7px;
   .app.has-site:not(.map-big) .map-tools { grid-template-columns: repeat(3, 44px); direction: rtl; }
 }
 @media (max-width: 767px) and (max-height: 560px) {
-  .app.has-site:not(.map-big) .map-tools { grid-template-columns: repeat(5, 44px); }
+  .app.has-site:not(.map-big) .map-tools { grid-template-columns: repeat(6, 44px); }
 }
 /* landscape phones: no room for that row under the topbar either (below 413 px), so it moves up beside the topbar */
 @media (max-width: 767px) and (min-width: 560px) and (max-height: 412px) {
   .app.has-site:not(.map-big) .map-tools { top: max(10px, env(safe-area-inset-top)); }
-  .app.has-site:not(.map-big) .topbar { width: calc(100% - 274px); } /* the tools' 244 px, and 10 px at each edge and between */
+  .app.has-site:not(.map-big) .topbar { width: calc(100% - 324px); } /* the tools' 294 px, and 10 px at each edge and between */
 }
 /* too narrow for that: the map row grows to hold the topbar and the row of tools */
 @media (max-width: 559px) and (max-height: 412px) {
@@ -977,6 +979,10 @@ table.weg-table .here { display: inline-block; margin-left: 4px; padding: 0 7px;
 .theme-bar .short { display: none; }
 .theme-seg { margin-bottom: 4px; }
 .legend img { display: block; max-width: 100%; height: auto; margin: 2px 0; }
+.legend .lscale { display: flex; height: 12px; border-radius: 3px; overflow: hidden; border: 1px solid rgba(0, 0, 0, .1); }
+.legend .lscale i { flex: 1; }
+.legend .lticks { position: relative; height: 14px; color: var(--muted); font-size: 10.5px; margin-top: 2px; }
+.legend .lticks span { position: absolute; transform: translateX(-50%); }
 
 /* the DOWNLOAD data for models tab: set apart from the topic tabs, with its arrow, on two lines */
 .tabs button.tab-dl { display: flex; align-items: center; gap: 6px; color: var(--accent-2); border: 1.5px solid var(--accent-soft); background: var(--accent-soft); position: sticky; right: 0; margin-left: auto; box-shadow: -10px 0 8px -2px var(--surface); }
@@ -1189,3 +1195,31 @@ table.grid.sm-table small.bs-mean { display: block; font-weight: 400; white-spac
 .sm-all .fine { margin: 0; }
 @keyframes so-flash { from { box-shadow: 0 0 0 3px var(--accent); } to { box-shadow: var(--shadow); } }
 .so-flash { animation: so-flash 1.4s ease-out; }
+/* other short screens (a low window, a landscape phone with the map alone): the six tools in two columns, so the last
+   stays on the screen and clear of the zoom buttons at the foot; the search, the theme bar and the date bar leave room
+   for the second column (its 96 px, and 12 or 10 px at the edge and between) */
+@media (min-width: 768px) and (max-height: 500px) {
+  .map-tools { grid-template-columns: repeat(2, 44px); direction: rtl; }
+  .topbar { width: min(560px, calc(100% - 136px)); }
+  .theme-bar { max-width: calc(100% - 136px); }
+  .time-bar { width: min(340px, calc(100% - 136px)); }
+}
+@media (max-width: 767px) and (max-height: 500px) {
+  .map-tools { grid-template-columns: repeat(2, 44px); direction: rtl; }
+  .theme-bar { max-width: calc(100% - 126px); }
+}
+
+/* ---------- the footer of a saved map image (js/mapimage.js): laid out here, off the screen, then drawn onto the image ---------- */
+.mi-host { position: fixed; left: -12000px; top: 0; pointer-events: none; z-index: -1; }
+.mi-foot { display: flex; flex-wrap: wrap; gap: 10px 22px; padding: 10px 12px 12px; background: #fff; border-top: 1px solid var(--line); font-size: 12px; line-height: 1.4; color: var(--ink); }
+/* the legend on show, as on the map but flat and in full (its own box, height limit and hidden rows dropped) */
+.mi-foot .legend { position: static; flex: 1 1 260px; min-width: 0; max-width: none; max-height: none; overflow: visible; box-shadow: none; background: none; border-radius: 0; padding: 0; }
+.mi-foot .legend > h5:first-child { position: static; margin: 0 0 6px; padding: 0; background: none; border-radius: 0; }
+.mi-foot .mi-ctl { display: block; color: var(--ink-2); font-size: 11.5px; margin: 0 0 3px; }
+.mi-meta { flex: 1 1 220px; min-width: 0; display: grid; gap: 3px; align-content: start; }
+.mi-meta .mi-name { font-size: 13px; }
+.mi-fine { margin: 0; color: var(--muted); font-size: 10.5px; line-height: 1.35; }
+.mi-miss { color: #9a3412; }
+.mi-scale { display: flex; flex-direction: column; align-items: flex-start; margin: 3px 0 2px; font-size: 10.5px; line-height: 1.2; color: var(--ink-2); }
+.mi-scale span { border: 2px solid #4b524d; border-top: 0; padding: 1px 4px 0; white-space: nowrap; }
+.mi-scale span + span { border-top: 2px solid #4b524d; border-bottom: 0; margin-top: -2px; }

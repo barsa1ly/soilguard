@@ -76,6 +76,15 @@
 
   const esri = p => `https://server.arcgisonline.com/ArcGIS/rest/services/${p}/MapServer/tile/{z}/{y}/{x}`;
   const usgs = p => `https://basemap.nationalmap.gov/arcgis/rest/services/${p}/MapServer/tile/{z}/{y}/{x}`;
+  /* the Plain base: no tiles at all, a light background (css/app.css .plain-base) under the states' outlines and the
+     layers on show, for a clean map to read or to save as an image (no imagery, roads, rivers or names) */
+  const PlainBase = L.Layer.extend({
+    onAdd(m) { m.getContainer().classList.add("plain-base"); },
+    onRemove(m) { m.getContainer().classList.remove("plain-base"); },
+    bringToBack() { return this; },
+  });
+  // its picker thumb: an outline on the blank background (single quotes outside, %22 inside: it goes into a style="…")
+  const PLAIN_THUMB = "#fcfbf8 url('data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 60 40%22%3E%3Cpath d=%22M9 9h21l3 5h11l7 9-5 9H31l-5-5H14l-5-8z%22 fill=%22none%22 stroke=%22%2333403a%22 stroke-width=%221.6%22 stroke-linejoin=%22round%22/%3E%3C/svg%3E') center / auto 82% no-repeat";
 
   const bases = {
     sat: { name: "Satellite", thumb: "#3d4a3a",
@@ -90,6 +99,7 @@
     topo: { name: "Topographic", thumb: "#dfe3cf",
       layer: L.tileLayer(usgs("USGSTopo"), { maxZoom: 19, maxNativeZoom: 16, attribution: "USGS The National Map" }),
       labels: false },
+    plain: { name: "Plain (no base map)", thumb: PLAIN_THUMB, blank: true, layer: new PlainBase(), labels: false }, // the names overlay goes with it, as with the other bases without it
   };
 
   map.createPane("thematic").style.zIndex = 350;
@@ -114,9 +124,9 @@
     labels: { name: "Place, river and county names", sub: "towns, rivers, lakes, landmarks",
       layer: L.tileLayer(esri("Reference/World_Reference_Overlay"), { pane: "labels", maxZoom: 19, attribution: "Labels © Esri" }), on: true },
     roads: { name: "Roads and street names", sub: "highways, county roads, streets",
-      layer: L.tileLayer(esri("Reference/World_Transportation"), { pane: "refs", maxZoom: 19, opacity: 0.95 }), on: false }, // off at first: a cleaner map; one tap in Layers brings it
+      layer: L.tileLayer(esri("Reference/World_Transportation"), { pane: "refs", maxZoom: 19, opacity: 0.95, attribution: "Roads © Esri" }), on: false }, // off at first: a cleaner map; one tap in Layers brings it
     hydro: { name: "Rivers, streams, lakes", sub: "USGS National Hydrography lines",
-      layer: L.tileLayer(usgs("USGSHydroCached"), { pane: "refs", maxZoom: 19, maxNativeZoom: 16, opacity: 0.9 }), on: false }, // off at first, as the roads
+      layer: L.tileLayer(usgs("USGSHydroCached"), { pane: "refs", maxZoom: 19, maxNativeZoom: 16, opacity: 0.9, attribution: "USGS National Hydrography" }), on: false }, // off at first, as the roads
     counties: { name: "County lines", sub: "U.S. Census TIGER, exact at every zoom",
       layer: new CensusCounties(TIGER_COUNTIES, { pane: "refs", maxZoom: 19, opacity: 0.85, className: "county-lines", attribution: "Counties: U.S. Census TIGER" }),
       on: false }, // off at first, as the roads and water: a cleaner map
@@ -381,7 +391,7 @@
   /* ---------- layer sheet ---------- */
   function buildLayerSheet() {
     $("#baseGrid").innerHTML = Object.entries(bases).map(([k, b]) =>
-      `<button data-base="${k}" class="${k === baseKey ? "on" : ""}"><i style="background:${b.thumb}"></i>${esc(b.name)}</button>`).join("");
+      `<button data-base="${k}" class="${k === baseKey ? "on" : ""}"><i${b.blank ? ' class="blank"' : ""} style="background:${b.thumb}"></i>${esc(b.name)}</button>`).join("");
     const toggle = (group, key, item, swatch) => `<label class="toggle"><input type="checkbox" data-group="${group}" data-key="${key}" ${item.on ? "checked" : ""}>
       <span>${esc(item.name || item.meta.title)}<small>${esc(item.sub || (item.meta && (group === "themes" ? legendText(key, item.meta).unit : item.meta.unit)) || "")}</small></span>${swatch || ""}</label>`;
     $("#refToggles").innerHTML = Object.entries(refs).map(([k, r]) => toggle("refs", k, r)).join("");
@@ -495,6 +505,27 @@
   $("#layersBtn").addEventListener("click", () => { buildLayerSheet(); openSheet(true); });
   $("#sheetClose").addEventListener("click", () => openSheet(false));
   $("#sheetBackdrop").addEventListener("click", () => openSheet(false));
+
+  /* ---------- the map as an image (PNG): js/mapimage.js, loaded the first time the button is used ---------- */
+  // the layers on show with their names, so the image can name one whose server keeps its pictures out of it
+  const shownLayers = () => [bases[baseKey], ...Object.values(refs), ...Object.values(themes), ...Object.values(soilLayers), ...Object.values(live[state.theme] || {})]
+    .filter(it => it.on !== false && map.hasLayer(it.layer)).flatMap(it => [it.layer, it.extra].filter(Boolean).map(layer => ({ name: it.name || (it.meta && it.meta.title) || "", layer })));
+  let imgLib = null;
+  $("#saveMapBtn").addEventListener("click", async () => {
+    const b = $("#saveMapBtn");
+    if (b.classList.contains("busy")) return;
+    b.classList.add("busy");
+    try {
+      await (imgLib = imgLib || new Promise((res, rej) => {
+        const s = document.createElement("script");
+        // a failed load is forgotten, so the next tap tries again
+        s.src = `js/mapimage.js?v=${ASSET_V}`; s.onload = res; s.onerror = () => { imgLib = null; s.remove(); rej(new Error("its script could not be loaded. Check the connection and try again.")); };
+        document.head.appendChild(s);
+      }));
+      await WG.mapimage.save({ shown: shownLayers });
+    } catch (e) { console.warn("map image", e); U.toast(`The map image could not be made: ${e.message || e}`, 6000); }
+    finally { b.classList.remove("busy"); }
+  });
 
   /* ---------- legend ---------- */
   /* legend text in the units table's units: the layer files label soil loss in t/ac/yr and wind in mph */
