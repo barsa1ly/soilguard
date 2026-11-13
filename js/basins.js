@@ -309,16 +309,24 @@ WG.basins = (function () {
      on the map while the Soil maps theme is on and the point is the same; off when the theme changes (back when it
      returns, the tab is not drawn again), gone with a new point */
   let shown = null, timer = null;
+  // on the map only while it is what you are looking at: the Basin tab open, or Watersheds or Streams the layer on the map;
+  // pH, land cover or another tab or theme clears it (it comes back on the Basin tab without being read again)
+  const wantOn = () => {
+    if (WG.state.theme !== "soilmaps") return false;
+    const b = document.querySelector(".tabs button.active");
+    if (b && b.dataset.tab === "soilbasin") return true;
+    return ((WG.soilmaps && WG.soilmaps.layers) || []).some(x => (x.key === "wbd" || x.key === "flow") && x.layer && WG.map.hasLayer(x.layer));
+  };
   function sync() {
     if (!shown) return;
     const m = WG.map;
     if (!WG.state.site || WG.state.token !== shown.tok) { m.removeLayer(shown.g); shown = null; clearInterval(timer); timer = null; return; }
-    const want = WG.state.theme === "soilmaps";
+    const want = wantOn();
     if (want !== m.hasLayer(shown.g)) { if (want) shown.g.addTo(m); else m.removeLayer(shown.g); }
   }
   function overlay(M) {
     if (shown && shown.tok !== M.tok) { WG.map.removeLayer(shown.g); shown = null; }
-    if (!shown) { shown = { tok: M.tok, g: L.layerGroup(), cv: L.canvas({ padding: 0.3 }) }; shown.g.addTo(WG.map); }
+    if (!shown) { shown = { tok: M.tok, g: L.layerGroup(), cv: L.canvas({ padding: 0.3 }) }; if (wantOn()) shown.g.addTo(WG.map); } // the Overview draws this tab out of sight: no flash
     if (!timer) timer = setInterval(sync, 500);
     const g = shown.g, cv = shown.cv;
     g.clearLayers();
