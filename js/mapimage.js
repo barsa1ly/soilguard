@@ -156,12 +156,16 @@
     g.restore();
   }
 
+  /* an item zoomed in the dialog (js/downloads.js: style zoom on the item) is laid out bigger by the browser, but its computed
+     sizes (fonts, borders, offsetWidth) stay as before the zoom: the factor of the element and its parents */
+  const zoomOf = el => { let z = 1; for (let e = el; e && e.nodeType === 1; e = e.parentElement) z *= parseFloat(e.style && e.style.zoom) || 1; return z; };
   /* an element's own box: shadow, background (a colour or a linear gradient), border, rounded corners; turned as the
      element is (the pin is a rounded square turned 45°) about its centre */
   function frame(g, el, cs, E, fn) {
-    const r = el.getBoundingClientRect();
+    const r = el.getBoundingClientRect(), Z = zoomOf(el);
     g.save();
     g.translate((r.left + r.right) / 2 - E.ox, (r.top + r.bottom) / 2 - E.oy);
+    if (Z !== 1) g.scale(Z, Z);
     if (cs.transform && cs.transform !== "none") { try { const M = new DOMMatrix(cs.transform); g.transform(M.a, M.b, M.c, M.d, 0, 0); } catch (e) { /* drawn unturned */ } }
     fn();
     g.restore();
@@ -230,8 +234,9 @@
     if (!/\S/.test(s)) return;
     const tt = cs.textTransform, T = tt === "uppercase" ? w => w.toUpperCase() : tt === "lowercase" ? w => w.toLowerCase() : w => w;
     g.save(); g.globalAlpha = a; g.fillStyle = cs.color; g.textBaseline = "alphabetic";
-    g.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
-    if ("letterSpacing" in g && cs.letterSpacing && cs.letterSpacing !== "normal") g.letterSpacing = cs.letterSpacing;
+    const Z = zoomOf(n.parentElement);
+    g.font = `${cs.fontStyle} ${cs.fontWeight} ${px(cs.fontSize) * Z}px ${cs.fontFamily}`;
+    if ("letterSpacing" in g && cs.letterSpacing && cs.letterSpacing !== "normal") g.letterSpacing = `${px(cs.letterSpacing) * Z}px`;
     const m = g.measureText("Hg"), A = m.fontBoundingBoxAscent, D = m.fontBoundingBoxDescent, R = document.createRange(), re = /\S+/g;
     const put = (t, b) => g.fillText(T(t), b.left - E.ox, (A !== undefined ? b.top + (b.height - A - D) / 2 + A : b.top + b.height * 0.78) - E.oy);
     const rect = (i, j) => { R.setStart(n, i); R.setEnd(n, j); return R.getClientRects(); };

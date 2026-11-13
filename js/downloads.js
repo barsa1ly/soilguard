@@ -402,18 +402,34 @@ WG.downloads = (function () {
   const GRIP = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M3 12h18M12 3 9.5 5.5M12 3l2.5 2.5M12 21l-2.5-2.5M12 21l2.5-2.5M3 12l2.5-2.5M3 12l2.5 2.5M21 12l-2.5-2.5M21 12l-2.5 2.5"/></svg>`;
   let LY = null, drag = null, nudgeT = 0;
   const items = () => (job && job.el ? [...job.el.querySelectorAll(".mi-it")] : []);
+  // an item's size in the layout's pixels (offsetWidth is as before its zoom)
+  const ow = el => el.offsetWidth * LY.it[el.dataset.it].s, oh = el => el.offsetHeight * LY.it[el.dataset.it].s;
   const itemEl = k => job.el.querySelector(`.mi-it[data-it="${k}"]`);
   const fresh = () => ({ band: true, box: true, pct: !!(job.shares && job.shares.got.length), B: 0,
-    it: Object.fromEntries(ITEMS.map(([k]) => [k, k === "north" ? { show: true, pin: true, x: null, y: null, w: 0 } : { show: true, pin: false, x: 0, y: 0, w: 0 }])) });
+    it: Object.fromEntries(ITEMS.map(([k]) => [k, k === "north" ? { show: true, pin: true, x: null, y: null, w: 0, s: 1, c: 1, rw: false } : { show: true, pin: false, x: 0, y: 0, w: 0, s: 1, c: 1, rw: false }])) });
+  /* per item: s (its scale, 60% to 200%, of its text and symbols), c (the legend's columns, 1 to 3) and rw (the user set its
+     width: o.w, in the layout's pixels, is then its width as drawn, whatever the scale; the scale bar and the north arrow have
+     no text to reflow, so their handle scales them). Widths are kept in the layout's pixels, which the file scales as a whole. */
+  const SMIN = 0.6, SMAX = 2, MINW = { legend: 120, title: 100, scale: 50, credits: 100, north: 30 };
+  const clampS = v => Math.min(SMAX, Math.max(SMIN, Math.round(v * 100) / 100));
+  const scaleOnly = k => k === "north" || k === "scale";
   // an item's texts made editable, and its handle
   function prepItem(el) {
-    [...el.children].forEach(c => { if (!c.classList.contains("sv-grip")) editTree(c); });
+    [...el.children].forEach(c => { if (!/\bsv-(grip|tb|rz)\b/.test(c.className)) editTree(c); });
     if (el.querySelector(":scope > .sv-grip")) return;
     const g = document.createElement("button"), n = ITEM_NAME[el.dataset.it].toLowerCase();
     g.type = "button"; g.className = "sv-grip"; g.innerHTML = GRIP;
     g.title = `Move the ${n}: drag it, or use the arrow keys`;
     g.setAttribute("aria-label", `Move the ${n}: arrow keys move it, with Shift in larger steps`);
     el.prepend(g);
+    const k = el.dataset.it, tb = document.createElement("div"), rz = document.createElement("button");
+    tb.className = "sv-tb"; tb.setAttribute("role", "toolbar"); tb.setAttribute("aria-label", `${ITEM_NAME[k]}: size`);
+    tb.innerHTML = `<button type="button" data-z="-1" title="Smaller text and symbols (key: -)" aria-label="Smaller">A\u2212</button><button type="button" data-z="1" title="Larger text and symbols (key: +)" aria-label="Larger">A+</button>`
+      + (k === "legend" ? `<span class="sv-cols" title="Columns of the legend's classes">${[1, 2, 3].map(c => `<button type="button" data-c="${c}" aria-label="${c} column${c > 1 ? "s" : ""}">${c}</button>`).join("")}</span>` : "");
+    rz.type = "button"; rz.className = "sv-rz";
+    rz.title = scaleOnly(k) ? `Make the ${n} larger or smaller: drag the corner` : `Change the ${n}'s width: drag the corner (with Shift: its size), or use the left and right arrow keys`;
+    rz.setAttribute("aria-label", `${scaleOnly(k) ? "Size" : "Width"} of the ${n}: left and right arrow keys change it`);
+    el.append(tb, rz);
   }
   function mountMap() {
     const w = document.createElement("div"), c = job.pv;
@@ -424,7 +440,7 @@ WG.downloads = (function () {
     items().forEach(prepItem);
     w.append(c, job.el);
     $("#svStage").appendChild(w);
-    $("#svHint").textContent = "Drag the legend, title, scale bar, north arrow or credits by its ✥ handle to place it anywhere on the image. Click or tap a text to change it; empty it, or use its ×, to leave it out.";
+    $("#svHint").textContent = "Drag the legend, title, scale bar, north arrow or credits by its ✥ handle to place it anywhere on the image; drag its corner square to change its width (with Shift: its size), or use A− A+ (and 1, 2, 3 columns for the legend). Click or tap a text to change it; empty it, or use its ×, to leave it out.";
     panel();
     place();
     // shares still measured when the dialog opened: added to the legend when they come, the option then offered
@@ -459,14 +475,20 @@ WG.downloads = (function () {
       if (o.pin) {
         if (el.parentElement !== R) R.appendChild(el);
         el.classList.add("mi-pin");
-        el.style.width = k === "legend" && o.w ? `${o.w}px` : "";
-        el.style.maxWidth = o.w ? `${o.w}px` : "";
+        const u = o.rw ? o.w / o.s : o.w;
+        el.style.width = (o.rw || k === "legend") && o.w ? `${u}px` : "";
+        el.style.maxWidth = o.w ? `${u}px` : "";
       } else { dock(el); el.classList.remove("mi-pin"); el.style.cssText = ""; }
+      el.style.zoom = o.s !== 1 ? String(o.s) : "";
+      el.style.setProperty("--zi", String(1 / o.s));
+      if (k === "legend" && o.c > 1) el.dataset.cols = o.c; else delete el.dataset.cols;
+      el.classList.toggle("sv-tb-low", o.pin && o.y < 50);
+      el.querySelectorAll(":scope > .sv-tb [data-c]").forEach(b => b.classList.toggle("on", +b.dataset.c === o.c));
       if (o.show && empty(el)) el.hidden = true;
     });
     // the north arrow's first place: the map's top right
     const n = LY.it.north, ne = itemEl("north");
-    if (ne && n.x === null) { n.x = W - job.edge - ne.offsetWidth; n.y = job.edge; }
+    if (ne && n.x === null) { n.x = W - job.edge - ow(ne); n.y = job.edge; }
     items().forEach(el => {
       const o = LY.it[el.dataset.it];
       if (o.pin) { el.style.left = `${o.x}px`; el.style.top = `${o.y}px`; }
@@ -477,7 +499,7 @@ WG.downloads = (function () {
     f.style.minHeight = ""; f.hidden = false;
     const flow = LY.band && [...f.querySelectorAll(".mi-it")].some(e => !e.hidden);
     let B = flow ? f.offsetHeight : 0;
-    if (LY.band) items().forEach(el => { const o = LY.it[el.dataset.it]; if (o.pin && !el.hidden && o.y + el.offsetHeight > H) B = Math.max(B, o.y + el.offsetHeight - H + job.edge); });
+    if (LY.band) items().forEach(el => { const o = LY.it[el.dataset.it]; if (o.pin && !el.hidden && o.y + oh(el) > H) B = Math.max(B, o.y + oh(el) - H + job.edge); });
     B = Math.ceil(Math.max(B, LY.band ? B0 : 0));
     f.hidden = !B;
     f.style.minHeight = `${B}px`;
@@ -493,7 +515,7 @@ WG.downloads = (function () {
     o.pin = true; o.x = p.x; o.y = p.y;
     place(LY.B);
     const cs = getComputedStyle(el), n = v => parseFloat(v) || 0;
-    o.x = p.x - n(cs.paddingLeft); o.y = p.y - n(cs.paddingTop); o.w = Math.ceil(w0 + n(cs.paddingLeft) + n(cs.paddingRight));
+    o.x = p.x - n(cs.paddingLeft) * o.s; o.y = p.y - n(cs.paddingTop) * o.s; o.w = Math.ceil(w0 + n(cs.paddingLeft) + n(cs.paddingRight));
     place(LY.B);
     return o;
   }
@@ -501,7 +523,7 @@ WG.downloads = (function () {
      no lower than the band at the move's start, or deep enough to hold the item), snapped to the edges, the corners and
      the middles when within 8 screen pixels (snap), with a guide line where it snapped */
   function moveTo(el, x, y, snap, B0) {
-    const o = LY.it[el.dataset.it], W = job.W, H = job.H, E = job.edge, w = el.offsetWidth, h = el.offsetHeight;
+    const o = LY.it[el.dataset.it], W = job.W, H = job.H, E = job.edge, w = ow(el), h = oh(el);
     const bot = LY.band ? H + Math.max(B0, h + 2 * E) - E : H; // the lowest its bottom can go
     x = Math.min(Math.max(x, 0), Math.max(0, W - w)); y = Math.min(Math.max(y, 0), Math.max(0, bot - h));
     let gx = null, gy = null;
@@ -527,10 +549,22 @@ WG.downloads = (function () {
       g.style.cssText = d === "v" ? `left:${v * s}px` : `top:${v * s}px`;
     });
   }
+  // the scale one step (10%) up or down, or the legend's columns, from the toolbar or the keys
+  function zoomBy(el, dir) {
+    LY.it[el.dataset.it].s = clampS(LY.it[el.dataset.it].s + dir * 0.1);
+    sizeMap(); say(el);
+  }
+  stage.addEventListener("click", e => {
+    const b = e.target.closest && e.target.closest(".sv-tb button");
+    if (!b || !job || job.kind !== "map" || !LY) return;
+    const el = b.closest(".mi-it"), o = LY.it[el.dataset.it];
+    if (b.dataset.z) zoomBy(el, +b.dataset.z); else if (b.dataset.c) { o.c = +b.dataset.c; sizeMap(); say(el); }
+    b.focus({ preventScroll: true });
+  });
   // where an item is, said for a screen reader after it is moved
   function say(el) {
     const o = LY.it[el.dataset.it], b = $("#svLive");
-    if (b) b.textContent = `${ITEM_NAME[el.dataset.it]}: ${Math.round((100 * o.x) / job.W)}% from the left, ${Math.round((100 * o.y) / (job.H + LY.B))}% from the top${o.y < job.H ? ", on the map" : ", under the map"}.`;
+    if (b) b.textContent = `${Math.round(o.s * 100)}% size${el.dataset.it === "legend" ? `, ${o.c} column${o.c > 1 ? "s" : ""}` : ""}. ` + `${ITEM_NAME[el.dataset.it]}: ${Math.round((100 * o.x) / job.W)}% from the left, ${Math.round((100 * o.y) / (job.H + LY.B))}% from the top${o.y < job.H ? ", on the map" : ", under the map"}.`;
   }
   // the preview's size for the layout as it is, at the scale it has (while an item is moved: refitted when it is let go)
   function frame() {
@@ -551,7 +585,15 @@ WG.downloads = (function () {
   stage.addEventListener("pointerdown", e => {
     if (!job || job.kind !== "map" || !LY || e.button > 0) return;
     const el = e.target.closest(".mi-it"), grip = e.target.closest(".sv-grip");
-    if (!el || !job.el.contains(el)) return;
+    if (!el || !job.el.contains(el) || e.target.closest(".sv-tb")) return;
+    if (e.target.closest(".sv-rz")) {
+      e.preventDefault();
+      const k = el.dataset.it, o = pin(el), r = el.getBoundingClientRect();
+      drag = { el, id: e.pointerId, sx: e.clientX, sy: e.clientY, B0: LY.B, on: false, rz: true, sc: scaleOnly(k) || e.shiftKey, w0: r.width / (job.sc || 1), s0: o.s };
+      try { stage.setPointerCapture(e.pointerId); } catch (x) { /* a pointer already gone */ }
+      e.target.closest(".sv-rz").focus({ preventScroll: true });
+      return;
+    }
     // a text is typed in; a finger moves an item by its handle (elsewhere it scrolls the preview), but the arrow by any part
     if (!grip && (edOf(e.target) || (e.pointerType === "touch" && el.dataset.it !== "north"))) return;
     e.preventDefault();
@@ -562,6 +604,11 @@ WG.downloads = (function () {
   stage.addEventListener("pointermove", e => {
     if (!drag || e.pointerId !== drag.id) return;
     const s = job.sc || 1, dx = (e.clientX - drag.sx) / s, dy = (e.clientY - drag.sy) / s;
+    if (drag.rz) {
+      if (!drag.on) { if (Math.abs(dx) * s < 3) return; drag.on = true; drag.el.classList.add("sv-drag"); showX(null); }
+      resizeTo(drag.el, drag, dx);
+      return;
+    }
     if (!drag.on) {
       if (Math.hypot(dx, dy) * s < 3) return;
       drag.on = true;
@@ -572,6 +619,13 @@ WG.downloads = (function () {
     }
     moveTo(drag.el, drag.x0 + dx, drag.y0 + dy, true, drag.B0);
   });
+  // an item's width (or, for a scale-only item or with Shift, its scale) from the drag's start, dx layout pixels on
+  function resizeTo(el, d, dx) {
+    const k = el.dataset.it, o = LY.it[k], w = Math.max(MINW[k], Math.min(d.w0 + dx, Math.max(MINW[k], job.W - o.x)));
+    if (d.sc) o.s = clampS(d.s0 * w / d.w0); else { o.rw = true; o.w = Math.round(w * 10) / 10; }
+    place(d.B0);
+    frame();
+  }
   const dragEnd = e => {
     if (!drag || (e.pointerId !== undefined && e.pointerId !== drag.id)) return;
     const d = drag;
@@ -580,14 +634,26 @@ WG.downloads = (function () {
     d.el.classList.remove("sv-drag");
     if (d.on) { sizeMap(); say(d.el); }
     // the handle keeps the focus (an item taken out of the band's flow loses it as it moves), for the arrow keys next
-    const g = d.el.querySelector(".sv-grip");
+    const g = d.el.querySelector(d.rz ? ".sv-rz" : ".sv-grip");
     if (g && document.activeElement !== g && d.el.isConnected) g.focus({ preventScroll: true });
   };
   ["pointerup", "pointercancel", "lostpointercapture"].forEach(ev => stage.addEventListener(ev, dragEnd));
   // the arrow keys on an item's handle: a step of one pixel of the layout, ten with Shift
   stage.addEventListener("keydown", e => {
     const g = e.target.closest && e.target.closest(".sv-grip"), d = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
-    if (!g || !d || !job || job.kind !== "map" || !LY) return;
+    if (!job || job.kind !== "map" || !LY) return;
+    const rz = e.target.closest && e.target.closest(".sv-rz"), zk = g && { "+": 1, "=": 1, "-": -1, "_": -1 }[e.key];
+    if (zk) { e.preventDefault(); zoomBy(g.closest(".mi-it"), zk); return; }
+    if (rz && d && d[0]) {
+      e.preventDefault();
+      const el = rz.closest(".mi-it"), k = el.dataset.it, o = pin(el), w0 = el.getBoundingClientRect().width / (job.sc || 1);
+      resizeTo(el, { w0, s0: o.s, sc: scaleOnly(k), B0: LY.B }, d[0] * (e.shiftKey ? 40 : 4));
+      rz.focus({ preventScroll: true });
+      clearTimeout(nudgeT);
+      nudgeT = setTimeout(() => { if (job && job.el && job.el.contains(el)) { sizeMap(); say(el); } }, 300);
+      return;
+    }
+    if (!g || !d) return;
     e.preventDefault();
     const el = g.closest(".mi-it"), o = pin(el), k = e.shiftKey ? 10 : 1;
     moveTo(el, o.x + d[0] * k, o.y + d[1] * k, false, LY.B);
@@ -630,16 +696,16 @@ WG.downloads = (function () {
   function ontoMap() {
     const W = job.W, H = job.H, E = job.edge, keys = [];
     // pinned where they are while the band still holds them, then the band goes
-    items().forEach(el => { const o = LY.it[el.dataset.it]; if (!o.pin || o.y + el.offsetHeight > H) { keys.push(el.dataset.it); pin(el); } });
+    items().forEach(el => { const o = LY.it[el.dataset.it]; if (!o.pin || o.y + oh(el) > H) { keys.push(el.dataset.it); pin(el); } });
     LY.band = false;
     const cap = { legend: Math.max(220, W * 0.45), credits: Math.max(200, W * 0.5), title: W - 3 * E - 40 };
     keys.forEach(k => { const o = LY.it[k]; if (cap[k]) o.w = Math.round(Math.min(o.w, cap[k])); });
     place();
-    const boxOf = el => ({ x: LY.it[el.dataset.it].x, y: LY.it[el.dataset.it].y, w: el.offsetWidth, h: el.offsetHeight });
+    const boxOf = el => ({ x: LY.it[el.dataset.it].x, y: LY.it[el.dataset.it].y, w: ow(el), h: oh(el) });
     const on = items().filter(el => !el.hidden && !keys.includes(el.dataset.it)).map(boxOf), G = 4;
     const hits = (a, b) => a.x < b.x + b.w + G && b.x < a.x + a.w + G && a.y < b.y + b.h + G && b.y < a.y + a.h + G;
     ["north", "title", "legend", "credits", "scale"].filter(k => keys.includes(k)).forEach(k => {
-      const el = itemEl(k), o = LY.it[k], w = el.offsetWidth, h = el.offsetHeight;
+      const el = itemEl(k), o = LY.it[k], w = ow(el), h = oh(el);
       if (el.hidden) { o.x = E; o.y = Math.max(0, H - E - h); return; } // placed when shown again: moved from there
       const corner = { tl: [E, E], tr: [W - E - w, E], bl: [E, H - E - h], br: [W - E - w, H - E - h] };
       const next = on.slice().reverse().flatMap(p => [[p.x + p.w - w, p.y - G - h], [p.x, p.y - G - h], [p.x, p.y + p.h + G], [p.x + p.w + G, p.y + p.h - h], [p.x - G - w, p.y + p.h - h]]);
@@ -865,7 +931,7 @@ WG.downloads = (function () {
     const j = job, d = dims(), f = j.el.cloneNode(true);
     if (d.px[0] < 50) return toast("Choose a larger size.");
     // the layout as edited and placed, without what was left out or hidden, the handles, or the marks that make it editable
-    f.querySelectorAll("[data-sv-gone], .mi-it[hidden], .sv-grip").forEach(e => e.remove());
+    f.querySelectorAll("[data-sv-gone], .mi-it[hidden], .sv-grip, .sv-tb, .sv-rz").forEach(e => e.remove());
     f.querySelectorAll(".sv-drag").forEach(e => e.classList.remove("sv-drag"));
     f.querySelectorAll(".sv-in").forEach(e => { ["contenteditable", "role", "aria-label", "spellcheck"].forEach(a => e.removeAttribute(a)); e.classList.remove("sv-in"); if (!e.classList.length) e.removeAttribute("class"); });
     toast("Making the map image…", 30000);
