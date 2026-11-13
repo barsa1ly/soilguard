@@ -159,7 +159,18 @@ WG.weather = (function () {
   }
   const siteLine = () => { const s = WG.state; return `${s.place ? `${s.place} · ` : ""}${s.site.lat.toFixed(4)}, ${s.site.lon.toFixed(4)}`; };
   const wait = what => `<div class="card"><p class="fine"><span class="skeleton" style="width:60%"></span></p><p class="fine">Reading ${esc(what)}…</p></div>`;
-  const failed = (what, e) => `<div class="card"><p class="fine">Could not read ${esc(what)}: ${esc(e.message || String(e))}. Pick the location again to retry.</p></div>`;
+  const failed = (what, e) => `<div class="card"><p class="fine">Could not read ${esc(what)}: ${esc(e.message || String(e))}. <button type="button" class="link wx-retry" data-wx-retry>Reload</button></p></div>`;
+  /* Reload on a part that could not be read: its tab is drawn again for this location. What was read is kept (once() and
+     the keep cache), so only the failed parts are asked again; the Soil maps tabs draw each other, so all four are redrawn. */
+  document.addEventListener("click", e => {
+    const b = e.target.closest && e.target.closest("[data-wx-retry]"), sec = b && b.closest("section.tab");
+    if (!sec || !WG.state.site) return;
+    const name = sec.id.replace(/^tab-/, "");
+    if (!RENDER[name]) return;
+    e.preventDefault();
+    (name.startsWith("soil") ? ["soiloverview", "soilmaps", "soilbasin", "soilmoist"] : [name]).forEach(n => { const s = document.getElementById(`tab-${n}`); if (s) s.dataset.key = ""; });
+    show(name, sec);
+  });
 
   const RENDER = {}; // tab -> async (el, live) => void, below
   const C = WG.charts.C, Ch = WG.charts;
@@ -446,7 +457,7 @@ WG.weather = (function () {
       let R;
       try {
         R = await usdmWeeks(lat, lon, usdmSpan, alive, (n, t) => { const x = alive() && at("drUsdmNote"); if (x) x.textContent = t ? `Reading the Drought Monitor at this point: ${n} of ${t} weeks (those read before come from this browser)…` : "From this browser…"; });
-      } catch (e) { if (alive() && (box = at("drUsdm"))) { box.innerHTML = top(esc(`The Drought Monitor could not be read: ${e.message || e}. Pick the location again to retry.`)); wire(); } return; }
+      } catch (e) { if (alive() && (box = at("drUsdm"))) { box.innerHTML = top(esc(`The Drought Monitor could not be read: ${e.message || e}.`) + ` <button type="button" class="link wx-retry" data-wx-retry>Reload</button>`); wire(); } return; }
       if (!alive() || !(box = at("drUsdm"))) return;
       const { days, dm } = R, n = dm.filter(v => v !== null).length, dry = dm.filter(v => v !== null && v >= 1).length, d0 = dm.filter(v => v === 0).length;
       const cls = v => DCLASS.find(c => c[0] === `D${v}`), col = v => (v === null || v < 0 ? "rgba(0,0,0,0)" : cls(v)[3]);

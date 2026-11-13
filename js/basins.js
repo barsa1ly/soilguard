@@ -346,7 +346,7 @@ WG.basins = (function () {
     const x = box("bsNet");
     if (!x) return;
     const N = M.net, hu = M.hu, h = N && N.here;
-    if (M.err.net) { x.innerHTML = `<p class="fine">Could not read the NHDPlus HR network: ${esc(M.err.net.message || String(M.err.net))}. Pick the location again to retry.</p>`; return; }
+    if (M.err.net) { x.innerHTML = `<p class="fine">Could not read the NHDPlus HR network: ${esc(M.err.net.message || String(M.err.net))}. <button type="button" class="link wx-retry" data-wx-retry>Reload</button></p>`; return; }
     if (!N) { x.innerHTML = `<p class="fine">Reading the NHDPlus HR flowlines and catchments inside the HU12 (about 5 s)…</p>`; return; }
     const ha = h && h.a, legend = `<div class="bs-leg">${RUN.colors.map((c, i) => `<span><i style="background:${c}"></i>${RUN.labels[i]}</span>`).join("")}<span><i class="sink"></i>drains to a sink</span><span><i class="here"></i>the point's catchment</span><span><i class="up"></i>upstream</span></div>`;
     x.innerHTML = `${kv([
@@ -412,7 +412,7 @@ WG.basins = (function () {
       <p class="fine"><b>Method:</b> SCS curve number (NRCS TR-55, 1986): Q = (P − Ia)² ÷ (P − Ia + S), S = 1000/CN − 10 in, Ia = 0.2 S, with the curve numbers of TR-55 Table 2-2 for average wetness (AMC II) for each NLCD 2021 class (wetlands, which the table lacks, 78 assumed) and soil group. At the point: its own 30 m cell and the dominant soil of its map unit. In the HU12: its classes counted in 30 m cells inside it (MRLC WCS) and the survey's groups by area; runoff is worked out for each land cover and soil group and then averaged (Q is not linear in CN), with land cover and soils taken as independent (no cell-by-cell overlay). <b>Limits:</b> an event method for one storm on average wetness, not a forecast or a yearly total; crude for cracking clays such as the Vertisols of the Blackland Prairie, and for frozen or very wet ground.</p>`;
     /* then the whole HU12 in one line: its design storm needs the shares of every class and soil group */
     const hu = () => {
-      if (M.err.soils || M.err.lc) return `<p class="fine">Could not read ${esc([M.err.soils && "the soil survey (SDA)", M.err.lc && "the land cover (MRLC)"].filter(Boolean).join(" or "))}: ${esc((M.err.soils || M.err.lc).message || "")}. Pick the location again to retry.</p>`;
+      if (M.err.soils || M.err.lc) return `<p class="fine">Could not read ${esc([M.err.soils && "the soil survey (SDA)", M.err.lc && "the land cover (MRLC)"].filter(Boolean).join(" or "))}: ${esc((M.err.soils || M.err.lc).message || "")}. <button type="button" class="link wx-retry" data-wx-retry>Reload</button></p>`;
       const miss = [!M.soils && "the soil survey's hydrologic groups", !M.lc && "the HU12's land cover"].filter(Boolean);
       if (miss.length) return `<p class="fine">Reading ${esc(miss.join(" and "))}…</p>`;
       if (M.a14 === undefined) return `<p class="fine">Reading the NOAA Atlas 14 depths…</p>`;
@@ -447,7 +447,7 @@ WG.basins = (function () {
     const x = box("bsRusleOut");
     if (!x) return;
     relabel();
-    if (M.err.soils || M.err.lc) { x.innerHTML = `<p class="fine">Could not read ${esc([M.err.soils && "the soil survey (SDA)", M.err.lc && "the land cover (MRLC)"].filter(Boolean).join(" or "))}. Pick the location again to retry.</p>${helpBox("What the letters mean", RUSLE_VARS, P_TABLE)}`; return; }
+    if (M.err.soils || M.err.lc) { x.innerHTML = `<p class="fine">Could not read ${esc([M.err.soils && "the soil survey (SDA)", M.err.lc && "the land cover (MRLC)"].filter(Boolean).join(" or "))}. <button type="button" class="link wx-retry" data-wx-retry>Reload</button></p>${helpBox("What the letters mean", RUSLE_VARS, P_TABLE)}`; return; }
     const miss = [!M.soils && "the soil survey's K, slope and slope length", !M.lc && "the land cover", M.R === undefined && "the R factor (NLDI, RF7100)"].filter(Boolean);
     if (miss.length) { x.innerHTML = `<p class="fine">Reading ${esc(miss.join(", "))}…</p>${helpBox("What the letters mean", RUSLE_VARS, P_TABLE)}`; return; }
     const S = M.soils, K = wmean(S, c => c.K), Ls = wmean(S, c => c.LS), KLS = wmean(S, c => (ok(c.K) && ok(c.LS) ? c.K * c.LS : null)), Tf = wmean(S, c => c.T);

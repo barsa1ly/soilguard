@@ -194,8 +194,9 @@
         attribution: "USDA-NRCS SSURGO" }), on: false },
   };
 
-  let baseKey = "sat";
-  bases.sat.layer.addTo(map);
+  let baseKey = "plain"; // Plain (no base map) under the data layers by default; Satellite and the others are in Layers
+  bases[baseKey].layer.addTo(map);
+  if (!bases[baseKey].labels) refs.labels.on = false; // the names overlay comes with the bases that carry it (setBase)
   Object.values(refs).forEach(r => r.on && r.layer.addTo(map));
   Object.values(themes).forEach(t => t.on && t.layer.addTo(map));
   Object.values(soilLayers).forEach(t => t.on && t.layer.addTo(map));
