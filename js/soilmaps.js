@@ -273,8 +273,11 @@ WG.soilmaps = (function () {
   const SG = "https://rest.isric.org/soilgrids/v2.0/properties/query";
   const sgL0 = j => ((j.properties || {}).layers || [])[0];
   async function sgNAt(lat, lon) {
-    const j = await fetchJSON(`${SG}?lon=${lon.toFixed(5)}&lat=${lat.toFixed(5)}&property=nitrogen&value=mean&value=Q0.05&value=Q0.95&${SGD.map(d => `depth=${d}`).join("&")}`, {}, 45000, 45000,
-      a => !!sgL0(a) && sgL0(a).depths.some(d => ok(num(d.values.mean))));
+    const j = await fetchJSON(`${SG}?lon=${lon.toFixed(5)}&lat=${lat.toFixed(5)}&property=nitrogen&value=mean&value=Q0.05&value=Q0.95&${SGD.map(d => `depth=${d}`).join("&")}`, {}, 15000, 15000,
+      a => !!sgL0(a) && sgL0(a).depths.some(d => ok(num(d.values.mean)))).catch(e => {
+      if (/did not answer|50[0234]|429|Failed to fetch|NetworkError/i.test(String(e && e.message))) throw new Error("SoilGrids' point service (rest.isric.org) is busy or down just now; the Total N map still shows. Try the location again in a few minutes");
+      throw e;
+    });
     const L0 = sgL0(j), f = (L0 && L0.unit_measure && L0.unit_measure.d_factor) || 100, g = v => (ok(num(v)) ? num(v) / f : null);
     return (L0 ? L0.depths : []).map(d => ({ label: d.label, t: d.range.top_depth, b: d.range.bottom_depth, mean: g(d.values.mean), lo: g(d.values["Q0.05"]), hi: g(d.values["Q0.95"]) }));
   }

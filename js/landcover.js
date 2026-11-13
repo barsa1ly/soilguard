@@ -150,7 +150,7 @@ WG.landcover = (function () {
     el.classList.toggle("min", min);
     host.className = "lc";
     host.innerHTML = `<h5><span>Land cover <small>NLCD 2021</small></span>${alone ? `<button class="lcMin">${min ? "show" : "hide"}</button>` : ""}</h5>
-      <div class="rows lc-key">${CLASSES.map(c => `<div class="row"><i class="sw" style="background:${c[2]}"></i><span>${esc(c[1])}</span></div>`).join("")}</div>
+      <div class="rows lc-key">${CLASSES.map(c => `<div class="row"><i class="sw" style="background:${c[2]}"></i><span>${esc(c[1]).replace(/\//g, "/<wbr>")}</span></div>`).join("")}</div>
       <p class="lnote"><button class="link lc-go" data-lc-go>Shares and curve numbers: Soil maps › Soil</button></p>`;
     el.appendChild(host);
     if (alone) host.querySelector(".lcMin").onclick = toggle;

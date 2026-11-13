@@ -235,6 +235,8 @@ svg { display: block; }
 .legend .lc-key { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 10px; font-size: 11px; line-height: 1.25; }
 .legend .lc-key .row { gap: 5px; margin: 2px 0; align-items: flex-start; }
 .legend .lc-key .sw { width: 12px; height: 10px; margin-top: 1px; }
+.legend .lc-key .row > span:not(.lpct) { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; } /* a long name takes two lines, clear of the % */
+.legend .lc-key .row > .lpct { min-width: 2.7em; padding-left: 4px; }
 .legend .lc-go { font-size: 11px; text-align: left; }
 .legend .lnote { color: var(--muted); margin: 6px 0 0; font-size: 11px; line-height: 1.35; }
 /* the long note under a legend is folded under a small button (app.js foldNotes) */
