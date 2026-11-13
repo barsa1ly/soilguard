@@ -4,9 +4,11 @@
    The map pane is drawn onto a canvas at its size on the screen, in the order the browser paints it: the base map's
    tiles, the overlays (each at its opacity, a layer's tiles faded together as on the screen), the reference lines and
    names, the outline and cover of the chosen states, the vector layers (watersheds, catchments, stations, a drawn
-   field) and the pins. Under it a footer, laid out in the page off the screen and drawn the same way: the legend on
-   show with its choices as text, the app's name, the place, when the image was made, a scale bar and the data
-   credits, each of which can be changed or left out in the dialog. A picture from another server can go into an image
+   field) and the pins. On it and under it, laid out in the page off the screen and drawn the same way, five items: the
+   legend on show with its choices as text (and each class's share of the area, from js/shares.js), a title (the app's
+   name, the place and when the image was made), a scale bar, a north arrow and the data credits. They start in a band
+   under the map, the north arrow on the map; the dialog moves each anywhere on the image, hides it, and changes or
+   leaves out its texts. A picture from another server can go into an image
    only when that server allows it (a CORS header): each is asked for again in that mode, and a layer whose server does
    not allow it is left out and named in the footer and the message. No library: the few kinds of things the map holds
    (pictures, canvases, SVG, boxes and text) are drawn here. */
@@ -257,7 +259,63 @@
   const KEY_GONE = "(The colour key did not load from the map's server.)";
   const keyNote = t => { const p = document.createElement("p"); p.className = "mi-fine mi-miss"; p.textContent = t; return p; };
 
-  /* ---------- the footer ---------- */
+  /* ---------- each class's share of the area, as a column at the end of the legend's rows ---------- */
+  /* A: WG.shares.forLegend's answer ({ of, rows: [{ label, color, pct }], none: { label, pct } | null, note }), for the
+     map's legend or (lc) the land cover's block in it. Each share goes on the legend row of its colour (else of its
+     label); a legend without such rows (the producer's picture, a colour scale) gets rows of its own, which take the
+     picture's place as in the live legend. The area with no colour ("No drought") is a row of its own, white. The % texts,
+     the added rows and the line saying what they are of hide together when the dialog's option is off (.mi-nopct). The
+     live legend's own column (js/shares.js: .lpct...) is not copied: this one is built from the same numbers. */
+  const PEND = {};
+  const norm = (() => { let cx = null; return c => { cx = cx || document.createElement("canvas").getContext("2d"); cx.fillStyle = "#010203"; cx.fillStyle = String(c || ""); const v = cx.fillStyle; return v === "#010203" ? "" : v; }; })();
+  // as the live legend writes them (js/shares.js), so both say the same
+  const pctTxt = v => (!Number.isFinite(v) ? "–" : v === 0 ? "0%" : v < 0.05 ? "<0.1%" : `${v.toFixed(1)}%`);
+  const rowLab = r => [...r.childNodes].filter(n => !(n.classList && (n.classList.contains("sw") || n.classList.contains("mi-pct")))).map(n => n.textContent).join(" ").replace(/\s+/g, " ").trim().toLowerCase();
+  // what the % are of and how they were measured, short: the answer's note gives the map image's pixel size
+  function pctNote(A) {
+    const px = /about ([\d.,]+)\s*(km|m)\b/.exec(A.note || ""), of = A.of || "the area on the map";
+    return px ? `% of ${of}, measured from the map at about ${px[1]} ${px[2]} a pixel.` : A.note ? `% of ${of}: ${A.note.replace(/[.\s]*$/, ".")}` : `% of ${of}, measured from the map.`;
+  }
+  function addPct(A, root, lc) {
+    const top = root && root.querySelector(".legend"), lg = top && (lc ? top.querySelector(":scope > .lc") : top);
+    const mine = r => lc || !r.closest(".lc"); // the map's legend leaves the land cover's block to its own answer
+    if (!A || !lg || [...lg.querySelectorAll(".mi-pct")].some(mine)) return false;
+    const swc = r => { const s = r.querySelector(":scope > .sw"); return s ? norm(s.style.backgroundColor) : ""; };
+    const rows = [...lg.querySelectorAll(".row")].filter(r => mine(r) && r.querySelector(":scope > .sw")), used = new Set();
+    const cell = (r, v) => { const s = document.createElement("span"); s.className = "mi-pct"; s.textContent = pctTxt(+v); r.appendChild(s); };
+    const same = l => String(l).replace(/\s+/g, " ").trim().toLowerCase();
+    const find = (c, l) => (c && norm(c) && rows.find(r => !used.has(r) && swc(r) === norm(c))) || (l && rows.find(r => !used.has(r) && rowLab(r) === same(l))) || null;
+    const row = (c, l, v, cls) => { const r = document.createElement("div"); r.className = `row ${cls}`; r.innerHTML = `<i class="sw" style="background:${esc(c)}"></i><span>${esc(l)}</span>`; cell(r, v); return r; };
+    const ok = x => x && Number.isFinite(+x.pct), add = [];
+    (A.rows || []).filter(ok).forEach(x => { const r = find(x.color, x.label); if (r) { used.add(r); cell(r, x.pct); } else add.push(x); });
+    let box = used.size ? [...used].pop().parentElement : null;
+    if (!box) {
+      box = document.createElement("div"); box.className = `rows mi-pcts${lc ? " lc-key" : ""}`;
+      const key = lg.querySelector(":scope > .rows"), at = lg.querySelector(":scope > .lnote, :scope > .lc");
+      if (key) { key.after(box); if (key.querySelector("img")) key.classList.add("mi-pctpic"); } else lg.insertBefore(box, at);
+    }
+    add.forEach(x => box.appendChild(row(x.color || "#fff", x.label || "", x.pct, "mi-pcts")));
+    if (ok(A.none)) { const r = find(null, A.none.label); if (r) { used.add(r); cell(r, A.none.pct); } else box.appendChild(row("#fff", A.none.label || "No data", A.none.pct, "mi-none")); }
+    if (!box.querySelector(".mi-pct")) { if (box.classList.contains("mi-pcts")) box.remove(); lg.querySelectorAll(".mi-pctpic").forEach(k => k.classList.remove("mi-pctpic")); return false; }
+    const n = document.createElement("p");
+    n.className = "mi-fine mi-pctnote"; n.textContent = pctNote(A);
+    box.after(n);
+    return true;
+  }
+  /* the legends whose live column is on show (js/shares.js current(): the map's legend, then the land cover's block in
+     it), each with the layer item to ask about; else the item the map button hands over (o.item) */
+  function shareAsks(o, lg) {
+    const S = WG.shares;
+    if (!S || typeof S.forLegend !== "function" || !lg) return [];
+    let out = [];
+    try { out = (typeof S.current === "function" ? S.current() : []).filter(x => x && x.item && x.el && (x.el === lg || lg.contains(x.el))).map(x => ({ lc: x.el !== lg, item: x.item })); } catch (e) { console.warn("shares", e); }
+    if (!out.length) { try { const it = typeof o.item === "function" ? o.item() : o.item; if (it) out.push({ lc: false, item: it }); } catch (e) { console.warn("shares", e); } }
+    return out;
+  }
+  // an answer kept already (ready), else measured (forLegend); null when the layer cannot be measured
+  const shareOf = a => { let r = null; try { r = WG.shares.ready ? WG.shares.ready(a.item) : null; } catch (e) { r = null; } return (r ? Promise.resolve(r) : Promise.resolve().then(() => WG.shares.forLegend(a.item))).then(A => ({ lc: a.lc, A: A || null }), e => { console.warn("shares", e); return { lc: a.lc, A: null }; }); };
+
+  /* ---------- the items: legend, title, scale bar, north arrow, credits ---------- */
   // Leaflet's rule: the longest round distance within the bar's length, along the map's middle
   function scaleBars(map, W, H) {
     const y = H / 2, max = Math.round(Math.min(160, Math.max(70, W * 0.3)));
@@ -266,11 +324,25 @@
     const km = m >= 1000, met = km ? round(m / 1000) * 1000 : round(m), mi = ft >= 5280, imp = mi ? round(ft / 5280) * 5280 : round(ft);
     return [[(max * met) / m, km ? `${met / 1000} km` : `${met} m`], [(max * imp) / ft, mi ? `${imp / 5280} mi` : `${imp} ft`]];
   }
+  /* a north arrow: on this map (Web Mercator) north is straight up everywhere, so it always points up. Its colours are
+     the SVG's own attributes, which the drawing keeps (it is drawn as a picture of the SVG, without the page's CSS) */
+  const NORTH = `<svg xmlns="${NS}" width="22" height="36" viewBox="0 0 22 36" role="img" aria-label="North arrow">
+    <path d="M6 12V2l10 10V2" fill="none" stroke="#fff" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" opacity=".8"/>
+    <path d="M6 12V2l10 10V2" fill="none" stroke="#1c2420" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M11 15l-7 19 7-5z" fill="#fff" stroke="#1c2420" stroke-width="1.3" stroke-linejoin="round"/>
+    <path d="M11 15l7 19-7-5z" fill="#1c2420" stroke="#1c2420" stroke-width="1.3" stroke-linejoin="round"/></svg>`;
+  const EDGE = 10; // the items' margin from the image's edges, in its own pixels (js/downloads.js snaps to it)
+  /* The layout (.mi-lay, the map's size on the screen, W × H, and the band under it): the band (.mi-foot) lays out the
+     legend, and beside it or under it the title, scale and credits, as the footer always was; an item moved in the dialog
+     is pinned (.mi-pin) at its place on the image instead. The north arrow starts pinned at the map's top right. */
   function footer(map, W, H, info, miss, noImg) {
-    const host = document.createElement("div"), f = document.createElement("div"), lg = document.getElementById("legend");
+    const host = document.createElement("div"), lay = document.createElement("div"), f = document.createElement("div"), lg = document.getElementById("legend");
+    const item = (k, html) => { const d = document.createElement("div"); d.className = "mi-it"; d.dataset.it = k; if (typeof html === "string") d.innerHTML = html; else d.appendChild(html); return d; };
     host.className = "mi-host"; host.style.width = `${W}px`;
-    f.className = "mi-foot";
-    host.appendChild(f);
+    lay.className = "mi-lay"; lay.style.width = `${W}px`;
+    f.className = "mi-foot"; f.style.top = `${H}px`;
+    lay.appendChild(f);
+    host.appendChild(lay);
     if (lg && !lg.hidden && lg.childElementCount) { // also while a phone's raised results hide it: it is still the map's legend
       const c = lg.cloneNode(true);
       c.removeAttribute("id"); c.removeAttribute("style"); c.hidden = false; c.classList.remove("min");
@@ -284,21 +356,35 @@
         sp.className = "mi-ctl"; sp.textContent = t ? `${t}: ${v}` : v;
         (lab && c.contains(lab) ? lab : d).replaceWith(sp);
       });
+      // the live legend's % column (js/shares.js) left out, its picture put back: the image's own is built (addPct)
+      c.querySelectorAll(".lpct-h, .lpct, .lpct-none, .lpct-list").forEach(x => x.remove());
+      c.querySelectorAll("[data-lpct-hid]").forEach(x => { x.hidden = false; x.removeAttribute("data-lpct-hid"); });
       c.querySelectorAll("button, script, [hidden]").forEach(b => b.remove());
       c.querySelectorAll("label").forEach(l => { if (!l.textContent.trim()) l.remove(); });
       c.querySelectorAll("[id]").forEach(n => n.removeAttribute("id"));
       c.querySelectorAll("img").forEach(i => { if (noImg.has(i.src)) i.replaceWith(keyNote(noImg.get(i.src))); });
-      f.appendChild(c);
+      f.appendChild(item("legend", c));
     }
     const m = document.createElement("div"), bars = scaleBars(map, W, H);
     m.className = "mi-meta";
-    m.innerHTML = `<div class="mi-name"><b>${esc(info.app)}</b>${info.where ? ` · ${esc(info.where)}` : ""}</div>
-      <div class="mi-fine">Map made ${esc(info.made)} (local time) · zoom ${map.getZoom()}</div>
-      <div class="mi-scale" title="Scale along the middle of the map">${bars.map(([w, t]) => `<span style="width:${w.toFixed(1)}px">${esc(t)}</span>`).join("")}</div>
-      <p class="mi-fine">Data: ${esc(info.credits.join("; ") || "see the map")}. Drawn with Leaflet.</p>
-      ${miss.length ? `<p class="mi-fine mi-miss">Not in this image: ${esc(miss.join("; "))}. ${missWhy(miss)} It shows on the map in ${esc(info.app)}.</p>` : ""}`;
+    m.append(item("title", `<div class="mi-name"><b>${esc(info.app)}</b>${info.where ? ` · ${esc(info.where)}` : ""}</div>
+      <div class="mi-fine">Map made ${esc(info.made)} (local time) · zoom ${map.getZoom()}</div>`),
+    item("scale", `<div class="mi-scale" title="Scale along the middle of the map">${bars.map(([w, t]) => `<span style="width:${w.toFixed(1)}px">${esc(t)}</span>`).join("")}</div>`),
+    item("credits", `<p class="mi-fine">Data: ${esc(info.credits.join("; ") || "see the map")}. Drawn with Leaflet.</p>
+      ${miss.length ? `<p class="mi-fine mi-miss">Not in this image: ${esc(miss.join("; "))}. ${missWhy(miss)} It shows on the map in ${esc(info.app)}.</p>` : ""}`));
     f.appendChild(m);
+    // its place as js/downloads.js gives it (.mi-pin: 6 px by 8 px of padding around the 22 × 36 arrow)
+    const n = item("north", NORTH);
+    n.classList.add("mi-pin", "mi-boxed");
+    n.style.cssText = `left:${W - EDGE - 38}px;top:${EDGE}px`;
+    lay.appendChild(n);
     return host;
+  }
+  // a layout's height when it has none of its own (the image straight away, not from the dialog): the map and the band
+  function fitLay(lay, H) {
+    if (lay.style.height) return;
+    const f = lay.querySelector(".mi-foot");
+    lay.style.height = `${H + (f && !f.hidden ? Math.ceil(f.offsetHeight) : 0)}px`;
   }
 
   /* ---------- the image ---------- */
@@ -310,10 +396,11 @@
     while (busy() && Date.now() < end) { waited = true; await nap(200); }
     if (waited) await nap(250);
   }
-  /* The map drawn once for the save dialog's preview, its footer built, and what makes the file later: the map drawn
+  /* The map drawn once for the save dialog's preview, its items built, and what makes the file later: the map drawn
      again at the scale chosen (its pictures, already copied, drawn sharper only where they are vector: the outlines and
-     pins) with the footer as edited in the dialog under it. o.shown: () => [{ name, layer }], the layers on show by the
-     app's names. Resolves to the dialog's job (js/downloads.js openSave). */
+     pins) with the items as edited and placed in the dialog. o.shown: () => [{ name, layer }], the layers on show by the
+     app's names; o.item: the layer whose legend is on show, as js/shares.js takes it (or a function giving it). Resolves
+     to the dialog's job (js/downloads.js openSave). */
   async function prepare(o = {}) {
     const map = WG.map, el = map.getContainer();
     await settle(map);
@@ -358,6 +445,15 @@
       else if (!(await copy(i))) { noImg.set(i.src, KEY_HELD); miss.add("the legend's colour key"); }
     }
     const host = footer(map, W, H, { app, where, made, credits }, [...miss], noImg);
+    /* each class's share of the area (js/shares.js), for the legend's % column: at once when known, else measured now; a
+       few seconds are waited for here, and shares that come later are added to the dialog's legend then (shares.wait).
+       got: [{ lc, A }] the answers in the legend */
+    const asks = host.querySelector('[data-it="legend"]') ? shareAsks(o, lg) : [], shares = { got: [], wait: null, none: !asks.length };
+    if (asks.length) {
+      const all = Promise.all(asks.map(shareOf)), r = await Promise.race([all, nap(2500).then(() => PEND)]);
+      if (r === PEND) shares.wait = all; else shares.got = r.filter(x => x.A && addPct(x.A, host, x.lc));
+      shares.none = !shares.wait && !shares.got.length;
+    }
     document.body.appendChild(host);
     try {
       // the footer's copies of the key laid out at their size; one that still has no picture is said in words, as above
@@ -371,26 +467,31 @@
     const stem = `${app.toLowerCase().replace(/[^a-z0-9]+/g, "")}-map-${slug}-${made.slice(0, 10)}`;
 
     /* the file: the map at k (the preview's own drawing when the same k, or when the map is no longer as it was then) and
-       under it the footer f, laid out off the screen at the map's width and drawn the same way */
-    async function compose(k, f) {
+       on it and under it the layout lay (as edited in the dialog: its items where they were placed, its height the map's
+       and the band's), laid out off the screen at the map's width and drawn the same way, each item where it is */
+    async function compose(k, lay) {
       moved = !same();
       const m = Math.abs(k - kp) < 1e-3 || moved ? pv : await drawMap(k), h = document.createElement("div");
       h.className = "mi-host"; h.style.width = `${W}px`;
-      h.appendChild(f);
+      h.appendChild(lay);
       document.body.appendChild(h);
       try {
+        fitLay(lay, H);
         const imgs = [...h.querySelectorAll("img")];
         await Promise.all(imgs.map(loaded));
-        const fr = f.getBoundingClientRect(), FH = Math.ceil(fr.height), g = surface(W, H + FH, k);
+        const r = lay.getBoundingClientRect(), HT = Math.max(H, Math.round(r.height)), g = surface(W, HT, k);
         g.save(); g.setTransform(1, 0, 0, 1, 0, 0); g.drawImage(m, 0, 0, Math.round(W * k), Math.round(H * k)); g.restore();
-        g.translate(0, H);
-        await paint(g, f, 1, { ox: fr.left, oy: fr.top, W, H: FH, k, copy, miss: new Set(), nameOf: () => "the legend's colour key", skip: null });
+        await paint(g, lay, 1, { ox: r.left, oy: r.top, W, H: HT, k, copy, miss: new Set(), nameOf: () => "the legend's colour key", skip: null });
         return g.canvas;
       } finally { h.remove(); if (m !== pv) m.width = 0; }
     }
     const left = [...miss];
-    return { kind: "map", head: "Save the map as an image", W, H, kp, pv, maxPx, miss: left, compose,
-      foot: () => f0.cloneNode(true), name: ext => `${stem}.${ext}`,
+    return { kind: "map", head: "Save the map as an image", W, H, kp, pv, maxPx, miss: left, compose, edge: EDGE,
+      lay: () => f0.cloneNode(true), name: ext => `${stem}.${ext}`,
+      // the legend's % column: { got: [{ lc, A }] in the legend, wait: a promise of [{ lc, A }] still measured, none: no
+      // shares for this map }; addPct(list, root) puts answers into a layout's legend (the dialog's, or with no root the
+      // one each new copy is made from) and returns those put in; pctNote(A) the line under them
+      shares, addPct: (list, root) => list.filter(x => x.A && addPct(x.A, root || f0, x.lc)), pctNote,
       // said when the file is saved
       get note() {
         return (moved ? " The map moved on the screen while this was open, so its picture is the preview's, at the screen's sharpness." : "")
@@ -412,11 +513,11 @@
       return j;
     } finally { busy = false; }
   }
-  /* the image straight away, as on screen with its footer as built: { blob (PNG), name, miss, width, height } */
+  /* the image straight away, as on screen with its items where they start: { blob (PNG), name, miss, width, height } */
   async function make(o = {}) {
     const j = await prepare(o);
     try {
-      const c = await j.compose(j.kp, j.foot());
+      const c = await j.compose(j.kp, j.lay());
       const blob = await new Promise((res, rej) => {
         try { c.toBlob(b => (b ? res(b) : rej(new Error("the browser could not make the PNG (the map may be too large)"))), "image/png"); }
         catch (e) { rej(new Error(`the browser would not copy a picture into it (${e.name})`)); }

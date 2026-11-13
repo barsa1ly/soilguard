@@ -65,7 +65,8 @@ WG.soilmaps = (function () {
      are left clear: 0, which the services hold where the survey has no value (except for organic matter, where 0 is real) */
   const rule = c => { const e = [c.min, ...c.lims, 1e6]; return { rasterFunction: "Colormap", variableName: "Raster", rasterFunctionArguments: { Colormap: c.colors.map((h, i) => [i + 1, ...rgb(h)]),
     Raster: { rasterFunction: "Remap", rasterFunctionArguments: { InputRanges: c.colors.flatMap((_, i) => [e[i], e[i + 1]]), OutputValues: c.colors.map((_, i) => i + 1), AllowUnmatched: false } } } }; };
-  const usfsUrl = k => (bbox, w, h) => `${USFS}${SVC[k][0]}/ImageServer/exportImage?${new URLSearchParams({ bbox, bboxSR: 3857, imageSR: 3857, size: `${w},${h}`, format: "png", transparent: true, f: "image",
+  // sr: the map's Web Mercator, or EPSG:4326 for the legend's % column (js/shares.js), whose box is in degrees
+  const usfsUrl = (k, sr = 3857) => (bbox, w, h) => `${USFS}${SVC[k][0]}/ImageServer/exportImage?${new URLSearchParams({ bbox, bboxSR: sr, imageSR: sr, size: `${w},${h}`, format: "png", transparent: true, f: "image",
     renderingRule: JSON.stringify(rule(SVC[k][2])), mosaicRule: JSON.stringify({ multidimensionalDefinition: [{ variableName: SVC[k][1], dimensionName: "Depth", values: [pick.depth] }] }) })}`;
   /* one image of the whole view from an ArcGIS exportImage, asked again after each move; the old image stays until the
      new one has loaded, so a pan never shows a blank map */
@@ -163,6 +164,15 @@ WG.soilmaps = (function () {
   }
   function redrawLegend() { if (lastLegend && lastLegend[1].on) drawLegend(...lastLegend); }
   const item = (key, name, sub, layer, o = {}) => ({ key, name, sub, layer, drawLegend, legend: { title: name }, note: "", opacity: 1.2, ...o });
+  /* how each map's classes are measured for the legend's % column (js/shares.js): the 30 m maps as one Forest Service
+     image of the box in EPSG:4326 at the depth chosen; salinity and sodicity from their statewide images; the USGS
+     elements and SoilGrids N from their WMS, the element's classes once its limits are read, N's scale cut at its ticks */
+  const NO_SURVEY = "No data (water, built-up or not surveyed)";
+  const usfsShares = k => ({ id: `usfs-${k}`, url: (b, w, h) => usfsUrl(k, 4326)(b.join(","), w, h), tag: () => String(pick.depth), none: NO_SURVEY });
+  const SHARES = { ph: usfsShares("ph"), cec: usfsShares("cec"), om: usfsShares("om"), ec: { id: "soil_ec", png: "soil_ec", none: NO_SURVEY }, sar: { id: "soil_sar", png: "soil_sar", none: NO_SURVEY },
+    chem: { id: "usgs-chem", wms: { url: USGS_WMS, layers: () => `${pick.hz}_${pick.el}` }, tag: () => `${pick.hz}_${pick.el}`, classes: it => chemLegend().then(() => legendOf(it).rows), none: "No data", full: true },
+    // SoilGrids' server fails an image of 1,200 px: 800
+    n: { id: "isric-n", wms: { url: ISRIC, layers: () => `nitrogen_${pick.nd}_mean` }, side: 800, tag: () => pick.nd, none: "No data (water, built-up)" } };
   const LAYERS = [
     item("ph", "Soil pH (1:1 water)", "USDA Forest Service from the soil survey, 30 m, four depths", new ViewImage(usfsUrl("ph"), { key: () => pick.depth, name: "The pH map", attribution: "USDA Forest Service, gNATSGO" }), { def: true }),
     item("cec", "Cation exchange capacity (CEC)", "the same, at pH 7, cmol(+)/kg", new ViewImage(usfsUrl("cec"), { key: () => pick.depth, name: "The CEC map", attribution: "USDA Forest Service, gNATSGO" })),
@@ -172,6 +182,7 @@ WG.soilmaps = (function () {
     item("chem", "Nutrients: total element", "USGS, about 1 site per 1,600 km²; TOTAL, not plant-available", chemLayer),
     item("n", "Total nitrogen", "ISRIC SoilGrids model, 250 m; not nitrate", nLayer),
   ];
+  LAYERS.forEach(x => { x.shares = SHARES[x.key]; });
   const byKey = k => LAYERS.find(x => x.key === k);
 
   // a choice made in the legend, the layer sheet or the tab: the layers it changes are asked again, and every select shows it

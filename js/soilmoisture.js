@@ -140,7 +140,19 @@ WG.soilmoisture = (function () {
     item("stations", "Soil moisture stations", "USDA SCAN and SNOTEL, NOAA USCRN: tap one", stationLayer, { title: "Soil moisture stations", rows: [["#2a78d6", "SCAN (USDA NRCS), 2–40 in"], ["#6250d6", "CSCAN (USDA NRCS cooperative)"], ["#1baf7a", "SNOTEL (USDA NRCS), mountains"], ["#eb6834", "USCRN (NOAA), 5–100 cm"]] },
       "Stations that measure soil moisture by depth and report it every hour. Tap a station (or any point): the Soil moisture tab gives the three nearest, their latest readings and their daily means over the chosen period. List of active stations made with tools/build_moisture.py."),
   ];
-  LAYERS.forEach(x => SM.layers.push(x));
+  /* how each map's classes are measured for the legend's % column (js/shares.js): the tiles of the box at a low zoom
+     (SMAP from GIBS, its scale cut at the legend's ticks; drought.gov's percentiles), the National Water Model as one
+     export of the box from its ArcGIS service (its WMS draws nothing at a whole state's scale) */
+  const NIDIS_BOX = [US_BOX.getSouth(), US_BOX.getWest(), US_BOX.getNorth(), US_BOX.getEast()];
+  // the day shown: the one chosen, else the latest GIBS holds (kept once read, so the latest chosen again is known at once)
+  let smapLatest = null;
+  const smapTag = () => pick.date || smapLatest || smapDays().then(D => (smapLatest = D.latest));
+  const smapShares = k => ({ id: `smap_${k}`, tiles: { url: () => smapUrl(k, pick.date), zmin: 2, zmax: 6 }, tag: smapTag, none: "No data (water, or not modelled)", full: true });
+  const SHARES = { smap_sf: smapShares("sf"), smap_rz: smapShares("rz"), nwm: { id: "nwm", rest: { url: NWM_REST.replace(/\/$/, ""), id: 3 }, none: "No data", full: true },
+    sport: { id: "sport", tiles: { url: `${NIDIS}nasa-sport-3km/{z}/{x}/{y}.png`, zmin: 2, zmax: 9, bounds: NIDIS_BOX }, none: "No data (water, or outside the model)" },
+    // GRACE leaves near normal clear: its legend's clear row takes the uncoloured share
+    grace: { id: "grace", tiles: { url: `${NIDIS}nasa-rtzsm-0.125d/{z}/{x}/{y}.png`, zmin: 2, zmax: 7, bounds: NIDIS_BOX }, none: "Near normal (30th–70th percentile, not coloured)" } };
+  LAYERS.forEach(x => { if (SHARES[x.key]) x.shares = SHARES[x.key]; SM.layers.push(x); });
   const T = Wx.THEMES.find(t => t.key === "soilmaps");
   if (T) T.note = `${T.note} Soil moisture: NASA SMAP by day since 2015, the National Water Model's saturation, drought.gov's percentiles and the stations that measure it; the Soil moisture tab gives the models, SMAP and the stations by depth over any period since 1950, year against year.`;
 

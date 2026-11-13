@@ -35,6 +35,14 @@ WG.weather = (function () {
     if (o.refresh) setInterval(() => { if (l._map) l.setParams({ _t: Date.now() }); }, o.refresh * 60e3); // a fresh image while on the map
     return l;
   }
+  /* how each layer's classes are measured for the legend's % column (js/shares.js): the colours from the code's own
+     table (the Drought Monitor's classes) or from the service's legend (ArcGIS legend JSON: the outlooks); the image of
+     the whole box from the same service as the map */
+  const DRO_REST = `${NOAA}vector/rest/services/outlooks/cpc_drought_outlk/MapServer`;
+  const DRO_NAMES = { persistence: "Drought persists", improvement: "Drought remains but improves", removal: "Drought removal likely", development: "Drought development likely", "no drought": "No drought" };
+  const droShares = (name, id) => ({ id: `dro${id}`, wms: { url: DRO, layers: name }, legendJSON: { url: DRO_REST, id }, relabel: L => L.map(([c, l]) => [c, DRO_NAMES[l.toLowerCase()] || l]), none: "No drought" });
+  // the Drought Monitor's classes, D0 first as its own legend
+  const dmClasses = () => DCLASS.slice().reverse().map(c => [c[3], `${c[0]} ${c[2]}`]);
 
   /* ---------- the date a layer shows ----------
      A layer of "this week", "the latest" or "now" gives the date or time it shows (dateOf: a string, or a promise of
@@ -81,23 +89,29 @@ WG.weather = (function () {
     return { key, name, def, layer, sub: weeksBack ? `the same week ${weeksBack === 52 ? "a year" : "five years"} before this week's map` : "this week's map, released Thursdays",
       note: `D0 abnormally dry, D1 moderate, D2 severe, D3 extreme, D4 exceptional drought. ${USDM_DATED} ${USDM_CREDIT}`,
       legend: { title: name, img: legendImg(USDM("usdm_current_wms"), "usdm_current") },
-      dateOf: () => usdmDate().then(d => Wd.dayLabel(d - (weeksBack || 0) * 7)) };
+      dateOf: () => usdmDate().then(d => Wd.dayLabel(d - (weeksBack || 0) * 7)),
+      // the week's own dated map (the same as usdm_current for this week; kept in the browser as a dated week)
+      shares: { id: key, tag: () => usdmDate().then(d => d - (weeksBack || 0) * 7), url: (b, W, H, t) => usdmMapUrl(+t, b, W, H), classes: dmClasses, none: "No drought" } };
   };
+  // the week chosen on the bar is in the past-week layer's name (usdm20261104); this week's until one is chosen
+  const usdmPast = TM.usdmLayer();
+  const pastWeek = () => { const m = /^usdm(\d{4})(\d\d)(\d\d)$/.exec(usdmPast.wmsParams.layers || ""); return m ? Date.UTC(+m[1], +m[2] - 1, +m[3]) / 864e5 : usdmDate(); };
   const USDM_DATED = "The date is the Tuesday the map is valid for; it comes out two days later.";
   const layers = {
     drought: [
       usdmLayer("usdm", "Drought Monitor, this week", 0, true),
       usdmLayer("usdm1", "Drought Monitor, a year ago", 52),
       usdmLayer("usdm5", "Drought Monitor, five years ago", 261),
-      { key: "usdmPast", name: "Drought Monitor, a past week", sub: "any week since January 2000: choose the year and month", layer: TM.usdmLayer(),
+      { key: "usdmPast", name: "Drought Monitor, a past week", sub: "any week since January 2000: choose the year and month", layer: usdmPast,
         note: `D0 abnormally dry, D1 moderate, D2 severe, D3 extreme, D4 exceptional drought. ${USDM_DATED} ${USDM_CREDIT}`,
-        legend: { title: "Drought Monitor, a past week", img: legendImg(USDM("usdm_current_wms"), "usdm_current") }, dateOf: () => TM.label("usdm").replace(/^Week of /, "") || null }, // the week chosen on the bar
+        legend: { title: "Drought Monitor, a past week", img: legendImg(USDM("usdm_current_wms"), "usdm_current") }, dateOf: () => TM.label("usdm").replace(/^Week of /, "") || null, // the week chosen on the bar
+        shares: { id: "usdmPast", tag: pastWeek, url: (b, W, H, t) => usdmMapUrl(+t, b, W, H), classes: dmClasses, none: "No drought" } },
       { key: "dro1", name: "Drought outlook, this month", sub: "NOAA Climate Prediction Center", layer: wms(DRO, "5", { attribution: "NOAA CPC" }), dateOf: droTo(1),
         note: "Where drought is expected to persist, improve, end or develop by the end of the month: NOAA Climate Prediction Center's monthly drought outlook, issued on the month's last day.",
-        legend: { title: "Monthly drought outlook", img: legendImg(DRO, "5") } },
+        legend: { title: "Monthly drought outlook", img: legendImg(DRO, "5") }, shares: droShares("5", 1) },
       { key: "dro3", name: "Drought outlook, this season", sub: "NOAA Climate Prediction Center, three months", layer: wms(DRO, "2", { attribution: "NOAA CPC" }), dateOf: droTo(4),
         note: "The same over the next three months: NOAA Climate Prediction Center's seasonal drought outlook, issued on the third Thursday of the month.",
-        legend: { title: "Seasonal drought outlook", img: legendImg(DRO, "2") } },
+        legend: { title: "Seasonal drought outlook", img: legendImg(DRO, "2") }, shares: droShares("2", 4) },
     ],
   };
 
@@ -127,8 +141,10 @@ WG.weather = (function () {
       <button id="legendMin">${min ? "show" : "hide"}</button></h5>${body}<p class="lnote" id="legendNote">${esc(it.note || "")}</p>`;
     $("#legendMin").onclick = toggle;
     if (d0 && typeof d0 !== "string") put(d0);
-    if (it.dateOf && it.refresh) dateT = setInterval(() => { if (it.on) put(dateNow()); else clearInterval(dateT); }, it.refresh * 60e3);
+    // a layer that updates: its date read again at its own interval, and its % column (a new image is measured anew)
+    if (it.dateOf && it.refresh) dateT = setInterval(() => { if (!it.on) { clearInterval(dateT); return; } put(dateNow()); if (WG.shares && my === dseq) WG.shares.attach(el, it); }, it.refresh * 60e3);
     if (it.when) it.when().then(t => { const n = $("#legendNote"); if (n && t && el.contains(n)) n.textContent = `${it.note || ""} ${t}`.trim(); }).catch(() => {});
+    if (WG.shares) WG.shares.attach(el, it); // each class's % of the states or your boundary (js/shares.js)
   }
 
   /* ---------- the panel's tabs ---------- */

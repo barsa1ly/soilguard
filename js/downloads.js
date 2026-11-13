@@ -119,8 +119,10 @@ WG.downloads = (function () {
     backTo = f.back || null;
   }
   /* the map's part (js/mapimage.js): { kind: "map", head, W, H (the map's size in CSS pixels), pv (its preview canvas),
-     maxPx (the most pixels to draw), foot() (a new copy of the footer), compose(k, footer) (the image at k pixels per CSS
-     pixel, the footer as edited under the map), name(ext), note (said when saved), release() } */
+     maxPx (the most pixels to draw), lay() (a new copy of the layout: the items in the band, the north arrow on the map),
+     edge (the items' margin), shares ({ A, wait, none }: the legend's % of area) and addPct(A, root), compose(k, layout)
+     (the image at k pixels per CSS pixel, the items as edited where they were placed), name(ext), note (said when saved),
+     release() } */
   function openSave(j, from) { backTo = null; begin(j, from); }
   function begin(j, from) {
     end();
@@ -146,7 +148,11 @@ WG.downloads = (function () {
     const st = $("#svStage");
     st.innerHTML = ""; st.removeAttribute("style");
     showX(null);
-    job = null; figId = null;
+    job = null; figId = null; LY = null; drag = null;
+    clearTimeout(nudgeT);
+    const p = $("#svLay");
+    if (p) p.remove();
+    $("#svHint").textContent = HINT0;
   }
 
   /* ---------- size and resolution ---------- */
@@ -180,10 +186,10 @@ WG.downloads = (function () {
     showSize(w * k, h * k, unit);
     update();
   }
-  // the map's height (its footer grows and shrinks as its texts change) over its width; its height box follows the width
+  // the map's height (its band grows and shrinks as its texts and items change) over its width; its height box follows the width
   const aspect = () => (job.H + footH()) / job.W;
-  // the footer's height as the file will have it (js/mapimage.js: its exact height rounded up), not scaled by the preview
-  const footH = () => Math.ceil(job.el.getBoundingClientRect().height / (job.sc || 1) - 0.01);
+  // the band's height under the map as the file will have it (whole pixels of the layout), not scaled by the preview
+  const footH = () => (LY ? LY.B : 0);
   function fitHeight() {
     if (!figSize) return;
     figSize.h = figSize.w * aspect();
@@ -210,7 +216,7 @@ WG.downloads = (function () {
     $("#svPv").classList.toggle("off", csv);
     const px = `${d.px[0].toLocaleString()} × ${d.px[1].toLocaleString()} pixels (${fmt(mp, 1)} megapixels)`, inch = `${fmt(d.wIn, 2)} × ${fmt(d.hIn, 2)} in (${fmt(d.wIn * 2.54, 1)} × ${fmt(d.hIn * 2.54, 1)} cm)`;
     $("#figInfo").textContent = job.kind === "map"
-      ? `${px}, ${+d.k.toFixed(2)}× the map on the screen; ${inch} at ${d.dpi} dpi, which is written into the file.${d.capped ? " That is as large as this device can draw it." : ""} The base map's and layers' pictures keep the detail they have on the screen; outlines, the pin and the footer are drawn sharp at any size.`
+      ? `${px}, ${+d.k.toFixed(2)}× the map on the screen; ${inch} at ${d.dpi} dpi, which is written into the file.${d.capped ? " That is as large as this device can draw it." : ""} The base map's and layers' pictures keep the detail they have on the screen; outlines, the pin, the legend, scale bar, north arrow and texts are drawn sharp at any size, each where it is on the preview.`
       : csv ? "The values plotted, in the units chosen in the units table. The texts on the preview are for the image formats."
         : fmtSel === "svg" ? `${fmt(d.wIn, 2)} × ${fmt(d.hIn, 2)} in vector drawing; it stays sharp at any size.`
           : `${px} at ${d.dpi} dpi, ${inch}. The DPI is written into the file.` + (mp > 60 ? " This is very large; your browser may run out of memory." : "");
@@ -380,25 +386,276 @@ WG.downloads = (function () {
     old.forEach(e => { if (e !== now) e.remove(); });
   }
 
-  /* ---------- the map's preview: its picture, and under it the footer to edit, scaled together ---------- */
+  /* ---------- the map's preview: its picture, and on it and under it the items to place and edit, scaled together ---------- */
+  /* The items (js/mapimage.js): the legend, title, scale bar, north arrow and credits. Each starts in the band under the
+     map (the north arrow on the map) and is dragged anywhere on the image by its handle, or by any part that is not a
+     text (a finger only by the handle, so the preview still scrolls), or moved with the arrow keys from its handle; it
+     snaps to the image's edges, corners and middles. A moved item is pinned at its place in the layout's own pixels (the
+     map's size on the screen, and the band), which the file scales as a whole: it lands at the same place at any size or
+     DPI. The band grows and shrinks to hold what is in it, and can be turned off, which moves what it held onto the map.
+     LY: { band, box (a light box behind items on the map), pct (the legend's % column), B (the band's height), it: key ->
+     { show, pin, x, y, w (its width when pinned) } } */
+  const stage = $("#svStage"), pvBox = $("#svPv"), xBtn = $("#svX");
+  const ITEMS = [["legend", "Legend"], ["title", "Title"], ["scale", "Scale bar"], ["north", "North arrow"], ["credits", "Credits"]];
+  const ITEM_NAME = Object.fromEntries(ITEMS), FLOW = ["title", "scale", "credits"]; // the band's second column, in order
+  const HINT0 = $("#svHint").textContent;
+  const GRIP = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M3 12h18M12 3 9.5 5.5M12 3l2.5 2.5M12 21l-2.5-2.5M12 21l2.5-2.5M3 12l2.5-2.5M3 12l2.5 2.5M21 12l-2.5-2.5M21 12l-2.5 2.5"/></svg>`;
+  let LY = null, drag = null, nudgeT = 0;
+  const items = () => (job && job.el ? [...job.el.querySelectorAll(".mi-it")] : []);
+  const itemEl = k => job.el.querySelector(`.mi-it[data-it="${k}"]`);
+  const fresh = () => ({ band: true, box: true, pct: !!(job.shares && job.shares.got.length), B: 0,
+    it: Object.fromEntries(ITEMS.map(([k]) => [k, k === "north" ? { show: true, pin: true, x: null, y: null, w: 0 } : { show: true, pin: false, x: 0, y: 0, w: 0 }])) });
+  // an item's texts made editable, and its handle
+  function prepItem(el) {
+    [...el.children].forEach(c => { if (!c.classList.contains("sv-grip")) editTree(c); });
+    if (el.querySelector(":scope > .sv-grip")) return;
+    const g = document.createElement("button"), n = ITEM_NAME[el.dataset.it].toLowerCase();
+    g.type = "button"; g.className = "sv-grip"; g.innerHTML = GRIP;
+    g.title = `Move the ${n}: drag it, or use the arrow keys`;
+    g.setAttribute("aria-label", `Move the ${n}: arrow keys move it, with Shift in larger steps`);
+    el.prepend(g);
+  }
   function mountMap() {
     const w = document.createElement("div"), c = job.pv;
     w.className = "sv-map"; w.style.width = `${job.W}px`;
     c.classList.add("sv-art"); c.style.cssText = `display:block;width:${job.W}px;height:${job.H}px`;
-    job.el = job.foot();
-    editTree(job.el);
+    job.el = job.lay();
+    LY = fresh();
+    items().forEach(prepItem);
     w.append(c, job.el);
     $("#svStage").appendChild(w);
+    $("#svHint").textContent = "Drag the legend, title, scale bar, north arrow or credits by its ✥ handle to place it anywhere on the image. Click or tap a text to change it; empty it, or use its ×, to leave it out.";
+    panel();
+    place();
+    // shares still measured when the dialog opened: added to the legend when they come, the option then offered
+    const j = job;
+    if (j.shares && j.shares.wait) j.shares.wait.then(list => {
+      if (job !== j) return;
+      const lg = itemEl("legend"), got = j.addPct(list);
+      j.shares.wait = null;
+      if (got.length && lg && j.addPct(got, lg).length) { j.shares.got = got; prepItem(lg); LY.pct = true; } else j.shares.none = true;
+      panel(); sizeMap();
+    });
+  }
+  // the layout's position of an item's top left (its box's border edge), whatever the preview's scale
+  const posOf = el => { const a = el.getBoundingClientRect(), b = job.el.getBoundingClientRect(), s = job.sc || 1; return { x: (a.left - b.left) / s, y: (a.top - b.top) / s }; };
+  // an item with nothing left in it to draw (all its texts left out) is not drawn
+  const empty = el => ![...el.querySelectorAll("img, canvas, svg, .sv-in, .lscale")].some(x => !x.closest("[data-sv-gone], .sv-grip"));
+  // an item back in the band's flow, at its own place there
+  function dock(el) {
+    const f = job.el.querySelector(".mi-foot"), meta = f.querySelector(".mi-meta"), k = el.dataset.it;
+    if (k === "legend") { if (el.parentElement !== f) f.prepend(el); return; }
+    if (el.parentElement === meta) return;
+    meta.insertBefore(el, FLOW.slice(FLOW.indexOf(k) + 1).map(x => meta.querySelector(`:scope > [data-it="${x}"]`)).find(Boolean) || null);
+  }
+  /* the items where the layout says, and the band's height to hold what is in it (at least B0 while an item is moved, so
+     the image does not jump under the pointer); returns it */
+  function place(B0 = 0) {
+    if (!LY || !job || !job.el) return 0;
+    const R = job.el, f = R.querySelector(".mi-foot"), H = job.H, W = job.W;
+    items().forEach(el => {
+      const k = el.dataset.it, o = LY.it[k];
+      el.hidden = !o.show;
+      if (o.pin) {
+        if (el.parentElement !== R) R.appendChild(el);
+        el.classList.add("mi-pin");
+        el.style.width = k === "legend" && o.w ? `${o.w}px` : "";
+        el.style.maxWidth = o.w ? `${o.w}px` : "";
+      } else { dock(el); el.classList.remove("mi-pin"); el.style.cssText = ""; }
+      if (o.show && empty(el)) el.hidden = true;
+    });
+    // the north arrow's first place: the map's top right
+    const n = LY.it.north, ne = itemEl("north");
+    if (ne && n.x === null) { n.x = W - job.edge - ne.offsetWidth; n.y = job.edge; }
+    items().forEach(el => {
+      const o = LY.it[el.dataset.it];
+      if (o.pin) { el.style.left = `${o.x}px`; el.style.top = `${o.y}px`; }
+      el.classList.toggle("mi-boxed", o.pin && LY.box && o.y < H);
+    });
+    const lg = itemEl("legend");
+    if (lg) lg.classList.toggle("mi-nopct", !LY.pct);
+    f.style.minHeight = ""; f.hidden = false;
+    const flow = LY.band && [...f.querySelectorAll(".mi-it")].some(e => !e.hidden);
+    let B = flow ? f.offsetHeight : 0;
+    if (LY.band) items().forEach(el => { const o = LY.it[el.dataset.it]; if (o.pin && !el.hidden && o.y + el.offsetHeight > H) B = Math.max(B, o.y + el.offsetHeight - H + job.edge); });
+    B = Math.ceil(Math.max(B, LY.band ? B0 : 0));
+    f.hidden = !B;
+    f.style.minHeight = `${B}px`;
+    R.style.height = `${H + B}px`;
+    LY.B = B;
+    return B;
+  }
+  // an item pinned where it is now (once moved); its content stays put as the pinned box's padding is added around it
+  function pin(el) {
+    const o = LY.it[el.dataset.it];
+    if (o.pin) return o;
+    const p = posOf(el), w0 = el.dataset.it === "legend" ? el.offsetWidth : el.parentElement.clientWidth;
+    o.pin = true; o.x = p.x; o.y = p.y;
+    place(LY.B);
+    const cs = getComputedStyle(el), n = v => parseFloat(v) || 0;
+    o.x = p.x - n(cs.paddingLeft); o.y = p.y - n(cs.paddingTop); o.w = Math.ceil(w0 + n(cs.paddingLeft) + n(cs.paddingRight));
+    place(LY.B);
+    return o;
+  }
+  /* an item moved to x, y (its top left, in the layout's pixels): kept on the image (in the band only while it is on, and
+     no lower than the band at the move's start, or deep enough to hold the item), snapped to the edges, the corners and
+     the middles when within 8 screen pixels (snap), with a guide line where it snapped */
+  function moveTo(el, x, y, snap, B0) {
+    const o = LY.it[el.dataset.it], W = job.W, H = job.H, E = job.edge, w = el.offsetWidth, h = el.offsetHeight;
+    const bot = LY.band ? H + Math.max(B0, h + 2 * E) - E : H; // the lowest its bottom can go
+    x = Math.min(Math.max(x, 0), Math.max(0, W - w)); y = Math.min(Math.max(y, 0), Math.max(0, bot - h));
+    let gx = null, gy = null;
+    if (snap) {
+      // only places on the image: an item wider than the map less its margins snaps to neither side
+      const T = 8 / (job.sc || 1), near = (v, cs, hi) => cs.filter(c => c[0] >= 0 && c[0] <= hi).reduce((b, c) => (Math.abs(v - c[0]) <= T && (!b || Math.abs(v - c[0]) < Math.abs(v - b[0])) ? c : b), null);
+      const sx = near(x, [[E, E], [W - E - w, W - E], [(W - w) / 2, W / 2]], W - w);
+      const sy = near(y, [[E, E], [H - E - h, H - E], [(H - h) / 2, H / 2], ...(LY.band ? [[H + E, H + E], [bot - h, bot]] : [])], bot - h);
+      if (sx) [x, gx] = sx;
+      if (sy) [y, gy] = sy;
+    }
+    o.x = Math.round(x * 10) / 10; o.y = Math.round(y * 10) / 10;
+    place(B0);
+    frame();
+    guides(gx, gy);
+  }
+  function guides(gx, gy) {
+    const st = $("#svStage"), s = job ? job.sc || 1 : 1;
+    [["v", gx], ["h", gy]].forEach(([d, v]) => {
+      let g = st.querySelector(`.sv-guide.${d}`);
+      if (v === null) { if (g) g.remove(); return; }
+      if (!g) { g = document.createElement("i"); g.className = `sv-guide ${d}`; st.appendChild(g); }
+      g.style.cssText = d === "v" ? `left:${v * s}px` : `top:${v * s}px`;
+    });
+  }
+  // where an item is, said for a screen reader after it is moved
+  function say(el) {
+    const o = LY.it[el.dataset.it], b = $("#svLive");
+    if (b) b.textContent = `${ITEM_NAME[el.dataset.it]}: ${Math.round((100 * o.x) / job.W)}% from the left, ${Math.round((100 * o.y) / (job.H + LY.B))}% from the top${o.y < job.H ? ", on the map" : ", under the map"}.`;
+  }
+  // the preview's size for the layout as it is, at the scale it has (while an item is moved: refitted when it is let go)
+  function frame() {
+    const st = $("#svStage"), s = job.sc || 1, w = st.firstElementChild;
+    w.style.transform = `scale(${s})`; w.style.setProperty("--inv", String(1 / s));
+    st.style.width = `${job.W * s}px`; st.style.height = `${(job.H + LY.B) * s}px`;
   }
   function drawMap() {
-    const Ht = job.H + footH(), s = fitScale(job.W, Ht), st = $("#svStage");
-    st.firstElementChild.style.transform = `scale(${s})`;
+    if (drag && drag.on) return; // not refitted under the pointer
+    const B = place(), s = fitScale(job.W, job.H + B);
     job.sc = s;
-    st.style.width = `${job.W * s}px`; st.style.height = `${Ht * s}px`;
+    frame();
     showX(act);
   }
-  // a footer text changed: the image's height follows
-  function sizeMap() { fitHeight(); update(); }
+  // a text or the layout changed: the image's height follows
+  function sizeMap() { place(); fitHeight(); update(); }
+
+  stage.addEventListener("pointerdown", e => {
+    if (!job || job.kind !== "map" || !LY || e.button > 0) return;
+    const el = e.target.closest(".mi-it"), grip = e.target.closest(".sv-grip");
+    if (!el || !job.el.contains(el)) return;
+    // a text is typed in; a finger moves an item by its handle (elsewhere it scrolls the preview), but the arrow by any part
+    if (!grip && (edOf(e.target) || (e.pointerType === "touch" && el.dataset.it !== "north"))) return;
+    e.preventDefault();
+    drag = { el, id: e.pointerId, sx: e.clientX, sy: e.clientY, B0: LY.B, on: false };
+    try { stage.setPointerCapture(e.pointerId); } catch (x) { /* a pointer already gone */ }
+    el.querySelector(".sv-grip").focus({ preventScroll: true });
+  });
+  stage.addEventListener("pointermove", e => {
+    if (!drag || e.pointerId !== drag.id) return;
+    const s = job.sc || 1, dx = (e.clientX - drag.sx) / s, dy = (e.clientY - drag.sy) / s;
+    if (!drag.on) {
+      if (Math.hypot(dx, dy) * s < 3) return;
+      drag.on = true;
+      const o = pin(drag.el);
+      drag.x0 = o.x; drag.y0 = o.y;
+      drag.el.classList.add("sv-drag");
+      showX(null);
+    }
+    moveTo(drag.el, drag.x0 + dx, drag.y0 + dy, true, drag.B0);
+  });
+  const dragEnd = e => {
+    if (!drag || (e.pointerId !== undefined && e.pointerId !== drag.id)) return;
+    const d = drag;
+    drag = null;
+    guides(null, null);
+    d.el.classList.remove("sv-drag");
+    if (d.on) { sizeMap(); say(d.el); }
+    // the handle keeps the focus (an item taken out of the band's flow loses it as it moves), for the arrow keys next
+    const g = d.el.querySelector(".sv-grip");
+    if (g && document.activeElement !== g && d.el.isConnected) g.focus({ preventScroll: true });
+  };
+  ["pointerup", "pointercancel", "lostpointercapture"].forEach(ev => stage.addEventListener(ev, dragEnd));
+  // the arrow keys on an item's handle: a step of one pixel of the layout, ten with Shift
+  stage.addEventListener("keydown", e => {
+    const g = e.target.closest && e.target.closest(".sv-grip"), d = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+    if (!g || !d || !job || job.kind !== "map" || !LY) return;
+    e.preventDefault();
+    const el = g.closest(".mi-it"), o = pin(el), k = e.shiftKey ? 10 : 1;
+    moveTo(el, o.x + d[0] * k, o.y + d[1] * k, false, LY.B);
+    g.focus({ preventScroll: true });
+    clearTimeout(nudgeT);
+    nudgeT = setTimeout(() => { if (job && job.el && job.el.contains(el)) { sizeMap(); say(el); } }, 300);
+  });
+
+  /* the layout's options, beside the size and format: each item shown or not, the legend's % column, the light box, the
+     band, and the layout as it started */
+  function panel() {
+    let p = $("#svLay");
+    if (!p) {
+      p = document.createElement("div"); p.id = "svLay"; p.className = "sv-lay";
+      $("#figSheet .sv-side").appendChild(p);
+      p.addEventListener("change", onPanel);
+      p.addEventListener("click", e => { if (e.target.closest("#svLayReset")) resetLayout(); });
+    }
+    const S = job.shares || {}, ok = !!(S.got && S.got.length), why = ok ? job.pctNote(S.got[0].A).replace(/\.$/, "") : S.wait ? "Measuring each class's share of the map…" : "Not available for this map";
+    p.innerHTML = `<h4>Layout</h4><div class="sv-its">${ITEMS.filter(([k]) => itemEl(k)).map(([k, n]) => `<label class="toggle"><input type="checkbox" data-show="${k}"${LY.it[k].show ? " checked" : ""}><span>${n}</span></label>`).join("")}</div>
+      ${itemEl("legend") ? `<label class="toggle"><input type="checkbox" id="svPct"${ok && LY.pct ? " checked" : ""}${ok ? "" : " disabled"}><span>Show % of area for each class<small>${esc(why)}</small></span></label>` : ""}
+      <label class="toggle"><input type="checkbox" id="svBox"${LY.box ? " checked" : ""}><span>Light box behind items on the map</span></label>
+      <label class="toggle"><input type="checkbox" id="svBand"${LY.band ? " checked" : ""}><span>White band under the map<small>Off: everything sits on the map</small></span></label>
+      <button type="button" class="btn small" id="svLayReset">Reset layout</button>
+      <p class="sv-live" id="svLive" aria-live="polite"></p>`;
+  }
+  function onPanel(e) {
+    const t = e.target;
+    if (!job || job.kind !== "map" || !LY) return;
+    if (t.dataset.show) LY.it[t.dataset.show].show = t.checked;
+    else if (t.id === "svPct") LY.pct = t.checked;
+    else if (t.id === "svBox") LY.box = t.checked;
+    else if (t.id === "svBand") { if (t.checked) LY.band = true; else ontoMap(); }
+    sizeMap();
+  }
+  /* the band turned off: what it held is placed on the map, each a little narrower than in the band, at the first place
+     free of what is on the map already: the title at the top left, the legend at the bottom left, the credits and the
+     scale bar at the bottom right, else another corner, else just above, under or beside an item placed */
+  const PREF = { title: ["tl", "tr", "bl", "br"], legend: ["bl", "tl", "br", "tr"], credits: ["br", "bl", "tr", "tl"], scale: ["br", "bl", "tr", "tl"], north: ["tr", "tl", "br", "bl"] };
+  function ontoMap() {
+    const W = job.W, H = job.H, E = job.edge, keys = [];
+    // pinned where they are while the band still holds them, then the band goes
+    items().forEach(el => { const o = LY.it[el.dataset.it]; if (!o.pin || o.y + el.offsetHeight > H) { keys.push(el.dataset.it); pin(el); } });
+    LY.band = false;
+    const cap = { legend: Math.max(220, W * 0.45), credits: Math.max(200, W * 0.5), title: W - 3 * E - 40 };
+    keys.forEach(k => { const o = LY.it[k]; if (cap[k]) o.w = Math.round(Math.min(o.w, cap[k])); });
+    place();
+    const boxOf = el => ({ x: LY.it[el.dataset.it].x, y: LY.it[el.dataset.it].y, w: el.offsetWidth, h: el.offsetHeight });
+    const on = items().filter(el => !el.hidden && !keys.includes(el.dataset.it)).map(boxOf), G = 4;
+    const hits = (a, b) => a.x < b.x + b.w + G && b.x < a.x + a.w + G && a.y < b.y + b.h + G && b.y < a.y + a.h + G;
+    ["north", "title", "legend", "credits", "scale"].filter(k => keys.includes(k)).forEach(k => {
+      const el = itemEl(k), o = LY.it[k], w = el.offsetWidth, h = el.offsetHeight;
+      if (el.hidden) { o.x = E; o.y = Math.max(0, H - E - h); return; } // placed when shown again: moved from there
+      const corner = { tl: [E, E], tr: [W - E - w, E], bl: [E, H - E - h], br: [W - E - w, H - E - h] };
+      const next = on.slice().reverse().flatMap(p => [[p.x + p.w - w, p.y - G - h], [p.x, p.y - G - h], [p.x, p.y + p.h + G], [p.x + p.w + G, p.y + p.h - h], [p.x - G - w, p.y + p.h - h]]);
+      const all = [...PREF[k].map(c => corner[c]), ...next], fits = ([x, y]) => x >= 0 && y >= 0 && x + w <= W && y + h <= H && !on.some(p => hits({ x, y, w, h }, p));
+      const [x, y] = all.find(fits) || corner[PREF[k][0]];
+      o.x = Math.max(0, x); o.y = Math.max(0, y);
+      on.push({ x: o.x, y: o.y, w, h });
+    });
+    keys.forEach(k => { const el = itemEl(k); if (el) moveTo(el, LY.it[k].x, LY.it[k].y, false, 0); });
+  }
+  function resetLayout() {
+    if (!job || job.kind !== "map") return;
+    LY = fresh();
+    panel(); sizeMap();
+    $("#svLayReset").focus({ preventScroll: true });
+  }
   /* the footer made editable where it holds text: an element with text of its own and only inline text in it (a line, a
      title with its unit) as one box; other text (a legend row's label beside its colour box) in a box of its own */
   const INLINE = /^(b|strong|i|em|small|sup|sub|span|a|abbr|code|u|s|mark|br)$/;
@@ -424,7 +681,6 @@ WG.downloads = (function () {
     e.setAttribute("role", "textbox");
     e.setAttribute("aria-label", name);
   }
-  const stage = $("#svStage"), pvBox = $("#svPv"), xBtn = $("#svX");
   const edOf = t => (t && t.closest ? t.closest(".sv-ed, .sv-in") : null);
   let act = null, hover = null, hoverT = 0; // the text the × is on, and the one the mouse is over
   const before = new WeakMap(); // each text as it was when the caret went into it: { html, text }
@@ -495,7 +751,8 @@ WG.downloads = (function () {
       if (!t.textContent.trim() && b) t.innerHTML = b.html; // what it said, for when it is put back
       const hid = [t];
       hide(t);
-      for (let p = t.parentElement; p && p !== job.el && !p.innerText.trim() && !p.querySelector("img, canvas, svg"); p = p.parentElement) { hide(p); hid.push(p); }
+      // up to the item it is in, which is not drawn once nothing in it is left (place)
+      for (let p = t.parentElement; p && p !== job.el && !p.classList.contains("mi-it") && !p.innerText.trim() && !p.querySelector("img, canvas, svg"); p = p.parentElement) { hide(p); hid.push(p); }
       gone.push({ label, back: () => hid.forEach(unhide) });
       sizeMap();
     }
@@ -518,7 +775,12 @@ WG.downloads = (function () {
   $("#svReset").addEventListener("click", () => {
     if (!job) return;
     gone = []; ed = {};
-    if (job.kind === "map") { const n = job.foot(); editTree(n); job.el.replaceWith(n); job.el = n; sizeMap(); }
+    // the map's items get their first texts back where they are now (the layout is reset on its own)
+    if (job.kind === "map") {
+      const n = job.lay();
+      items().forEach(el => { const t = n.querySelector(`.mi-it[data-it="${el.dataset.it}"]`); if (t) { el.replaceChildren(...t.childNodes); prepItem(el); } });
+      sizeMap();
+    }
     else { $$("#svStage .sv-ed").forEach(e => e.remove()); applyPreset(); }
     renderGone();
   });
@@ -599,10 +861,12 @@ WG.downloads = (function () {
     try { X.save(await encode(canvas, fmtSel, d.dpi), `${baseName(figName(id))}_${d.dpi}dpi.${fmtSel}`); } finally { chart.destroy(); }
   }
   async function saveMap(fmtSel) {
+    place();
     const j = job, d = dims(), f = j.el.cloneNode(true);
     if (d.px[0] < 50) return toast("Choose a larger size.");
-    // the footer as edited, without what was left out or the marks that make it editable
-    f.querySelectorAll("[data-sv-gone]").forEach(e => e.remove());
+    // the layout as edited and placed, without what was left out or hidden, the handles, or the marks that make it editable
+    f.querySelectorAll("[data-sv-gone], .mi-it[hidden], .sv-grip").forEach(e => e.remove());
+    f.querySelectorAll(".sv-drag").forEach(e => e.classList.remove("sv-drag"));
     f.querySelectorAll(".sv-in").forEach(e => { ["contenteditable", "role", "aria-label", "spellcheck"].forEach(a => e.removeAttribute(a)); e.classList.remove("sv-in"); if (!e.classList.length) e.removeAttribute("class"); });
     toast("Making the map image…", 30000);
     const c = await j.compose(d.k, f);

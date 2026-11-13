@@ -166,6 +166,8 @@
     wind: { layer: new OverlaySet(), meta: META.wind, on: false, extra: new ArrowSet() },
   };
   const fillNear = () => Object.values(themes).forEach(t => { t.layer.fill(); if (t.extra) t.extra.fill(); });
+  // the legend's % column (js/shares.js): each class measured on the statewide images themselves
+  Object.entries(themes).forEach(([k, t]) => { t.shares = { id: `erosion-${k}`, png: k, none: k === "susceptibility" || k === "weg" ? "No data (water, built-up or not surveyed)" : "No data" }; });
   map.on("moveend", fillNear);
 
   /* Downwind arrows for the spring wind layer (direction soil is carried), length by speed. */
@@ -563,6 +565,7 @@
       <div class="rows">${m.legend.map((l, i) => `<div class="row"><i class="sw" style="background:${l.color}"></i>${esc(L.labels[i])}</div>`).join("")}</div>
       <p class="lnote">${esc(L.note)}${key === "climate" || key === "susceptibility" ? estNote() : ""}${noMaps()}</p>`;
     $("#legendMin").onclick = () => { legendMin = !legendMin; renderLegend(); };
+    if (WG.shares) WG.shares.attach(el, { key, name: m.title, legend: { rows: m.legend.map((l, i) => [l.color, L.labels[i]]) }, shares: themes[key].shares });
   }
   // the chosen states whose statewide maps are not built yet: said in the legend, so a blank state doesn't read as no risk
   function noMaps() {

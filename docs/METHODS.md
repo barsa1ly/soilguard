@@ -814,16 +814,77 @@ Like every base except Satellite, it has no names overlay: place, river and coun
    - A canvas layer is tested by drawing it onto a 1-pixel scratch canvas and reading that back. The map's own canvas is never read back, as that would make the browser draw it more slowly from then on.
    - Pictures from the app's own server, `data:` and `blob:` need no check.
    - In tests on 12 November 2026, the satellite base, the Drought Monitor, SMAP and the soil pH map all went in.
-6. *Footer:* built as page elements off the screen, at the map's width (`.mi-foot` in `css/app.css`), then drawn the same way under the map. It holds:
-   - The legend on show, in full. It loses its own box, height limit and hidden rows, and a minimised legend is opened. Each choice (a list, a date, a box) is written as "label: value", and the buttons are removed.
+6. *Footer:* built as page elements off the screen, at the map's width (`.mi-foot` in `css/app.css`), then drawn the same way under the map, or on it where an item was placed in the dialog (below). It holds:
+   - The legend on show, in full. It loses its own box, height limit and hidden rows, and a minimised legend is opened. Each choice (a list, a date, a box) is written as "label: value", and the buttons are removed. When the live legend has its % column (§15), the image's legend carries the same numbers (below).
    - The legend's key picture (the producer's GetLegendGraphic image). It gets up to 5 s more to load, then the same CORS check. If it cannot be copied, or did not load, a sentence in its place says which.
    - The app's name, with the place (county, state) and the point's coordinates (5 decimals), or else the chosen states (their number, above 3).
    - "Map made YYYY-MM-DD HH:MM (local time) · zoom z".
    - Two scale bars, metric and imperial, by Leaflet's rule: the longest round length (1, 2, 3 or 5 × 10ⁿ) that fits in max(70, min(160, 0.3 × width)) px. It is measured along the map's middle row; on Web Mercator the scale changes with latitude, so the bars are true at the middle.
    - The credits of every layer on the map (their attributions, links dropped), and the names of any layer left out.
+   - A north arrow, which starts on the map at its top right. The map is Web Mercator, where north is straight up at every point, so the arrow always points up; its colours are the SVG's own, so it draws the same on any base.
 
    In the dialog the footer is the preview's own, made editable: an element holding only inline text (a line, a title with its unit) is one box, and other text (a legend row's label beside its colour) a box of its own. Typing changes the footer itself, so its height follows. A text emptied, or removed with its ×, is hidden, together with what held only it (a legend row's colour box, an empty line), and listed under the preview to put back. The file's footer is a copy of the edited one, without what was left out and without the editing marks.
 7. *File:* PNG (with a pHYs chunk for the DPI), JPEG (its JFIF density) or TIFF (written in the app, §7), named `soilguard-map-<place>-<YYYY-MM-DD>.<png|jpg|tif>`. The place is the first part of the place's name (its county or town), else the coordinates, else the state or the number of states. It is saved through the browser's own download.
+
+**Placing the items (the dialog's layout).** The image is the map with a white band under it. The footer's five items start in the band, laid out as the footer always was: the legend in its left column; the title (the app's name, the place, when the image was made, the zoom), the scale bars and the credits in its right column; and the north arrow on the map, 10 px in from its top and right edges. Code: `js/downloads.js` (the dialog) and `footer` in `js/mapimage.js`.
+- *Moving:* each item has a ✥ handle at its top left. A mouse drags an item by its handle or by any part that is not a text (a text is typed in); a finger drags it only by its handle, so the preview still scrolls under a finger, except the north arrow, which moves by any part. With a handle focused (Tab, or after a drag), the arrow keys move its item by 1 pixel of the layout, and Shift + an arrow by 10. On a phone the handles are larger (28 px).
+- *Snapping:* while dragged, an item snaps to the image's edges (10 px in), corners and middles, and to the band's top and bottom, whenever it comes within 8 screen pixels of one; a thin line in the accent colour shows where. The arrow keys never snap.
+- *Where it stays:* a moved item is pinned at its place in the layout's own pixels (the map's size on the screen, plus the band). The file scales the whole layout, so the item lands at the same place at any size or DPI. It cannot leave the image, and goes into the band only while the band is on. The band grows to hold an item dropped low in it and shrinks when it holds less.
+- *On the map:* an item placed on the map gets a light box behind it (white at 90%, rounded corners, a faint shadow) so it reads over imagery.
+- *The Layout panel,* beside the size and format: a box for each item to show or hide it; "Show % of area for each class" (the column below); "Light box behind items on the map"; "White band under the map", which, turned off, places what the band held on the map at the first free place (the title at the top left, the legend at the bottom left, the scale bars and credits at the bottom right, else another corner, else just beside an item already placed), each a little narrower than in the band; and Reset layout, which puts every item back where it started. Reset layout keeps the texts as edited; Reset texts puts the texts back and keeps the layout.
+- *Screen readers:* after each move a polite live line says where the item is, as % from the left and top, and whether it is on the map or under it.
+
+**The % column in the image.** When the live legend shows each class's share of the area (§15), the dialog asks `WG.shares` for the same answer: at once when it is already measured, else it waits up to 2.5 s and adds the numbers to the preview's legend when they come. Each number goes at the right end of its legend row, matched by the row's colour, else by its label. A legend that is the producer's picture gets rows of its own (colour, class, %) in the picture's place, as in the live legend, and the uncoloured share is a last row with a white swatch. A line under the rows says what the numbers are of and how fine the measure was: "% of Texas, measured from the map at about 1.0 km a pixel." Turning "Show % of area for each class" off hides the numbers, the added rows and that line together, and puts a picture legend back.
+
+## 15. Each class's share of the area (the legends' % column)
+
+**What it shows.** The legend of every layer that colours areas gets a narrow column at the right of its classes: the share of the area in each class, in %. The column's head names the area: "% of Texas" (or of the chosen states, where more than one can be chosen), or "% of your boundary" while the area tool holds a drawn or uploaded boundary, which takes the place of the state.
+
+A last row gives the share the map leaves uncoloured, under a name that says what no colour means on that map (table below). The classes and that row add up to 100%. While the numbers are worked out the head adds "· measuring…"; if they cannot be, it reads "% not measured" and its tooltip gives the reason. The head's tooltip otherwise says how they were measured. A new date, depth, element or boundary measures again. Code: `js/shares.js` (`WG.shares`). Each file that makes a layer says how that layer is measured (its item's `shares`: `js/app.js` for the erosion maps, `js/weather.js` for the drought maps, `js/soilmaps.js`, `js/soilmoisture.js`, `js/landcover.js`).
+
+**Steps.**
+1. *The area:* the state's outline (its file in `data/states/`), or the boundary's polygons, and the box around them (a boundary's widened by 2% on each side).
+2. *The image:* one picture of the whole box, from the same service as the map, made off the screen and never shown, about 1,200 pixels on its long side: about 1 km a pixel over Texas, finer over a small boundary. It is one of:
+   - a WMS GetMap, or an ArcGIS MapServer `export` or ImageServer `exportImage`, in EPSG:4326 (longitude and latitude);
+   - the layer's map tiles at the lowest zoom that gives the box about 900 pixels across (at most 96 tiles, 4 at a time), put together in Web Mercator; a missing tile is clear, and more than a third missing fails the measure;
+   - the statewide images the map shows already (`data/states/XX/*.png`, Web Mercator).
+
+   A server that fails the 1,200-pixel picture is asked once more at 700; SoilGrids is asked at 800. Pictures are read as files (`fetch`, then `createImageBitmap`), never from the screen.
+3. *Clipping:* the outline is drawn as a mask in the same projection and pixels, filled by the even-odd rule, so a hole in a boundary is left out and islands are in. A pixel counts when the mask covers it by half or more.
+4. *The classes:* the colours to look for, and their names:
+   - the legend's own colour rows (the erosion maps, pH, CEC, organic matter, salinity, sodicity, the USGS elements);
+   - for a legend that is the producer's picture: the Drought Monitor's D0–D4 from the app's own table of its colours; the drought outlooks' from the service's ArcGIS legend (`legend?f=json`), each swatch read at its middle pixel;
+   - for a colour scale (SMAP, SoilGrids N): the scale cut at its ticks, each colour step going to the tick range that holds its middle, labelled "< a", "a–b" and "≥ z".
+
+   A legend row drawn clear is the uncoloured area.
+5. *Matching:* each pixel inside takes the class of the nearest legend colour (straight-line distance in red, green and blue, 0–255 each) when that distance is 48 or less. For a colour scale whose neighbouring steps differ by more, the limit widens to 0.6 × that difference + 8, as a class there also holds the shades between its steps. A pixel less than half opaque is uncoloured. A pixel that matches no colour (a smoothed edge between two classes, a line or label the server drew) is left out of the shares; the share of the area left out this way is named in the tooltip when it is 0.05% or more.
+6. *Area weights:* each pixel counts by its share of the ground, not as 1, taken at the middle of its row. In an EPSG:4326 picture a pixel covers ground in proportion to cos(latitude); in a Web Mercator picture, which stretches both ways by 1/cos(latitude), in proportion to cos²(latitude). Counted unweighted, a pixel at the north tip of Texas (36.5° N) would weigh as much as one at the south tip (26° N), though it covers 11% less ground in EPSG:4326 and 20% less in Web Mercator.
+7. *The shares:* a class's weighted pixels ÷ (all the classed and uncoloured weighted pixels) × 100, shown to one decimal; under 0.05% it shows "<0.1%", and a class with no pixel "0%".
+
+The land cover's shares (NLCD 2021) are not measured from a picture: they are its 30 m cells counted inside the state's outline (pre-built, equal-area) or inside your boundary from MRLC's WCS, the same numbers as the Soil tab's Land cover card. That key has no uncoloured row.
+
+**The uncoloured row's names.**
+
+| Layer | The uncoloured row |
+|---|---|
+| Drought Monitor (this week, a year or five years ago, a past week); monthly and seasonal drought outlooks | No drought |
+| Wind erosion susceptibility; Wind Erodibility Group; soil pH, CEC, organic matter, salinity, sodicity | No data (water, built-up or not surveyed) |
+| Climatic factor C; spring wind; USGS total elements; National Water Model saturation | No data |
+| SoilGrids total N | No data (water, built-up) |
+| SMAP L4 surface and root zone | No data (water, or not modelled) |
+| NASA SPoRT-LIS percentile | No data (water, or outside the model) |
+| NASA GRACE-DA percentile | Near normal (30th–70th percentile, not coloured) |
+
+**Kept.** An answer is kept in memory (the last 200) and in the browser for 15 days, under the layer, what it shows besides (its date, depth or element), its classes, the state or the boundary, and the app's version, so a legend shown again has its numbers at once. A layer that changes by itself (the National Water Model's latest hour) is measured anew each time and not kept between visits. One layer is measured at a time, the one asked last first; one still waiting when its legend is drawn again or taken down is dropped unmeasured. The pixel loop gives the page back every 12 ms, so the map never waits for it. A failure is not kept: the next time the legend is drawn, it is tried again.
+
+**A check.** For the Drought Monitor of 10 November 2026 over Texas, the column read None 29.8, D0 16.4, D1 30.3, D2 16.6, D3 5.6 and D4 1.3%; NDMC's own statistics for that map (computed from its polygons) are 29.48, 16.51, 30.54, 16.66, 5.54 and 1.28%: each within 0.35 points.
+
+**Not measured, and limits.**
+- Layers that are lines or points have no column: watersheds and streams, the soil moisture stations, roads, rivers and county lines, the soil survey's map-unit lines, the spring wind's arrows.
+- The share is of the map's picture, not of the producer's own data. At about 1 km a pixel over Texas, patches smaller than a pixel blur into their neighbours, and a source's own cells may be coarser than the pixel (SMAP 9 km; the USGS elements, about one site per 1,600 km²).
+- Colours the legend does not list (smoothed edges, labels) are left out of the denominator, as above; the tooltip gives their share.
+- Ground the producer does not cover (water, built-up land, outside a model's domain) is in the uncoloured row, not in any class.
+- A legend that gives no colours to match cannot be measured, and the head says so.
 
 ## Known gaps
 

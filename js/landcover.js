@@ -130,6 +130,16 @@ WG.landcover = (function () {
     return p;
   }
 
+  /* ---------- the legend's % column (js/shares.js): the exact shares, not counted from the map's pixels ----------
+     km2 by class (CLASSES' order) of your boundary (counted live, as the card) or of the states on the map (pre-built) */
+  const exact = A => (A.polys ? boundaryShares(A.polys).then(r => ({ km2: r.km2, note: `NLCD 2021 Land Cover (MRLC WCS), ${r.res} m cells (equal area), ${r.cells.toLocaleString("en-US")} inside your boundary.` }))
+    : stateData().then(d => {
+      const have = (A.recs || []).filter(r => d.states[r.code]);
+      if (!have.length) throw new Error("no shares for the states on the map");
+      return { km2: CLASSES.map((_, i) => have.reduce((s, r) => s + d.states[r.code].km2[i], 0)), note: "NLCD 2021 Land Cover (MRLC), its 30 m cells counted inside each state's outline (equal area), pre-built." };
+    }));
+  const ITEM = { key: "nlcd", name: "Land cover (NLCD 2021)", legend: { rows: CLASSES.map(c => [c[2], c[1]]) }, shares: { id: "nlcd", exact, none: null } };
+
   /* ---------- the map legend: the classes' colours, and the way to their shares ----------
      Added under the theme's legend (app.js renderLegend); alone, it has its own hide button. Its link opens Soil maps › Soil
      at the Land cover card (app.js); a saved map image leaves the link out, as it does every button (js/mapimage.js). */
@@ -144,6 +154,7 @@ WG.landcover = (function () {
       <p class="lnote"><button class="link lc-go" data-lc-go>Shares and curve numbers: Soil maps › Soil</button></p>`;
     el.appendChild(host);
     if (alone) host.querySelector(".lcMin").onclick = toggle;
+    if (WG.shares) WG.shares.attach(host, ITEM);
   }
 
   /* ---------- the Land cover card of Soil maps › Soil ----------
@@ -200,5 +211,5 @@ WG.landcover = (function () {
   }
   // a boundary drawn, uploaded or cleared (js/area.js), or other states on the map (app.js): the card counts them
   ["wg-boundary", "wg-states"].forEach(ev => document.addEventListener(ev, drawCard));
-  return { legend, card, CLASSES, albers, readTiff, count, boundaryShares, classAt };
+  return { legend, card, CLASSES, albers, readTiff, count, boundaryShares, classAt, exact, ITEM };
 })();
