@@ -160,8 +160,11 @@ WG.soil = (function () {
     return pass === null ? big : Math.min(100, big + Math.max(0, 100 - pass) * (100 - big) / 100);
   }
 
+  /* the surface the app reads and edits: the first horizon with sand or clay (a forest soil's organic O horizon on top has
+     none, and wind does not move it the way it moves the mineral soil); the first horizon when none has them */
+  const surfaceIndex = comp => Math.max(0, comp.horizons.findIndex(h => num(h.sandtotal_r) !== null || num(h.claytotal_r) !== null));
   function surfaceLayer(comp) {
-    const hz = comp.horizons.find(h => num(h.sandtotal_r) !== null || num(h.claytotal_r) !== null) || comp.horizons[0];
+    const hz = comp.horizons[surfaceIndex(comp)];
     if (!hz) return null;
     const tex = parseTexture(hz.texture);
     const sand = num(hz.sandtotal_r), clay = num(hz.claytotal_r);
@@ -336,11 +339,12 @@ WG.soil = (function () {
   function profileLayers(comp, surfaceOverride) {
     const restr = comp.restrictions.find(r => num(r.resdept_r) !== null);
     const resDepth = restr ? num(restr.resdept_r) : null;
+    const si = surfaceIndex(comp); // the edits go to the same horizon surfaceLayer reads, not to an organic layer above it
     return comp.horizons.map((h, i) => {
       const top = num(h.hzdept_r), bot = num(h.hzdepb_r);
       let sand = num(h.sandtotal_r), clay = num(h.claytotal_r), silt = num(h.silttotal_r), om = num(h.om_r);
       let ph = num(h.ph1to1h2o_r), caco3 = num(h.caco3_r), bd = num(h.dbthirdbar_r);
-      const isTop = i === 0 && surfaceOverride;
+      const isTop = i === si && surfaceOverride;
       // est: the surface's water retention, bulk density and Ksat become Saxton & Rawls estimates, as their inputs (sand,
       // silt, clay, OM) were edited; a pH or CaCO3 edit alone keeps the survey's (silt as the survey's surface gives it)
       let est = false;
@@ -457,6 +461,6 @@ WG.soil = (function () {
     return { ef: Math.min(1, Math.max(0, ef)), scf, inRange };
   }
 
-  return { fetchSoil, parseTexture, textureClass, refineCode, wegFromSurface, saxtonRawls, profileLayers, siteParams,
+  return { fetchSoil, parseTexture, textureClass, refineCode, wegFromSurface, saxtonRawls, profileLayers, siteParams, surfaceIndex,
     rweq, toCSV, slu1, TEX, FAMILY, WEG_I, WEG_INFO, wegInfo, curveNumber, DRAIN, pickCounty, symOf };
 })();

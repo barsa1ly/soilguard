@@ -507,10 +507,12 @@ WG.soilmaps = (function () {
     const ed = k => !!(E && b && E[k] !== null && E[k] !== undefined && E[k] !== (b[k] ?? (k === "caco3" ? 0 : null)));
     const comps = S.comps.filter(c => c.hz.length), D = (a, b0) => UN.range("depth", a, b0);
     if (!comps.length) { x.innerHTML = `<p class="fine">The survey gives no horizons for this map unit's major components.</p>`; return; }
+    // the edited horizon is the one js/soil.js edits: the first with sand or clay (below an organic layer), known by its top depth
+    const sh = dom && dom.horizons && WG.soil.surfaceIndex ? dom.horizons[WG.soil.surfaceIndex(dom)] : null, sTop = sh ? num(sh.hzdept_r) : 0;
     const cols = [th("Component"), th("Horizon"), th("Depth"), th("pH"), th("EC", "dS/m"), th("SAR"), th("ESP", "%"), th("CEC", "cmol(+)/kg"), th("Base sat.", "%"), th("OM", "%"), th("Org. C", "%"), th("Total N est.", "%"), th("CaCO₃", "%"), th("Gypsum", "%")];
     let edited = false;
     const rows = comps.flatMap(c => c.hz.map((h, i) => {
-      const mine = !!dom && String(c.cokey) === String(dom.cokey) && i === 0, use = k => mine && ed(k), v = k => (use(k) ? E[k] : h[k]), mk = k => (use(k) ? " ✎" : "");
+      const mine = !!dom && String(c.cokey) === String(dom.cokey) && h.t === sTop, use = k => mine && ed(k), v = k => (use(k) ? E[k] : h[k]), mk = k => (use(k) ? " ✎" : "");
       if (mine && ["ph", "om", "caco3"].some(use)) edited = true;
       const ph = v("ph"), om = v("om"), oc = ok(om) ? om / 1.724 : null;
       return [esc(c.name), esc(h.name), D(h.t, h.b), ok(ph) ? `${fmt(ph, 1)}${h.cacl2 && !use("ph") ? " CaCl₂" : ""}${mk("ph")}` : "—", fmt(h.ec, 1), fmt(h.sar, 1), fmt(h.esp, 0),

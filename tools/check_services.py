@@ -203,7 +203,7 @@ def checks():
             {"station": "ACT", "data": "sknt", "sts": f"{d1}T00:00Z", "ets": f"{d1}T23:59Z", "tz": "Etc/UTC", "format": "onlycomma", "latlon": "no", "missing": "null",
              "trace": "null", "direct": "no", "report_type": 3}), has_text("station,valid"), flaky="known flaky: IEM throttles (HTTP 429) at times"),
         C("gridMET THREDDS (OPeNDAP)", "the .dds of the rain dataset", "https://thredds.northwestknowledge.net/thredds/dodsC/agg_met_pr_1979_CurrentYear_CONUS.nc.dds",
-          has_text("Dataset"), flaky="known flaky: down for days at times (out since 11 Nov 2026); the app then reads the Idaho file server"),
+          has_text("Dataset"), flaky="known flaky: down for days at times (out 11 to 13 Nov 2026); the app then reads the Idaho file server"),
         C("gridMET file server (Univ. of Idaho)", "8 bytes of a NetCDF file (Range)", f"https://www.northwestknowledge.net/metdata/data/pr_{DAY(40):%Y}.nc",
           starts(b"\x89HDF"), headers={"Range": "bytes=0-7"}, ok=(206,)),
         # drought
@@ -309,12 +309,29 @@ def fail(c, t0, why, notes=()):
     return {**c, "ok_": False, "secs": time.monotonic() - t0, "note": "; ".join([why, *notes])}
 
 
+# Services the app reads as alternatives: it needs one of each group, so one down while another answers is reported, not
+# failed (the app moves to the other by itself: js/wind.js gmRead); the whole group down is a failure.
+ALTERNATIVES = [("gridMET THREDDS (OPeNDAP)", "gridMET file server (Univ. of Idaho)")]
+
+
+def cover(res):
+    by = {x["service"]: x for x in res}
+    for group in ALTERNATIVES:
+        xs = [by[s] for s in group if s in by]
+        if any(x["ok_"] for x in xs):
+            for x in xs:
+                if not x["ok_"]:
+                    x["covered"] = True
+                    x["note"] = "; ".join(p for p in (x["note"], "the app reads the other gridMET server meanwhile") if p)
+
+
 def table(res):
     cell = lambda s: str(s).replace("|", "\\|").replace("\n", " ")
     rows = ["| Service | What was asked | Result | Time | Note |", "|---|---|---|---|---|"]
     for x in res:
         note = "; ".join(p for p in (x["note"], x["flaky"]) if p)
-        rows.append(f"| {cell(x['service'])} | {cell(x['what'])} | {'ok' if x['ok_'] else '**FAIL**'} | {x['secs']:.1f} s | {cell(note)} |")
+        result = "ok" if x["ok_"] else "down (covered)" if x.get("covered") else "**FAIL**"
+        rows.append(f"| {cell(x['service'])} | {cell(x['what'])} | {result} | {x['secs']:.1f} s | {cell(note)} |")
     return "\n".join(rows)
 
 
@@ -326,9 +343,12 @@ def main():
     t0, cs = time.monotonic(), checks()
     with cf.ThreadPoolExecutor(max_workers=8) as ex:
         res = list(ex.map(run, cs))
-    bad = [x for x in res if not x["ok_"]]
+    cover(res)
+    bad = [x for x in res if not x["ok_"] and not x.get("covered")]
+    down = [x for x in res if x.get("covered")]
     failing = "; failing: " + ", ".join(x["service"] for x in bad) if bad else ""
-    head = (f"Data services check, {dt.datetime.now(dt.timezone.utc):%Y-%m-%d %H:%M} UTC: {len(res) - len(bad)} of {len(res)} answered{failing}"
+    failing += "; down but covered by its alternative: " + ", ".join(x["service"] for x in down) if down else ""
+    head = (f"Data services check, {dt.datetime.now(dt.timezone.utc):%Y-%m-%d %H:%M} UTC: {len(res) - len(bad) - len(down)} of {len(res)} answered{failing}"
             f" ({time.monotonic() - t0:.0f} s; sent with Origin {ORIGIN}).")
     out = f"{head}\n\n{table(res)}\n"
     print(out)
