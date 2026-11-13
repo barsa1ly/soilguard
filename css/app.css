@@ -237,6 +237,12 @@ svg { display: block; }
 .legend .lc-key .sw { width: 12px; height: 10px; margin-top: 1px; }
 .legend .lc-go { font-size: 11px; text-align: left; }
 .legend .lnote { color: var(--muted); margin: 6px 0 0; font-size: 11px; line-height: 1.35; }
+/* the long note under a legend is folded under a small button (app.js foldNotes) */
+.legend .lnote.folded { display: none; }
+body.lnotes-open .legend .lnote.folded { display: block; }
+.legend .lnote-tg { display: block; margin: 6px 0 0; padding: 0; border: 0; background: none; color: var(--muted); font-size: 11px; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; text-align: left; }
+.legend .lnote-tg:hover { color: var(--ink); }
+.legend.min .lnote-tg { display: none; }
 /* a wide screen: the legend keeps below the theme bar (and the past-date bar under it), scrolling inside when it is longer
    (the land cover's curve numbers, open, run past the screen), its title and hide button held at its top */
 @media (min-width: 768px) {

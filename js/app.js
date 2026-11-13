@@ -550,7 +550,30 @@
   }
   /* a layer's legend drawn again by its own file (a depth or a day chosen, its colour scale read: js/soilmaps.js,
      js/soilmoisture.js, js/weather.js) fills the whole box: the land cover key goes back under it while that overlay is on */
-  new MutationObserver(() => { if (!$("#legend .lc")) lcKey(); }).observe($("#legend"), { childList: true });
+  /* a legend's long note (what the classes mean, the map's date, the credit) folds under one small button, as METHODS and
+     the Sources sheet already give the details: the legend stays short. Open or shut is kept for the visit and on this device;
+     notes that say something failed, or hold a link, are never folded (only the theme note, #legendNote or [data-fold]). */
+  let notesOpen = false;
+  try { notesOpen = localStorage.getItem("fg.lnotes") === "1"; } catch (e) { /* storage off: shut */ }
+  document.body.classList.toggle("lnotes-open", notesOpen);
+  const NOTE_TG = () => (notesOpen ? "Hide details" : "About this map: classes, date, source");
+  function foldNotes() {
+    $$("#legend > #legendNote, #legend > .lnote[data-fold]").forEach(n => {
+      if (n.classList.contains("folded") || !n.textContent.trim()) return;
+      n.classList.add("folded");
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "lnote-tg"; b.textContent = NOTE_TG(); b.setAttribute("aria-expanded", notesOpen);
+      n.before(b);
+    });
+  }
+  document.addEventListener("click", e => {
+    if (!e.target.closest || !e.target.closest(".lnote-tg")) return;
+    notesOpen = !notesOpen;
+    document.body.classList.toggle("lnotes-open", notesOpen);
+    $$(".lnote-tg").forEach(b => { b.textContent = NOTE_TG(); b.setAttribute("aria-expanded", notesOpen); });
+    try { localStorage.setItem("fg.lnotes", notesOpen ? "1" : "0"); } catch (err) { /* storage off */ }
+  });
+  new MutationObserver(() => { if (!$("#legend .lc")) lcKey(); foldNotes(); }).observe($("#legend"), { childList: true });
   function drawBaseLegend() {
     const entry = Object.entries(themes).find(([, t]) => t.on), el = $("#legend");
     const lv = state.theme !== "erosion" && Object.values(live[state.theme] || {}).find(t => t.on);
@@ -563,7 +586,7 @@
     el.innerHTML = `<h5><span>${esc(m.title)}${L.unit ? ` <small style="font-weight:400;color:#69716a">(${esc(L.unit)})</small>` : ""}</span>
       <button id="legendMin">${legendMin ? "show" : "hide"}</button></h5>
       <div class="rows">${m.legend.map((l, i) => `<div class="row"><i class="sw" style="background:${l.color}"></i>${esc(L.labels[i])}</div>`).join("")}</div>
-      <p class="lnote">${esc(L.note)}${key === "climate" || key === "susceptibility" ? estNote() : ""}${noMaps()}</p>`;
+      <p class="lnote" data-fold>${esc(L.note)}${key === "climate" || key === "susceptibility" ? estNote() : ""}${noMaps()}</p>`;
     $("#legendMin").onclick = () => { legendMin = !legendMin; renderLegend(); };
     if (WG.shares) WG.shares.attach(el, { key, name: m.title, legend: { rows: m.legend.map((l, i) => [l.color, L.labels[i]]) }, shares: themes[key].shares });
   }
