@@ -31,8 +31,9 @@ WG.util = (function () {
 
   /* Answers kept in this browser for 15 days (Cache Storage), so a place looked at again loads at once instead of asking
      every server again. Only sources whose answer for a place and period stays the same for days: the soil survey,
-     elevation, land cover, county lines, past weather and station records, gridMET's past days, the place search and
-     the Drought Monitor's map images of a dated week (the area grid's; a week's map, once out, does not change). Never
+     the Soil maps tab's point values (USFS 30 m getSamples, USGS DS-801 sites, SoilGrids total N), elevation, land
+     cover, county lines, past weather and station records, gridMET's past days, the place search and the Drought
+     Monitor's map images of a dated week (the area grid's; a week's map, once out, does not change). Never
      live layers, forecasts, outlooks, the Drought Monitor's current map (usdm_current) or gridMET's day count (its newest
      day). A POST (Soil Data Access, ACIS) is kept under its URL and a hash of its body. Older answers are dropped at the
      next visit. */
@@ -42,6 +43,8 @@ WG.util = (function () {
     /^https:\/\/tigerweb\.geo\.census\.gov\//, /^https:\/\/power\.larc\.nasa\.gov\/api\/temporal\//, /^https:\/\/data\.rcc-acis\.org\//,
     /^https:\/\/www\.ncei\.noaa\.gov\/access\/services\/data\//, /^https:\/\/mesonet\.agron\.iastate\.edu\/cgi-bin\/request\//,
     /^https:\/\/thredds\.northwestknowledge\.net\/.*\.ascii\?/, /^https:\/\/nominatim\.openstreetmap\.org\//,
+    /^https:\/\/imagery\.geoplatform\.gov\/iipp\/rest\/services\/Soil_Geology\/.*\/ImageServer\/getSamples\?/,
+    /^https:\/\/mrdata\.usgs\.gov\/(services\/wfs\/ds801\?|ds-801\/json\/)/, /^https:\/\/rest\.isric\.org\/soilgrids\/v2\.0\/properties\/query\?/,
     /^https:\/\/ndmcgeodata\.unl\.edu\/cgi-bin\/mapserv\.exe\?map=\/ms4w\/apps\/usdm\/map\/usdm_\d{8}_wms\.map&.*REQUEST=GetMap&/];
   const keepOn = (() => { try { return typeof caches !== "undefined" && window.isSecureContext; } catch (e) { return false; } })();
   let keepBox = null;
@@ -64,11 +67,12 @@ WG.util = (function () {
     } catch (e) { /* storage off */ }
     return null;
   }
-  // r is cloned at once, before its body is read by the caller
-  function keep(key, r) {
+  // r is cloned at once, before its body is read by the caller; good(text), if given, refuses an answer not worth
+  // keeping (an error a server sends with HTTP 200, a point with no value that may be filled later)
+  function keep(key, r, good) {
     const c = r.clone();
     (async () => {
-      try { await (await keepOpen()).put(key, new Response(await c.blob(), { headers: { "Content-Type": c.headers.get("Content-Type") || "", "x-fg-kept": String(Date.now()) } })); }
+      try { const b = await c.blob(); if (good && !good(await b.text())) return; await (await keepOpen()).put(key, new Response(b, { headers: { "Content-Type": c.headers.get("Content-Type") || "", "x-fg-kept": String(Date.now()) } })); }
       catch (e) { /* storage full or off: asked again next time */ }
     })();
   }
@@ -190,8 +194,8 @@ WG.util = (function () {
   const fetchQ = (url, opts = {}, timeoutMs = 0, headerMs = 0) => send(url, opts, { timeoutMs, headerMs });
 
   /* headerMs caps the wait for the server to start answering; timeoutMs caps the whole download; a caller's own signal
-     (opts.signal) cancels the request too. */
-  async function fetchJSON(url, opts = {}, timeoutMs = 45000, headerMs = timeoutMs) {
+     (opts.signal) cancels the request too. good(json), if given: whether a kept source's answer is kept (as keep). */
+  async function fetchJSON(url, opts = {}, timeoutMs = 45000, headerMs = timeoutMs, good = null) {
     const key = keepKey(url, opts), hit = key && (await kept(key));
     if (hit) { try { return await hit.json(); } catch (e) { /* a broken copy: asked again */ } }
     return send(url, opts, { timeoutMs, headerMs, read: async r => {
@@ -200,17 +204,17 @@ WG.util = (function () {
         try { const j = await r.json(); msg = j.reason || j.message || msg; } catch (e) { /* not json */ }
         throw new Error(msg);
       }
-      if (key) keep(key, r);
+      if (key) keep(key, r, good && (t => good(JSON.parse(t))));
       return r.json();
     } });
   }
 
-  async function fetchText(url, timeoutMs = 45000, headerMs = timeoutMs) {
+  async function fetchText(url, timeoutMs = 45000, headerMs = timeoutMs, good = null) { // good(text): as fetchJSON's
     const key = keepKey(url, {}), hit = key && (await kept(key));
     if (hit) { try { return await hit.text(); } catch (e) { /* a broken copy: asked again */ } }
     return send(url, {}, { timeoutMs, headerMs, plain: true, read: async r => {
       if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
-      if (key) keep(key, r);
+      if (key) keep(key, r, good);
       return r.text();
     } });
   }
@@ -325,6 +329,16 @@ WG.util = (function () {
     },
   };
 
+  /* keyboard focus to the first heading on show in box (a card, a tab) after a link has opened it, so it is not left on
+     the link in a tab just hidden; tabindex -1 lets the heading take focus without joining the Tab order. true if it did. */
+  function focusHead(box) {
+    const h = box && [...box.querySelectorAll("h2, h3, h4")].find(x => x.getClientRects().length);
+    if (!h) return false;
+    if (!h.hasAttribute("tabindex")) h.setAttribute("tabindex", "-1");
+    h.focus({ preventScroll: true });
+    return document.activeElement === h;
+  }
+
   return { MONTHS, MONTHS_LONG, COMPASS, $, $$, esc, num, fmt, clamp, msToMph, compass, fetchJSON, fetchText, fetchBlob, fetchQ, keptInfo, keepClear, stashGet, stashPut, pool, debounce,
-    parseCoords, toast, download, linreg, cache };
+    parseCoords, toast, download, linreg, cache, focusHead };
 })();

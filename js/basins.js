@@ -281,7 +281,7 @@ WG.basins = (function () {
   const pick = { storm: "2", cropC: 0.24, P: 1, ...(WG.util.cache.get("basins") || {}) };
   if (!["2", "10", "100", "own"].includes(pick.storm)) pick.storm = "2";
   if (!ok(pick.cropC) || pick.cropC <= 0 || pick.cropC > 1) pick.cropC = 0.24;
-  if (!ok(pick.P) || pick.P < 0 || pick.P > 1) pick.P = 1;
+  if (!ok(pick.P) || pick.P <= 0 || pick.P > 1) pick.P = 1; // as the box: above 0 (a P of 0 kept by an older version would claim no soil loss at all)
   if (!PRACTICES.some(p => p[0] === pick.pm)) pick.pm = pick.P === 1 ? "none" : "own"; // a P typed before the practices were offered stays
   const keep = () => WG.util.cache.set("basins", { storm: pick.storm === "own" ? "2" : pick.storm, cropC: pick.cropC, P: pick.P, pm: pick.pm });
   /* a soil component's P on cropland under the practice chosen (null: no slope to choose it by); contouring and strips are

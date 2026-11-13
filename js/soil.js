@@ -340,25 +340,32 @@ WG.soil = (function () {
       const top = num(h.hzdept_r), bot = num(h.hzdepb_r);
       let sand = num(h.sandtotal_r), clay = num(h.claytotal_r), silt = num(h.silttotal_r), om = num(h.om_r);
       let ph = num(h.ph1to1h2o_r), caco3 = num(h.caco3_r), bd = num(h.dbthirdbar_r);
-      const isTop = i === 0 && surfaceOverride, rock = !isTop && isRock(h);
+      const isTop = i === 0 && surfaceOverride;
+      // est: the surface's water retention, bulk density and Ksat become Saxton & Rawls estimates, as their inputs (sand,
+      // silt, clay, OM) were edited; a pH or CaCO3 edit alone keeps the survey's (silt as the survey's surface gives it)
+      let est = false;
       if (isTop) {
+        const s0 = { sand, silt: silt ?? (sand !== null && clay !== null ? 100 - sand - clay : null), clay, om };
         ({ sand, silt, clay, om, ph, caco3 } = { ...{ sand, silt, clay, om, ph, caco3 }, ...surfaceOverride });
+        const s1 = { sand, silt, clay, om };
+        est = Object.keys(s0).some(k => (s1[k] ?? null) !== s0[k]);
       }
+      const rock = !est && isRock(h);
       if (silt === null && sand !== null && clay !== null && !rock) silt = 100 - sand - clay;
       const sr = rock ? null : saxtonRawls(sand, clay, om);
       let ll = num(h.wfifteenbar_r), dul = num(h.wthirdbar_r), sat = num(h.wsatiated_r);
       // in rock a water content or bulk density of zero means none (the survey's own positive values are kept)
       if (rock) { ll = ll || null; dul = dul || null; sat = sat || null; bd = bd || null; }
-      ll = ll !== null && !isTop ? ll / 100 : sr ? sr.ll : null;
-      dul = dul !== null && !isTop ? dul / 100 : sr ? sr.dul : null;
-      if (bd === null || isTop) bd = isTop && sr ? sr.bd : bd ?? (sr ? sr.bd : null);
-      sat = sat !== null && !isTop ? sat / 100 : sr ? sr.sat : bd ? 1 - bd / 2.65 : null;
+      ll = ll !== null && !est ? ll / 100 : sr ? sr.ll : null;
+      dul = dul !== null && !est ? dul / 100 : sr ? sr.dul : null;
+      if (bd === null || est) bd = est && sr ? sr.bd : bd ?? (sr ? sr.bd : null);
+      sat = sat !== null && !est ? sat / 100 : sr ? sr.sat : bd ? 1 - bd / 2.65 : null;
       if (sat !== null && dul !== null) sat = Math.max(sat, dul + 0.01); // DSSAT requires SAT > DUL
       // a surface with edited sand, silt or clay is the texture they make; the survey's code stays if the family is the same, or if only pH or OM changed
       const edited3 = isTop && (sand !== num(h.sandtotal_r) || silt !== num(h.silttotal_r) || clay !== num(h.claytotal_r));
       const base = parseTexture(h.texture).base, made = edited3 ? refineCode(textureClass(sand, silt, clay), base) : null, retextured = !!made && made !== base;
       const ksatUm = num(h.ksat_r);
-      const ksat = ksatUm !== null && !isTop ? ksatUm * 0.36 : sr ? sr.ksat / 10 : null; // cm/h
+      const ksat = ksatUm !== null && !est ? ksatUm * 0.36 : sr ? sr.ksat / 10 : null; // cm/h
       const mid = top !== null && bot !== null ? (top + bot) / 2 : null;
       let srgf = mid === null ? null : bot <= 15 ? 1 : Math.exp(-0.02 * mid);
       if (resDepth !== null && top !== null && top >= resDepth) srgf = 0;
@@ -368,10 +375,10 @@ WG.soil = (function () {
       return {
         hz: h.hzname || "", top, bot, texture: retextured ? made : h.texture || "", texdesc: retextured ? TEX[made] || "" : h.texdesc || "",
         sand, silt, clay, vfs: isTop && sand !== num(h.sandtotal_r) ? null : num(h.sandvf_r), om, oc, bd, ll, dul, sat,
-        awc: (isTop ? null : num(h.awc_r)) ?? (dul !== null && ll !== null ? dul - ll : null),
+        awc: (est ? null : num(h.awc_r)) ?? (dul !== null && ll !== null ? dul - ll : null),
         ksat, ph, cec: num(h.cec7_r) ?? num(h.ecec_r), caco3, gypsum: num(h.gypsum_r), ec: num(h.ec_r), sar: num(h.sar_r),
         kw: num(h.kwfact), cf, srgf, ni: oc !== null ? Math.min(oc / 10, 0.5) : null, lep: num(h.lep_r),
-        edited: !!isTop,
+        edited: !!isTop, est,
       };
     });
   }
@@ -414,7 +421,10 @@ WG.soil = (function () {
   }
 
   /* ---------------- exports ---------------- */
-  function toCSV(soil, layers, site, cf) { // cf: the C the app used (js/app.js cFactor)
+  // cf: the C the app used (js/app.js cFactor); surf: the surface the app uses (js/app.js currentSurface), whose WEG and I
+  // are the edits' when they move the group (surf.calc), as Wind erosion › Soil shows
+  function toCSV(soil, layers, site, cf, surf) {
+    const w = surf || soil.surface || {}, mine = !!(surf && surf.calc);
     const head = ["horizon", "top_cm", "bottom_cm", "texture", "sand_pct", "silt_pct", "clay_pct", "vfs_pct",
       "om_pct", "oc_pct", "bulk_density_g_cm3", "ll15_cm3_cm3", "dul33_cm3_cm3", "sat_cm3_cm3", "awc_cm3_cm3",
       "ksat_cm_h", "ph_h2o", "cec_cmol_kg", "caco3_pct", "gypsum_pct", "ec_dS_m", "sar", "kw", "coarse_frag_pct",
@@ -427,7 +437,7 @@ WG.soil = (function () {
       `# component,"${soil.dominant.compname}",${soil.dominant.comppct_r}% of map unit,"${site.family || ""}"`,
       `# slope_pct,${site.slope ?? ""},hydrologic_group,${site.hydgrp || ""},drainage,"${site.drainage || ""}"`,
       `# albedo,${site.albedo ?? ""},evap_limit_mm,${site.u},drainage_rate,${site.drainRate ?? ""},runoff_CN,${site.cn}`,
-      `# WEG,${soil.surface?.weg || ""},WEI,${soil.surface?.wei ?? ""},T,${site.tfact ?? ""},C_factor,${cf ? +cf.C.toFixed(1) : ""},C_source,"${cf ? cf.src : ""}",C_ssurgo_symbols,"${(soil.cSyms || []).join(" ")}",MLRA,${soil.mlra ? soil.mlra.sym : ""}`,
+      `# WEG,${w.weg || ""},WEI,${w.wei ?? ""}${mine ? `,WEG_note,"(from your edits)"` : surf && surf.kept ? `,WEG_note,"(the survey's: your edits keep its group)"` : ""},T,${site.tfact ?? ""},C_factor,${cf ? +cf.C.toFixed(1) : ""},C_source,"${cf ? cf.src : ""}",C_ssurgo_symbols,"${(soil.cSyms || []).join(" ")}",MLRA,${soil.mlra ? soil.mlra.sym : ""}`,
     ];
     const rows = layers.map(l => [l.hz, l.top, l.bot, l.texture, l.sand, l.silt, l.clay, l.vfs, l.om, l.oc, l.bd, l.ll,
       l.dul, l.sat, l.awc, l.ksat, l.ph, l.cec, l.caco3, l.gypsum, l.ec, l.sar, l.kw, l.cf, l.srgf, l.ni, l.edited ? "yes" : "no"].map(r).join(","));

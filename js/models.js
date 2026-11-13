@@ -25,7 +25,7 @@ WG.models = (function () {
       return { top: l.top, bot: l.bot, hz: l.hz, texture: l.texture, sand: l.sand, silt: l.silt, clay: l.clay, om: l.om, oc: l.oc, bd: l.bd,
         ll: l.ll, dul: l.dul, sat: l.sat, awc: l.awc, ksat: l.ksat === null ? null : l.ksat * 10, ph: l.ph, cec: l.cec, caco3: l.caco3,
         cfWt: r(cfWt, 1), cfVol: fv !== null ? fv : r(fragVol(cfWt, l.bd), 1), ec: l.ec, kw: l.kw, kf: num(h.kffact), srgf: l.srgf, ni: l.ni, sar: l.sar,
-        noBd: num(h.dbthirdbar_r) === null && !(edits && i === 0) };
+        noBd: num(h.dbthirdbar_r) === null && !l.est }; // a surface re-estimated from edited texture or OM has one; a pH edit alone leaves it as the survey's
     });
   }
   /* the survey's component (dominant unless cokey) as the common soil structure */

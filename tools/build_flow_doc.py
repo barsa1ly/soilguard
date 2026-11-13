@@ -1,5 +1,6 @@
 """Build docs/SoilGuard_Data_Flow.docx: flow diagrams of where each dataset comes from,
 where it is calculated and how the results reach the screen (run from the repo root or tools/)."""
+from datetime import date
 from pathlib import Path
 
 import matplotlib
@@ -1123,6 +1124,7 @@ def build_docx(figs, commit):
     from docx.oxml.ns import qn
     from docx.shared import Inches, Pt, RGBColor
 
+    built = date.today()  # the date printed under the title: the day the document is built, as "13 November 2026"
     ink, accent, muted = RGBColor(0x1F, 0x29, 0x33), RGBColor(0x2F, 0x7D, 0x4F), RGBColor(0x61, 0x6E, 0x7C)
     doc = Document()
 
@@ -1271,7 +1273,7 @@ def build_docx(figs, commit):
          size=13, color=muted, after=2)
     code = f" (commit {commit})" if commit != "unknown" else ""
     para(f"App: barsa1ly.github.io/soilguard   ·   Code: github.com/barsa1ly/soilguard{code}   ·   "
-         f"November 11, 2026", size=9, color=muted, after=10)
+         f"{built.day} {built:%B %Y}", size=9, color=muted, after=10)
 
     doc.add_heading("1. In one paragraph", level=1)
     para("SoilGuard is a static web page. When you pick a point in one of the chosen states, your browser asks each agency's web "

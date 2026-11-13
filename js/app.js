@@ -891,6 +891,9 @@
     if (!g) return;
     if (g.dataset.gotoTheme && g.dataset.gotoTheme !== state.theme) setTheme(g.dataset.gotoTheme, g.dataset.goto);
     else showTab(g.dataset.goto);
+    // keyboard focus off the link, now in a hidden tab: to the tab's first heading, else its button (js/soilmaps.js
+    // moves it on to the card a data-so-go link names, once scrolled there)
+    if (!g.getClientRects().length && !U.focusHead($("#tab-" + g.dataset.goto))) { const b = $(".tabs button.active"); if (b) b.focus({ preventScroll: true }); }
   });
 
   /* ============ SITE SELECTION ============ */
@@ -1815,7 +1818,7 @@
     if (!s || !s.surface) return;
     const surf = currentSurface(), base = s.surface;
     // what sets the wind erodibility; the layer's water retention is in the Soil maps › Soil tab's horizons (survey
-    // values, or Saxton & Rawls once edited)
+    // values, or Saxton & Rawls once sand, silt, clay or OM is edited)
     const ch = (a, b) => (state.edits && a !== b ? "chg" : "");
     const cells = [
       ["Texture class", surf.texName || S.TEX[surf.texCode] || "—", ch(surf.texCode, base.texCode)],
@@ -1965,7 +1968,7 @@
       <tbody>${plants.map(p => `<tr><td>${esc(p.plantcomname || p.plantsym)}</td><td class="l"><i>${esc(p.plantsciname)}</i></td><td>${f(num(p.rangeprod), 0)}</td></tr>`).join("")}</tbody></table></div>`) : "";
     const comps = card("Components in this map unit", `<div class="table-wrap"><table class="grid"><thead><tr><th>Component</th><th>%</th><th>WEG</th><th>I<small>${esc(UN.sym("soilLoss"))}</small></th><th>Slope<small>%</small></th><th>Drainage</th><th>Ecological site</th></tr></thead>
       <tbody>${s.components.map(c => `<tr><td>${esc(c.compname)}${c.cokey === d.cokey ? " ★" : ""}</td><td>${f(c.comppct_r, 0)}</td><td>${esc(c.weg || "—")}</td><td>${num(c.wei) === null ? "—" : UN.num("soilLoss", num(c.wei), 0)}</td><td>${f(num(c.slope_r), 1)}</td><td class="l">${esc(c.drainagecl || "—")}</td><td class="l">${esc(c.eco ? c.eco.ecoclassname : "—")}</td></tr>`).join("")}</tbody></table></div>`);
-    box.innerHTML = `<p class="fine sm-hzwho"><b>${esc(d.compname)}</b>, the dominant soil: texture, density, water retention and conductivity of each horizon.</p>${table}<p class="fine">Water retention, conductivity and bulk density come from the survey; rows marked ✎ use your edited values with Saxton &amp; Rawls (2006). Root growth factor = exp(−0.02 × mid-depth) below 15 cm, 0 below a restrictive layer. The profile CSV has every column of both views for this soil (pH, CEC, OM, organic C, total N, CaCO₃, gypsum, EC, SAR too) and keeps cm and cm/h whatever the units table says.</p>
+    box.innerHTML = `<p class="fine sm-hzwho"><b>${esc(d.compname)}</b>, the dominant soil: texture, density, water retention and conductivity of each horizon.</p>${table}<p class="fine">Water retention, conductivity and bulk density come from the survey; a row marked ✎ holds your edits, and where they change sand, silt, clay or organic matter its water retention, conductivity and bulk density are Saxton &amp; Rawls (2006) estimates (a pH edit alone keeps the survey's). Root growth factor = exp(−0.02 × mid-depth) below 15 cm, 0 below a restrictive layer. The profile CSV has every column of both views for this soil (pH, CEC, OM, organic C, total N, CaCO₃, gypsum, EC, SAR too) and keeps cm and cm/h whatever the units table says.</p>
         <div class="export-row"><button class="btn small" id="dlCsv">Download the profile (CSV)</button><button class="btn small" id="dlSol">Download DSSAT .SOL</button></div>`;
     // the pH box: drawn once per Soil tab (an input redrawn while typed in would lose its focus), then only its value follows
     if (phBox && !phBox.firstChild) phBox.innerHTML = card("Surface pH — edit with your soil test", `<div class="soil-edit" id="soilEditPh"><label>pH (1:1 water)<input type="number" id="inPh" min="3" max="10" step="0.1"></label></div>
@@ -1974,13 +1977,13 @@
     if (ph && document.activeElement !== ph) { const v = surf ? surf.ph : null; ph.value = v ?? ""; ph.classList.toggle("edited", !!state.edits && (v ?? null) !== (s.surface ? s.surface.ph ?? null : null)); }
     if ($("#profPh .reset-soil")) $("#profPh .reset-soil").hidden = !state.edits;
     if (more) more.innerHTML = card("Site and classification", `<div class="param-grid">${params}</div>`) + comps + yields + plantTbl;
-    const csv = () => U.download(`soil_${s.mukey}_${d.compname.replace(/\W+/g, "_")}.csv`, S.toCSV(s, layers, site, cFactor()), "text/csv");
+    const csv = () => U.download(`soil_${s.mukey}_${d.compname.replace(/\W+/g, "_")}.csv`, S.toCSV(s, layers, site, cFactor(), surf), "text/csv");
     $("#dlCsv").onclick = csv;
     $("#dlSol").onclick = () => { // a component without water retention or bulk density (urban land, pits) has no DSSAT soil
       try { U.download("WG.SOL", WG.models.writers.dssatSol(WG.models.surveySoil(state))); }
       catch (e) { console.warn(e); U.toast(`No DSSAT soil file for ${d.compname}: ${e.message || e}.`, 6000); }
     };
-    if ($("#profSource")) $("#profSource").innerHTML = `Source: USDA-NRCS Soil Survey Geographic Database (SSURGO) via <a href="https://sdmdataaccess.nrcs.usda.gov/" target="_blank" rel="noopener">Soil Data Access</a>, map unit key ${s.mukey}, ${esc(s.mapunit.areaname || "")}${s.mapunit.saverest ? `, survey dated ${esc(String(s.mapunit.saverest).split(/[ T]/)[0])}` : ""}. Elevation/slope: ${e ? esc(e.src) + (e.src.startsWith("USGS") ? " (Elevation Point Query Service)" : " via Open-Meteo") : "loading"}. Water retention for edited layers: Saxton &amp; Rawls (2006). <button class="link" data-methods="m-soil">Equations →</button>`;
+    if ($("#profSource")) $("#profSource").innerHTML = `Source: USDA-NRCS Soil Survey Geographic Database (SSURGO) via <a href="https://sdmdataaccess.nrcs.usda.gov/" target="_blank" rel="noopener">Soil Data Access</a>, map unit key ${s.mukey}, ${esc(s.mapunit.areaname || "")}${s.mapunit.saverest ? `, survey dated ${esc(String(s.mapunit.saverest).split(/[ T]/)[0])}` : ""}. Elevation/slope: ${e ? esc(e.src) + (e.src.startsWith("USGS") ? " (Elevation Point Query Service)" : " via Open-Meteo") : "loading"}. Water retention of a layer with edited sand, silt, clay or organic matter: Saxton &amp; Rawls (2006). <button class="link" data-methods="m-soil">Equations →</button>`;
   }
 
   /* ============ PRACTICES TAB ============ */

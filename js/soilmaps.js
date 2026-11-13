@@ -258,7 +258,7 @@ WG.soilmaps = (function () {
   /* the Forest Service's values at the cell, its four depths, one service at a time */
   async function usfsSamples(k, lat, lon) {
     const q = new URLSearchParams({ geometry: JSON.stringify({ x: +lon.toFixed(6), y: +lat.toFixed(6), spatialReference: { wkid: 4326 } }), geometryType: "esriGeometryPoint", returnFirstValueOnly: false, outFields: "*", f: "json" });
-    const j = await fetchJSON(`${USFS}${SVC[k][0]}/ImageServer/getSamples?${q}`, {}, 40000);
+    const j = await fetchJSON(`${USFS}${SVC[k][0]}/ImageServer/getSamples?${q}`, {}, 40000, 40000, a => !a.error); // an error comes with HTTP 200: not kept
     if (j.error) throw new Error(j.error.message || "the service refused the request");
     const out = {};
     // each slice's depth: its depth field, or (the CEC service has none) the bottom depth that ends its name ("pH_5-25", "Cation_Exchange_Capacity_pH7_25")
@@ -268,16 +268,15 @@ WG.soilmaps = (function () {
   }
   const usfsAt = (k, lat, lon) => Wx.once(`sm:usfs:${k}`, () => usfsSamples(k, lat, lon));
 
-  /* SoilGrids' total N at six depths; kept on this device, as ISRIC asks for fair use of its point service */
+  /* SoilGrids' total N at six depths; kept in this browser for 15 days (js/util.js KEEP), as ISRIC asks for fair use of
+     its point service. An answer with no value at all is not kept, and is asked again next time: SoilGrids may fill it later. */
   const SG = "https://rest.isric.org/soilgrids/v2.0/properties/query";
+  const sgL0 = j => ((j.properties || {}).layers || [])[0];
   async function sgNAt(lat, lon) {
-    const key = `sgN:${lat.toFixed(4)},${lon.toFixed(4)}`, hit = WG.util.cache.get(key);
-    if (hit && hit.some(r => ok(r.mean))) return hit;
-    const j = await fetchJSON(`${SG}?lon=${lon.toFixed(5)}&lat=${lat.toFixed(5)}&property=nitrogen&value=mean&value=Q0.05&value=Q0.95&${SGD.map(d => `depth=${d}`).join("&")}`, {}, 45000);
-    const L0 = ((j.properties || {}).layers || [])[0], f = (L0 && L0.unit_measure && L0.unit_measure.d_factor) || 100, g = v => (ok(num(v)) ? num(v) / f : null);
-    const out = (L0 ? L0.depths : []).map(d => ({ label: d.label, t: d.range.top_depth, b: d.range.bottom_depth, mean: g(d.values.mean), lo: g(d.values["Q0.05"]), hi: g(d.values["Q0.95"]) }));
-    if (out.some(r => ok(r.mean))) WG.util.cache.set(key, out); // an answer with no value at all is asked again next time: SoilGrids may fill it later
-    return out;
+    const j = await fetchJSON(`${SG}?lon=${lon.toFixed(5)}&lat=${lat.toFixed(5)}&property=nitrogen&value=mean&value=Q0.05&value=Q0.95&${SGD.map(d => `depth=${d}`).join("&")}`, {}, 45000, 45000,
+      a => !!sgL0(a) && sgL0(a).depths.some(d => ok(num(d.values.mean))));
+    const L0 = sgL0(j), f = (L0 && L0.unit_measure && L0.unit_measure.d_factor) || 100, g = v => (ok(num(v)) ? num(v) / f : null);
+    return (L0 ? L0.depths : []).map(d => ({ label: d.label, t: d.range.top_depth, b: d.range.bottom_depth, mean: g(d.values.mean), lo: g(d.values["Q0.05"]), hi: g(d.values["Q0.95"]) }));
   }
   const sgN = (lat, lon) => Wx.once("sm:sgn", () => sgNAt(lat, lon));
 
@@ -288,7 +287,7 @@ WG.soilmaps = (function () {
     let list = [];
     for (const r of [0.6, 1.5]) {
       const dx = r / Math.cos((lat * Math.PI) / 180);
-      const t = await fetchText(`${WFS}?service=WFS&version=1.0.0&request=GetFeature&typeName=ds801&bbox=${(lon - dx).toFixed(3)},${(lat - r).toFixed(3)},${(lon + dx).toFixed(3)},${(lat + r).toFixed(3)}`, 30000);
+      const t = await fetchText(`${WFS}?service=WFS&version=1.0.0&request=GetFeature&typeName=ds801&bbox=${(lon - dx).toFixed(3)},${(lat - r).toFixed(3)},${(lon + dx).toFixed(3)},${(lat + r).toFixed(3)}`, 30000, 30000, a => /FeatureCollection/.test(a)); // MapServer's exception report is not kept
       list = t.split("<gml:featureMember>").slice(1).map(b => {
         const c = /<gml:Point[^>]*>\s*<gml:coordinates>\s*([-\d.]+),([-\d.]+)/.exec(b), id = /<ms:site_id>(\d+)<\/ms:site_id>/.exec(b);
         return c && id ? { id: id[1], lon: +c[1], lat: +c[2] } : null;
@@ -781,6 +780,10 @@ WG.soilmaps = (function () {
     }
     let t = 0;
     const off = on(() => { if (!live()) return off(); clearTimeout(t); t = setTimeout(draw, 30); });
+    // the moisture tiles' wilting point and field capacity are the survey read for the wind erosion (app.js state.soil),
+    // which may come in after the tiles are drawn: drawn again when app.js says so
+    const soilIn = () => { if (!live()) return document.removeEventListener("wg-soil", soilIn); clearTimeout(t); t = setTimeout(draw, 30); };
+    document.addEventListener("wg-soil", soilIn);
     draw();
     const pS = survey(lat, lon).then(v => { S = v; }, e => { S = e instanceof Error ? e : new Error(String(e)); }).then(draw);
     const pN = sgN(lat, lon).then(v => { N = v; }, e => { N = e instanceof Error ? e : new Error(String(e)); }).then(draw);
@@ -797,6 +800,7 @@ WG.soilmaps = (function () {
       if (!card || tab.hidden) return;
       pb.scrollTo({ top: Math.max(0, card.getBoundingClientRect().top - pb.getBoundingClientRect().top + pb.scrollTop - 8), behavior: "smooth" });
       card.classList.remove("so-flash"); void card.offsetWidth; card.classList.add("so-flash");
+      WG.util.focusHead(card); // keyboard focus to the card's heading, not left on the link in the tab just hidden
     }, 0);
   });
 
