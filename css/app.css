@@ -1503,3 +1503,13 @@ table.grid.sm-table small.bs-mean { display: block; font-weight: 400; white-spac
   .hint strong { font-size: 13px; }
   .app.has-site .hint, body.area-open .hint, .map-pane:has(#tsBar:not([hidden])) .hint { display: none; }
 }
+
+/* tile and input hints folded */
+.tf-i { display: inline-flex; align-items: center; justify-content: center; min-width: 24px; min-height: 24px; margin: 0 2px; padding: 0; border: 1px solid var(--muted); border-radius: 50%; background: none; color: var(--muted); font: italic 600 12px/1 serif; cursor: pointer; vertical-align: middle; }
+.tf-i:hover, .tf-i[aria-expanded="true"] { color: var(--ink); border-color: var(--ink); }
+.stat .s .tf-more { display: none; }
+.stat .s.tf-open .tf-more { display: block; margin-top: 2px; }
+.facts .n.tf-nh:not(.tf-show) { display: none; }
+label > small.tf-hint:not(.tf-show) { display: none; }
+label > small.tf-hint.tf-show { display: block; }
+@media print { .tf-i { display: none !important; } .stat .s .tf-more { display: block !important; } .facts .n.tf-nh, label > small.tf-hint { display: block !important; } }
