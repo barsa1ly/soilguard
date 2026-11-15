@@ -69,7 +69,9 @@
   const periodLabel = () => (state.windPeriod ? state.windPeriod.label : state.period.from ? `${state.period.from} to ${state.period.to}` : `the last ${state.period.n} years`);
 
   /* ============ MAP ============ */
-  const map = L.map("map", { zoomControl: false, preferCanvas: true, worldCopyJump: false, tap: true })
+  // reduced motion asked for (a system setting): the map jumps to a new view rather than gliding, and tiles do not fade in
+  const RM = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const map = L.map("map", { zoomControl: false, preferCanvas: true, worldCopyJump: false, tap: true, zoomAnimation: !RM, fadeAnimation: !RM, markerZoomAnimation: !RM })
     .setView([32.2, -100.6], 6);
   WG.map = map;
   /* reset view: a "[ ]" button under + and - (alone on phones, where + and - are hidden): the map fits the chosen states
@@ -79,7 +81,7 @@
     b.type = "button"; b.title = "Reset view: the chosen states"; b.setAttribute("aria-label", "Reset view: show the chosen states");
     b.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>';
     L.DomEvent.disableClickPropagation(b);
-    L.DomEvent.on(b, "click", e => { L.DomEvent.preventDefault(e); if (regionBounds) map.fitBounds(regionBounds, { animate: true }); else map.setView([32.2, -100.6], 6); });
+    L.DomEvent.on(b, "click", e => { L.DomEvent.preventDefault(e); if (regionBounds) map.fitBounds(regionBounds, { animate: !RM }); else map.setView([32.2, -100.6], 6); });
     return b;
   } });
   new ResetView().addTo(map);
@@ -541,11 +543,20 @@
   $("#opacityRange").addEventListener("input", e => { userOpacity = +e.target.value; applyOpacity(); });
   map.on("zoomend", applyOpacity);
   applyOpacity();
+  // the layer sheet takes the focus as it opens and hands it back to what opened it as it closes; Escape closes it (the
+  // Methods sheet first, when that is open over it)
+  let layerFrom = null;
   const openSheet = open => {
+    const was = !$("#layerSheet").hidden;
+    if (open && !was) layerFrom = document.activeElement;
     $("#layerSheet").hidden = !open;
     $("#sheetBackdrop").hidden = !open;
     if (!open) $("#methodsSheet").hidden = true;
+    if (open) { const f = $("#layerSheet button, #layerSheet input, #layerSheet select"); if (f) f.focus({ preventScroll: true }); }
+    else if (was && layerFrom && layerFrom.isConnected) layerFrom.focus({ preventScroll: true });
+    if (!open) layerFrom = null;
   };
+  document.addEventListener("keydown", e => { if (e.key === "Escape" && !$("#layerSheet").hidden && $("#methodsSheet").hidden) openSheet(false); }, true);
   $("#layersBtn").addEventListener("click", () => { buildLayerSheet(); openSheet(true); });
   $("#sheetClose").addEventListener("click", () => openSheet(false));
   $("#sheetBackdrop").addEventListener("click", () => openSheet(false));
@@ -690,6 +701,8 @@
 
   /* ============ SEARCH / COORDINATES ============ */
   const input = $("#searchInput"), results = $("#searchResults");
+  // the box as a combobox for screen readers: whether its list is open (and, in showResults, how many places it holds)
+  new MutationObserver(() => input.setAttribute("aria-expanded", String(!results.hidden))).observe(results, { attributes: true, attributeFilter: ["hidden"] });
   let searchSeq = 0;
 
   /* While typing, towns, cities and counties come from the app's own list and ZIP codes from its ZIP list (js/places.js),
@@ -727,6 +740,8 @@
   /* the list's buttons are type="button": inside the form, a plain button would submit it and search again for the name
      picked. wait: the last line (the note, or the hint under the items) turns while the streets are looked up. */
   function showResults(items, note, hint, wait) {
+    const say = $("#searchSay");
+    if (say) say.textContent = items.length ? `${items.length} ${items.length === 1 ? "place" : "places"} found` : note || "No matches";
     const tail = hint ? `<button type="button" class="enter-hint${wait ? " sr-wait" : ""}" disabled>${esc(hint)}</button>` : "";
     if (!items.length) { results.innerHTML = `<button type="button"${wait ? ' class="enter-hint sr-wait"' : ""} disabled>${esc(note || "No matches in the 48 contiguous states")}</button>${tail}`; results.hidden = false; return; }
     results.innerHTML = items.map((r, i) =>
@@ -982,7 +997,7 @@
   new ResizeObserver(() => { map.invalidateSize({ pan: false }); settleSoon(); }).observe($(".map-pane"));
   function keepPinVisible() {
     const p = L.latLng(state.site.lat, state.site.lon);
-    if (!map.getBounds().pad(-0.15).contains(p)) map.panTo(p, { animate: true });
+    if (!map.getBounds().pad(-0.15).contains(p)) map.panTo(p, { animate: !RM });
   }
   $("#expandMapBtn").addEventListener("click", () => setLayout("mapbig"));
   const raisePanel = () => { if (state.site) pendingView = { ll: L.latLng(state.site.lat, state.site.lon), z: map.getZoom() }; setLayout("split"); };
@@ -1023,6 +1038,7 @@
   function showTab(name) {
     if (!details && isDetail(name)) { details = true; tabRow(); } // a step to a detail tab brings the details out with it (for this visit)
     $$(".tabs button").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
+    $$('.tabs [role="tab"]').forEach(b => { const on = b.dataset.tab === name; b.setAttribute("aria-selected", String(on)); b.tabIndex = on ? 0 : -1; });
     $$(".tab").forEach(t => { t.hidden = t.id !== "tab-" + name; });
     $("#panelBody").scrollTop = 0;
     fitTabRow();
@@ -1054,6 +1070,21 @@
   new ResizeObserver(() => fitTabRow()).observe($(".tabs"));
   $("#dataBtn").addEventListener("click", () => showTab("download"));
   $(".tabs").addEventListener("click", e => { const b = e.target.closest("button[data-tab]"); if (b) showTab(b.dataset.tab); });
+  /* the tab row for the keyboard and screen readers: each tab names its panel, the open one is selected and is the row's
+     one stop for Tab; the arrow keys, Home and End move along the tabs on show, and Enter or Space opens the one reached */
+  $$('.tabs [role="tab"]').forEach(b => {
+    const p = $("#tab-" + b.dataset.tab), on = b.classList.contains("active");
+    b.id = `tabbtn-${b.dataset.tab}`;
+    if (p) { b.setAttribute("aria-controls", p.id); p.setAttribute("aria-labelledby", b.id); }
+    b.setAttribute("aria-selected", String(on)); b.tabIndex = on ? 0 : -1;
+  });
+  $(".tabs").addEventListener("keydown", e => {
+    const list = $$('.tabs [role="tab"]').filter(b => !b.hidden), i = list.indexOf(document.activeElement);
+    const j = i < 0 ? undefined : { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: list.length - 1 }[e.key];
+    if (j === undefined) return;
+    e.preventDefault();
+    list[(j + list.length) % list.length].focus();
+  });
   // data-goto-theme: a link to a tab of another theme (Wind erosion › Soil to Soil maps › Soil) switches the map's theme too
   $("#panel").addEventListener("click", e => {
     const g = e.target.closest("[data-goto]");
@@ -1139,7 +1170,7 @@
 
     const wasOpen = app.classList.contains("has-site") && !app.classList.contains("map-big");
     const z = opts.keepZoom ? Math.max(map.getZoom(), 9) : opts.zoom || Math.max(map.getZoom(), 12);
-    if (wasOpen) map.setView(ll, z, { animate: true });
+    if (wasOpen) map.setView(ll, z, { animate: !RM });
     else { pendingView = { ll, z }; setLayout("split"); }
 
     try { history.replaceState(null, "", `?lat=${lat.toFixed(5)}&lon=${lon.toFixed(5)}${windQ()}${UN.query()}${KEEP_Q}`); } catch (e) { /* file:// */ }

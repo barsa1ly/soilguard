@@ -69,8 +69,11 @@ WG.methods = (function () {
     ["Imagery, labels, roads, rivers", "Esri World Imagery and Reference; USGS The National Map", "Map tiles, direct", "to ~0.5 m", "—"],
     ["Visitor counts", "Umami Cloud, free Hobby plan", "Off in this copy until a SoilGuard website ID is put in js/stats.js (README, Visitor statistics). Then js/stats.js loads Umami's script on the published site only. Only the page's path is sent (data-exclude-search), never the query string with the chosen coordinates. No cookies. Its public Share URL, once made, is linked as Visitor statistics at the start of the map's bottom bar.", "6 months kept; country, region (state or province), city, from IP geolocation, approximate", "—"],
     ["Soil map-unit lines", "USDA-NRCS SSURGO", "Soil Data Access WMS, direct (zoom 13+)", "—", "—"],
+    ["Land cover by year (time slider on the land cover map)", "USGS Annual NLCD, Collection 1", "<b>Direct:</b> USGS EROS GeoServer WMS, one year a frame", "30 m, yearly, 1985 on", "NLCD 2021 stays on the map"],
+    ["Animated GIF of a time slider's range", "The map's frames as the browser draws them", "Encoded in the browser by gifenc 1.0.3 (MIT), loaded from jsDelivr the first time; never uploaded", "at most 120 frames, 640 px wide", "—"],
     ["Place suggestions while typing", "U.S. Census Bureau 2020 Gazetteer; 2024 city and town population estimates", "Pre-built list, data/places.txt (tools/build_places.py)", "—", "—"],
-    ["Place search and names", "OpenStreetMap contributors", "Nominatim, direct", "—", "—"],
+    ["ZIP codes while typing", "U.S. Census Bureau 2020 ZIP Code Tabulation Areas", "Pre-built list, data/zips (tools/build_zips.py): no server asked", "—", "a ZIP code not in the list is looked up on OpenStreetMap (Nominatim) on Enter"],
+    ["Streets, addresses and other place searches", "OpenStreetMap contributors", "<b>Direct:</b> Photon (komoot) for streets and addresses while typing; Nominatim on Enter and to find a house number on a street, at most one request a second, each answer kept for the session", "—", "Photon not answering: Enter still searches with Nominatim"],
     ["Practice recommendations", "Texas: NRCS Texas FOTG standards, Texas A&M AgriLife, TxDOT, WAFWA, published trials. Other states: the state's NRCS FOTG standards and guidance (Kansas and a few western states also extension and other official public pages)", "Texas encoded in js/practices.js from docs/RESEARCH.md; other states in data/practices/XX.json (tools/fetch_efotg.py, tools/build_practices.py)", "48 contiguous states and DC; every statement cited", "—"],
   ];
 
@@ -301,8 +304,9 @@ WG.methods = (function () {
       <section id="m-scales"><h4>Classes and scales</h4>${table(["Number on screen", "Scale", "What it means"], scaleRows(), "scales")}
         <p class="fine">Every number follows the units table (the ruler button on the map). Classes keep the units they are defined in (E and I in t/ac/yr, NRCS practice specifications in US units) and are converted for display; model files always use each model's own units.</p>
         <h4>Wind Erodibility Groups</h4>${table(["WEG", "Texture guide", "I, t/ac/yr"], wegRows(), "weg")}
-        <p class="fine">For a named soil, NRCS uses the group recorded in the soil survey; the texture guide is for soils that are not identified (${A("https://efotg.sc.egov.usda.gov/references/public/TX/Wind_Erosion.pdf", "National Agronomy Manual, Part 502")}). So a soil's group can differ from what its texture suggests: Pullman clay loam, for example, is WEG 7. The app shows the survey's group, and uses the guide only when you edit the surface layer. Texture guide: USDA-NRCS ${A("https://directives.nrcs.usda.gov/sites/default/files2/1725389517/Part%20618%20Subpart%20B%20%E2%80%93%20Exhibits.pdf", "National Soil Survey Handbook, Part 618 Subpart B")}, §618.93 (amended August 2024). Calcareous: strong or violent fizzing of the fine earth in cold dilute (1N) HCl. Rock fragments move a soil to a less erodible group, meaning the next lower I (86 → 56): one group at 15–35% by volume, two at 35–60%, I = 0 above 60% (sands and loamy sands move less).</p></section>
+        <p class="fine">For a named soil, NRCS uses the group recorded in the soil survey; the texture guide is for soils that are not identified (${A("https://efotg.sc.egov.usda.gov/references/public/TX/Wind_Erosion.pdf", "National Agronomy Manual, Part 502")}). So a soil's group can differ from what its texture suggests: Pullman clay loam, for example, is WEG 7. The app shows the survey's group, and uses the guide only when you edit the surface layer. Where the main component is urban land, pits, dumps, water or another miscellaneous area, the survey gives it no erodibility (I = 0), so the Overview reads “Not rated” instead of a risk class. Texture guide: USDA-NRCS ${A("https://directives.nrcs.usda.gov/sites/default/files2/1725389517/Part%20618%20Subpart%20B%20%E2%80%93%20Exhibits.pdf", "National Soil Survey Handbook, Part 618 Subpart B")}, §618.93 (amended August 2024). Calcareous: strong or violent fizzing of the fine earth in cold dilute (1N) HCl. Rock fragments move a soil to a less erodible group, meaning the next lower I (86 → 56): one group at 15–35% by volume, two at 35–60%, I = 0 above 60% (sands and loamy sands move less).</p></section>
       <section id="m-sources"><h4>Data sources</h4>${table(["Data", "Producer", "How the app reads it", "Resolution · period", "If it fails"], SOURCES, "sources")}
+        <p class="fine">Reliability: a page keeps at most 6 requests open to one server, and more wait their turn (a wait, never a limit on use). A busy answer or a dropped connection is asked again, at most twice, after about 1 s and then 3 s. After 3 failures in a row a server is left alone for 2 minutes (the cards say it is busy, with their reload icon); then one request goes first as a trial, and its success lets the others through again.</p>
         <h4>Other wind networks</h4>
         <p class="fine">Calibration uses airports: no other network gives a web page hourly 10 m wind for years without a key, at the airport standard, and for public use. Checked in October 2026:</p>
         <ul class="fine">
@@ -348,7 +352,8 @@ WG.methods = (function () {
     const b = e.target.closest("button[data-sec]");
     if (!b) return;
     const t = $("#" + b.dataset.sec);
-    $("#methodsBody").scrollTo({ top: t.offsetTop, behavior: "smooth" });
+    if (!t) return;
+    $("#methodsBody").scrollTo({ top: t.offsetTop, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
     $$("#methodsNav button").forEach(x => x.classList.toggle("on", x === b));
   });
   document.addEventListener("click", e => {

@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-  <link rel="stylesheet" href="css/app.css?v=92">
+  <link rel="stylesheet" href="css/app.css?v=93">
 </head>
 <body>
 <div id="app" class="app">
@@ -43,11 +43,12 @@
       </div>
       <form id="searchForm" class="search" autocomplete="off" role="search">
         <svg class="search-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-        <input id="searchInput" type="search" inputmode="search" placeholder="Place, address, ZIP, or lat, lon" aria-label="Search a place or enter coordinates">
+        <input id="searchInput" type="search" inputmode="search" placeholder="Place, address, ZIP, or lat, lon" aria-label="Search a place or enter coordinates" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="searchResults">
         <button type="button" id="coordBtn" class="icon-btn" title="Enter coordinates" aria-label="Enter coordinates">
           <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
         </button>
-        <div id="searchResults" class="search-results" role="listbox" hidden></div>
+        <div id="searchResults" class="search-results" role="listbox" aria-label="Places found" hidden></div>
+        <span id="searchSay" class="vh" aria-live="polite"></span>
         <div id="coordForm" class="coord-form" hidden>
           <label>Latitude<input id="latInput" type="text" inputmode="decimal" placeholder="32.7357"></label>
           <label>Longitude<input id="lonInput" type="text" inputmode="decimal" placeholder="-101.9550"></label>
@@ -475,39 +476,39 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-<script src="js/config.js?v=92"></script>
-<script src="data/states.js?v=92"></script>
-<script src="js/util.js?v=92"></script>
-<script src="js/units.js?v=92"></script>
-<script src="js/export.js?v=92"></script>
-<script src="js/soil.js?v=92"></script>
-<script src="js/wind.js?v=92"></script>
-<script src="js/charts.js?v=92"></script>
-<script src="js/practices.js?v=92"></script>
-<script src="js/methods.js?v=92"></script>
-<script src="js/timemap.js?v=92"></script>
-<script src="js/h5range.js?v=92"></script>
-<script src="js/weather.js?v=92"></script>
-<script src="js/soilmaps.js?v=92"></script>
-<script src="js/basins.js?v=92"></script>
-<script src="js/soilmoisture.js?v=92"></script>
-<script src="js/landcover.js?v=92"></script>
-<script src="js/shares.js?v=92"></script>
-<script src="js/timeslider.js?v=92"></script>
-<script src="js/places.js?v=92"></script>
-<script src="js/app.js?v=92"></script>
-<script src="js/fold.js?v=92"></script>
-<script src="js/downloads.js?v=92"></script>
-<script src="js/models.js?v=92"></script>
-<script src="js/writers.js?v=92"></script>
-<script src="js/century.js?v=92"></script>
-<script src="js/daycent.js?v=92"></script>
-<script src="js/preview.js?v=92"></script>
-<script src="js/templates.js?v=92"></script>
-<script src="js/datasheet.js?v=92"></script>
-<script src="js/area.js?v=92"></script>
-<script src="js/gridfiles.js?v=92"></script>
-<script src="js/grid.js?v=92"></script>
-<script src="js/stats.js?v=92"></script>
+<script src="js/config.js?v=93"></script>
+<script src="data/states.js?v=93"></script>
+<script src="js/util.js?v=93"></script>
+<script src="js/units.js?v=93"></script>
+<script src="js/export.js?v=93"></script>
+<script src="js/soil.js?v=93"></script>
+<script src="js/wind.js?v=93"></script>
+<script src="js/charts.js?v=93"></script>
+<script src="js/practices.js?v=93"></script>
+<script src="js/methods.js?v=93"></script>
+<script src="js/timemap.js?v=93"></script>
+<script src="js/h5range.js?v=93"></script>
+<script src="js/weather.js?v=93"></script>
+<script src="js/soilmaps.js?v=93"></script>
+<script src="js/basins.js?v=93"></script>
+<script src="js/soilmoisture.js?v=93"></script>
+<script src="js/landcover.js?v=93"></script>
+<script src="js/shares.js?v=93"></script>
+<script src="js/timeslider.js?v=93"></script>
+<script src="js/places.js?v=93"></script>
+<script src="js/app.js?v=93"></script>
+<script src="js/fold.js?v=93"></script>
+<script src="js/downloads.js?v=93"></script>
+<script src="js/models.js?v=93"></script>
+<script src="js/writers.js?v=93"></script>
+<script src="js/century.js?v=93"></script>
+<script src="js/daycent.js?v=93"></script>
+<script src="js/preview.js?v=93"></script>
+<script src="js/templates.js?v=93"></script>
+<script src="js/datasheet.js?v=93"></script>
+<script src="js/area.js?v=93"></script>
+<script src="js/gridfiles.js?v=93"></script>
+<script src="js/grid.js?v=93"></script>
+<script src="js/stats.js?v=93"></script>
 </body>
 </html>

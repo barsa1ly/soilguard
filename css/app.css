@@ -5,7 +5,7 @@
   --surface-2: #f8f7f2;
   --ink: #1c2420;
   --ink-2: #39423c;
-  --muted: #69716a;
+  --muted: #5a625c;
   --line: #e2ded2;
   --accent: #b4532a;
   --accent-2: #8f3f1e;
@@ -149,6 +149,7 @@ svg { display: block; }
 .search-results { max-height: calc(100vh - 80px); max-height: calc(100dvh - 80px); overflow-y: auto; overscroll-behavior: contain; } /* a short window scrolls the list */
 .search-results button:first-child { border-top: 0; }
 .search-results button:hover, .search-results button:focus { background: var(--surface-2); outline: 0; }
+.search-results button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .search-results small { display: block; color: var(--muted); font-size: 12px; }
 .search-results button.enter-hint { color: var(--muted); font-size: 12px; padding: 8px 14px; }
 .coord-form {
@@ -1591,4 +1592,16 @@ table.weg-table .here { font-size: 11px; }
 @media (max-width: 400px) {
   .tabs:has(> .tab-more[aria-expanded="true"]:not([hidden])) { gap: 1px; }
   .tabs button.tab-more[aria-expanded="true"] { padding-left: 5px; padding-right: 5px; }
+}
+
+/* ---------- keyboard focus and reduced motion ---------- */
+/* a ring on each control that draws none of its own, white inside so it shows on the dark bars and over the map; in the
+   tab row, which scrolls and would cut a ring drawn outside, it is drawn inside the tab */
+button:focus-visible, select:focus-visible, summary:focus-visible, [role="tab"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; box-shadow: 0 0 0 2px #fff; }
+.tabs button:focus-visible { outline-offset: -4px; box-shadow: none; }
+.vh { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
+/* reduced motion asked for (a system setting): nothing glides, fades or spins. Transitions take no time at all (a
+   duration above 0 would start one on every element, as their transition-property is "all" unless set) */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: 0s !important; transition-delay: 0s !important; scroll-behavior: auto !important; }
 }

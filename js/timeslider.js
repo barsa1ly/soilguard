@@ -213,7 +213,7 @@ WG.timeslider = (function () {
     if (k === "play") play();
     else if (k === "prev" || k === "next") { stop(); stepBy(k === "next" ? 1 : -1); }
     else if (k === "more") { b.setAttribute("aria-expanded", String(el.classList.toggle("open"))); size(); }
-    else if (k === "reset") { ranges.delete(A.key); defRange(); paint(); }
+    else if (k === "reset") { ranges.delete(A.key); defRange(); keepIn(); paint(); }
     else if (k === "gif") gif();
   }
   function onInput(e) {
@@ -234,7 +234,14 @@ WG.timeslider = (function () {
     let a = k === "from" ? F[near(d)] : from, b = k === "to" ? F[near(d)] : to;
     if (a > b) [a, b] = [b, a];
     from = a; to = b; ranges.set(A.key, [a, b]);
-    paint();
+    keepIn(); paint();
+  }
+  // a frame on show outside a new range: the range's nearer end is shown, so the date written and a GIF of the range
+  // agree (while playing, the next step starts the range anyway)
+  function keepIn() {
+    if (playing || job || !F.length || pos === null || (pos >= from && pos <= to)) return;
+    const d = pos < from ? from : to;
+    pos = d; tipHide(); go(d);
   }
   function onKey(e) {
     if (!A || !F.length || job || (e.target.matches && e.target.matches('input[type="date"], select'))) return;
