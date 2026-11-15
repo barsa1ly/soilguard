@@ -1410,11 +1410,13 @@ table.grid.sm-table small.bs-mean { display: block; font-weight: 400; white-spac
   .tabs:has(> .tab-more[aria-expanded="true"]:not([hidden])) > button[data-tab]:not(.tab-dl) { padding-left: 4px; padding-right: 4px; font-size: 12px; }
 }
 
-/* a card's long notes (js/fold.js): shut under one small button per card, as the legend's are; all open in print */
-#panelBody .fold-p:not(.fold-show) { display: none; }
-.fold-tg { display: block; margin: 8px 0 0; padding: 0; border: 0; background: none; color: var(--muted); font-size: 12px; text-decoration: underline; text-underline-offset: 2px; text-align: left; cursor: pointer; }
-.fold-tg:hover { color: var(--ink); }
-@media print { #panelBody .fold-p { display: block !important; } .fold-tg { display: none !important; } }
+/* a card's or tile's folded text (js/fold.js): shut under one small "More" button at its lower right; all open in print */
+#panelBody :is(.fold-p, .tf-more, .tf-nh, small.tf-hint):not(.fold-show) { display: none; }
+#panelBody .tf-more.fold-show { display: block; margin-top: 2px; }
+#panelBody small.tf-hint.fold-show { display: block; }
+.fold-tg { display: block; flex: none; align-self: flex-end; width: fit-content; min-height: 32px; margin: 6px 0 0 auto; padding: 0 11px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--muted); font-size: 12px; line-height: 1; white-space: nowrap; cursor: pointer; }
+.fold-tg:hover, .fold-tg[aria-expanded="true"] { color: var(--ink); border-color: var(--muted); }
+@media print { #panelBody :is(.fold-p, .tf-more, .tf-nh, small.tf-hint) { display: block !important; } .fold-tg { display: none !important; } }
 /* search: addresses and ZIP codes */
 /* the line saying the streets are being looked up turns a small ring after its words (the app's spin) */
 .search-results button.sr-wait::after { content: ""; display: inline-block; width: 9px; height: 9px; margin-left: 7px; vertical-align: -1px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
@@ -1505,11 +1507,41 @@ table.grid.sm-table small.bs-mean { display: block; font-weight: 400; white-spac
 }
 
 /* tile and input hints folded */
-.tf-i { display: inline-flex; align-items: center; justify-content: center; min-width: 24px; min-height: 24px; margin: 0 2px; padding: 0; border: 1px solid var(--muted); border-radius: 50%; background: none; color: var(--muted); font: italic 600 12px/1 serif; cursor: pointer; vertical-align: middle; }
-.tf-i:hover, .tf-i[aria-expanded="true"] { color: var(--ink); border-color: var(--ink); }
-.stat .s .tf-more { display: none; }
-.stat .s.tf-open .tf-more { display: block; margin-top: 2px; }
-.facts .n.tf-nh:not(.tf-show) { display: none; }
-label > small.tf-hint:not(.tf-show) { display: none; }
-label > small.tf-hint.tf-show { display: block; }
-@media print { .tf-i { display: none !important; } .stat .s .tf-more { display: block !important; } .facts .n.tf-nh, label > small.tf-hint { display: block !important; } }
+/* bigger numbers: the main values of the tiles and cards */
+.stat .v { font-size: 21px; }
+.stat .v small { font-size: 12px; }
+.facts .v { font-size: 16px; }
+.kv .v { font-size: 16px; }
+.wx-kv { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+.wx-kv b { font-size: 23px; overflow-wrap: anywhere; }
+.wx-kv b small { font-size: 12px; font-weight: 500; }
+.risk-level { font-size: 34px; }
+@media (max-width: 767px) { .risk-level { font-size: 29px; } }
+
+/* audit round 1 */
+.risk-scale b { font-size: 11px; }
+.risk-scale span { font-size: 11px; }
+.weg-strip i { font-size: 11px; }
+.weg-ends { font-size: 11px; }
+table.grid th small { font-size: 11px; }
+table.weg-table .here { font-size: 11px; }
+.lu .sugg { font-size: 11px; }
+.badge { font-size: 11px; }
+.so-tile .k .tag { font-size: 11px; }
+.mi-fine, .mi-scale { font-size: 11px; }
+@media (max-width: 767px) {
+  .mtable td::before { font-size: 11px; }
+}
+.link, .risk-how { display: inline-flex; align-items: center; min-height: 32px; padding-top: 6px; padding-bottom: 6px; box-sizing: border-box; }
+.risk-how { margin-top: 0; }
+.risk-links { gap: 0 16px; }
+.legend h5 button { min-height: 32px; min-width: 32px; padding: 0 6px; margin: -8px -6px -8px 0; }
+@media (max-width: 767px) {
+  .theme-bar button { min-height: 44px; min-width: 44px; justify-content: center; }
+  .panel-grip { min-height: 32px; align-items: center; padding: 0; margin-bottom: 0; }
+}
+/* reset view under + and - (js/app.js ResetView) */
+.leaflet-control.map-reset { display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; padding: 0; border: 0;
+  border-radius: 12px; background: var(--surface); color: var(--ink-2); box-shadow: var(--shadow); cursor: pointer; }
+.leaflet-control.map-reset:hover, .leaflet-control.map-reset:focus-visible { color: var(--accent); }
+.leaflet-control.map-reset svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }

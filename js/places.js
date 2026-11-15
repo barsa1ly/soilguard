@@ -122,8 +122,8 @@
   /* ---------- streets and addresses ----------
      Photon (photon.komoot.io, run by komoot: OpenStreetMap's streets, house numbers and places; free, no key, and it
      answers pages on any site). Unlike Nominatim it is made for search as you type; its public server asks for fair use
-     and throttles heavy use, so the box asks it only once typing pauses (js/app.js), only for text that looks like a
-     street or an address or matches no town, and keeps each answer for the visit. OpenStreetMap spells street names out
+     and throttles heavy use, so the box asks it only once typing pauses (js/app.js), only for 4 characters or more that
+     look like a street or an address or match no town, and keeps each answer for the visit (per text asked). OpenStreetMap spells street names out
      and Photon matches words as written: "720 E Blackland Rd" found nothing, "720 East Blackland Road" found the street,
      so the usual US abbreviations are spelled out before asking. */
   const PHOTON = "https://photon.komoot.io/api/";

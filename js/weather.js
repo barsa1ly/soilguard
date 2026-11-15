@@ -161,7 +161,8 @@ WG.weather = (function () {
   }
   const siteLine = () => { const s = WG.state; return `${s.place ? `${s.place} · ` : ""}${s.site.lat.toFixed(4)}, ${s.site.lon.toFixed(4)}`; };
   const wait = what => `<div class="card"><p class="fine"><span class="skeleton" style="width:60%"></span></p><p class="fine">Reading ${esc(what)}…</p></div>`;
-  const failed = (what, e) => `<div class="card"><p class="fine">Could not read ${esc(what)}: ${esc(e.message || String(e))}. <button type="button" class="wx-retry" data-wx-retry title="Reload this part" aria-label="Reload this part"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/></svg></button></p></div>`;
+  const RETRY = `<button type="button" class="wx-retry" data-wx-retry title="Reload this part" aria-label="Reload this part"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/></svg></button>`;
+  const failed = (what, e) => `<div class="card"><p class="fine">Could not read ${esc(what)}: ${esc(e.message || String(e))}. ${RETRY}</p></div>`;
   /* Reload on a part that could not be read: its tab is drawn again for this location. What was read is kept (once() and
      the keep cache), so only the failed parts are asked again; the Soil maps tabs draw each other, so all four are redrawn. */
   document.addEventListener("click", e => {
@@ -193,7 +194,7 @@ WG.weather = (function () {
      THREDDS server does not answer (js/wind.js keeps which server answered), the same NetCDF-4 files are read on the
      University's file server by byte ranges (js/h5range.js), only the chunks that hold the cell. The tab says which in a
      few words; docs/METHODS.md §8 has the rest. SPI and SPEI take the U.S. Drought Monitor's classes for them
-     (droughtmonitor.unl.edu, Drought Classification); PDSI has none there, so it is shown as values only. */
+     (droughtmonitor.unl.edu, Drought Classification); PDSI has none there, so it takes Palmer's own classes (PCLASS). */
   const MET = "https://thredds.northwestknowledge.net/thredds/dodsC/agg_met_", MDATA = "https://www.northwestknowledge.net/metdata/data/", DAY1900 = Date.UTC(1900, 0, 1) / 864e5;
   const DRI = [ // dataset, label, variable on THREDDS, USDM classes apply, variable in the file on the file server
     ["spei90d", "SPEI, 90 days", "spei", true, "spei"], ["spei30d", "SPEI, 30 days", "spei", true, "spei"], ["spei180d", "SPEI, 180 days", "spei", true, "spei"], ["spei1y", "SPEI, 1 year", "spei", true, "spei"], ["spei2y", "SPEI, 2 years", "spei", true, "spei"], ["spei5y", "SPEI, 5 years", "spei", true, "spei"],
@@ -205,6 +206,10 @@ WG.weather = (function () {
   const DCLASS = [["D4", -2.0, "Exceptional drought", "#730000", [115, 0, 0]], ["D3", -1.6, "Extreme drought", "#e60000", [230, 0, 0]], ["D2", -1.3, "Severe drought", "#ffaa00", [255, 170, 0]],
     ["D1", -0.8, "Moderate drought", "#fcd37f", [255, 211, 127]], ["D0", -0.5, "Abnormally dry", "#ffff00", [255, 255, 0]]];
   const dclass = v => (ok(v) ? DCLASS.find(c => v <= c[1] + 1e-9) || null : null);
+  // Palmer's classes for the PDSI (Palmer 1965, with NOAA's "moist" for his "wet"): [upper bound, words]
+  const PCLASS = [[-4, "extreme drought"], [-3, "severe drought"], [-2, "moderate drought"], [-1, "mild drought"], [-0.5, "incipient dry spell"], [0.49, "near normal"],
+    [0.99, "incipient moist spell"], [1.99, "slightly moist"], [2.99, "moderately moist"], [3.99, "very moist"], [Infinity, "extremely moist"]];
+  const pclass = v => (ok(v) ? PCLASS.find(c => v <= c[0] + 1e-9)[1] : "");
   /* THREDDS: the cell's values and dates in one OPeNDAP request after the variable's .dds and .das (head, kept an hour
      for each index), which get 3 s to start answering before the file server is read instead. latest: only the last 73
      steps (a year), for This week. */
@@ -251,7 +256,7 @@ WG.weather = (function () {
     const ck = `${MDATA}${ds}.nc?fg-cell=${j},${i}${latest ? ",latest" : ""}`, kept = await WG.util.stashGet(ck, CELL_MS);
     if (kept && Array.isArray(kept.days) && kept.days.length && Array.isArray(kept.vals) && kept.vals.length === kept.days.length) return kept;
     let early = null, took = false;
-    if (Wd.gridmetServer() === null) { const stop = new AbortController(); early = { stop, p: metFiles(ds, fv, j, i, latest, stop.signal) }; early.p.catch(() => {}); }
+    if (Wd.gridmetServer() === null && !Wd.gridmetFilesDown()) { const stop = new AbortController(); early = { stop, p: metFiles(ds, fv, j, i, latest, stop.signal) }; early.p.catch(() => {}); }
     const read = Wd.gridmetRead(thredds => {
       if (thredds) { if (took) return null; if (early) { early.stop.abort(); early = null; } return metThredds(ds, v, j, i, latest); }
       if (onFiles) onFiles();
@@ -564,10 +569,10 @@ WG.weather = (function () {
   RENDER.drought = async (el, live) => {
     const { lat, lon } = WG.state.site;
     el.innerHTML = `<div class="card"><div class="card-h"><h3>This week</h3><span class="tag" id="drDate"></span></div>
-        <div class="usdm-now" id="drNow"><span class="skeleton" style="width:50%"></span></div>
-        <div class="wx-kv" style="margin-top:10px" id="drLatest">${["spi30d", "spei90d", "spei1y", "pdsi"].map(k => `<div id="drL_${k}"><span>${esc(DRI.find(x => x[0] === k)[1])}</span><b>…</b><span></span></div>`).join("")}</div>
-        <div class="wx-kv" style="margin-top:8px" id="drOutl"><div><span>Drought outlook, this month</span><b style="font-size:14px">…</b></div><div><span>Drought outlook, this season</span><b style="font-size:14px">…</b></div></div>
-        <p class="fine">Indices below 0 are drier than usual for the time of year. Sources: U.S. Drought Monitor; gridMET Drought (University of Idaho, 4 km)<span id="drLSrc"></span>; NOAA CPC outlooks. ${esc(USDM_CREDIT)}</p></div>
+        <div class="usdm-now" id="drNow"><span>Loading…</span></div>
+        <div class="wx-kv" style="margin-top:10px" id="drLatest">${["spi30d", "spei90d", "spei1y", "pdsi"].map(k => `<div id="drL_${k}"><span>${esc(DRI.find(x => x[0] === k)[1])}</span><b>…</b><span>Loading…</span></div>`).join("")}</div>
+        <div class="wx-kv" style="margin-top:8px" id="drOutl"><div><span>Drought outlook, this month</span><b style="font-size:14px">Loading…</b></div><div><span>Drought outlook, this season</span><b style="font-size:14px">Loading…</b></div></div>
+        <p class="fine">Indices below 0 are drier than usual for the time of year. SPI and SPEI take the Drought Monitor's ranges for them (D0 to D4) and PDSI Palmer's classes, but the Monitor's own map weighs many indicators and local reports, so its class can differ. gridMET ranks each window against the years since 1980, so near the record's driest the values come in steps and two windows can show the same value. Sources: U.S. Drought Monitor; gridMET Drought (University of Idaho, 4 km)<span id="drLSrc"></span>; NOAA CPC outlooks. ${esc(USDM_CREDIT)}</p></div>
       <div id="drUsdm"></div>
       <div id="drYears">${yearsWait()}</div>`;
     const at = id => (live() ? el.querySelector(`#${id}`) : null);
@@ -575,14 +580,18 @@ WG.weather = (function () {
     const latest = ["spi30d", "spei90d", "spei1y", "pdsi"].map(k => [k, metLatest(k)]);
     const series = metSeries(driKey, () => { const x = at("drYears"); if (x && x.querySelector(".skeleton")) x.innerHTML = yearsWait(); });
     const srcs = new Set(), srcNote = () => { const x = at("drLSrc"); if (x) x.textContent = `, ${viaText(srcs)}`; };
-    const latestRow = ([k, v, d]) => { const c = DRI.find(x => x[0] === k), cl = c[3] ? dclass(v) : null; return `<span>${esc(c[1])}</span><b>${ok(v) ? fmt(v, 2) : "—"}</b><span>${cl ? `${cl[0]} ${cl[2].toLowerCase()}` : c[3] && ok(v) ? "no drought class" : ""}${d ? ` · ${Wd.dayLabel(d)}` : ""}</span>`; };
+    // its class in words (the Drought Monitor's for SPI and SPEI, Palmer's for PDSI) and its date; a failed read says so, with the reload icon
+    const latestRow = ([k, v, d, err]) => {
+      const c = DRI.find(x => x[0] === k), cl = c[3] ? dclass(v) : null, word = cl ? `${cl[0]} ${cl[2].toLowerCase()}` : !ok(v) ? "" : c[3] ? "no drought class" : pclass(v);
+      return `<span>${esc(c[1])}</span><b>${ok(v) ? fmt(v, 2) : "—"}</b><span>${err ? `could not be read ${RETRY}` : [word, d ? Wd.dayLabel(d) : ""].filter(Boolean).join(" · ")}</span>`;
+    };
     const outl = a => (a === undefined ? "could not be read" : !a ? "none issued here" : `${String(a.outlook || "—").replace(/_/g, " ")}${a.target ? ` (${a.target})` : ""}`); // CPC writes No_Drought
     const jobs = [
       usdmDate().then(d => { const x = at("drDate"); if (x) x.textContent = `Drought Monitor of ${Wd.dayLabel(d)}`; }).catch(() => {}),
       usdmHere(lat, lon).then(dm => { const x = at("drNow"), c = dm < 0 ? null : DCLASS.find(c => c[0] === `D${dm}`); if (x) x.innerHTML = c ? `<i style="background:${c[3]}"></i><b>${c[0]} · ${esc(c[2])}</b>` : `<i style="background:#fff"></i><b>No drought class: normal or wet</b>`; },
         () => { const x = at("drNow"); if (x) x.innerHTML = "<span>The Drought Monitor could not be read.</span>"; }),
       droughtOutlook(lat, lon).then(([om, os]) => { const x = at("drOutl"); if (x) x.innerHTML = `<div><span>Drought outlook, this month</span><b style="font-size:14px">${esc(outl(om))}</b></div><div><span>Drought outlook, this season</span><b style="font-size:14px">${esc(outl(os))}</b></div>`; }),
-      ...latest.map(([k, p]) => p.then(x => { let n = x.vals.length - 1; while (n > 0 && !ok(x.vals[n])) n--; srcs.add(x.src); srcNote(); return [k, x.vals[n], x.days[n]]; }).catch(() => [k, null, null])
+      ...latest.map(([k, p]) => p.then(x => { let n = x.vals.length - 1; while (n > 0 && !ok(x.vals[n])) n--; srcs.add(x.src); srcNote(); return [k, x.vals[n], x.days[n]]; }).catch(e => [k, null, null, e || true])
         .then(r => { const x = at(`drL_${k}`); if (x) x.innerHTML = latestRow(r); })),
       series.then(S => { if (live()) drawYears(S); }, e => { const x = at("drYears"); if (x) x.innerHTML = failed("gridMET's drought index", e); }),
       usdmHistory(),
@@ -597,18 +606,18 @@ WG.weather = (function () {
       const wire = () => { const x = $("#wxUsdmSpan"); if (x) x.onchange = e => { usdmSpan = +e.target.value; usdmHistory(); }; };
       let box = at("drUsdm");
       if (!box) return;
-      box.innerHTML = top(`<span class="skeleton" style="width:40%"></span>`);
+      box.innerHTML = top("Loading the weekly history…");
       wire();
       let R;
       try {
-        R = await usdmWeeks(lat, lon, usdmSpan, alive, (n, t) => { const x = alive() && at("drUsdmNote"); if (x) x.textContent = t ? `Reading the Drought Monitor at this point: ${n} of ${t} weeks (those read before come from this browser)…` : "From this browser…"; });
-      } catch (e) { if (alive() && (box = at("drUsdm"))) { box.innerHTML = top(esc(`The Drought Monitor could not be read: ${e.message || e}.`) + ` <button type="button" class="wx-retry" data-wx-retry title="Reload this part" aria-label="Reload this part"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/></svg></button>`); wire(); } return; }
+        R = await usdmWeeks(lat, lon, usdmSpan, alive, (n, t) => { const x = alive() && at("drUsdmNote"); if (x) x.textContent = `Loading the weekly history…${n && t ? ` ${n} of ${t} weeks` : ""}`; });
+      } catch (e) { if (alive() && (box = at("drUsdm"))) { box.innerHTML = top(`${esc(`Weekly history unavailable${e && e.message ? `: ${e.message}` : ""}.`)} ${RETRY}`); wire(); } return; }
       if (!alive() || !(box = at("drUsdm"))) return;
       const { days, dm } = R, n = dm.filter(v => v !== null).length, dry = dm.filter(v => v !== null && v >= 1).length, d0 = dm.filter(v => v === 0).length;
       const cls = v => DCLASS.find(c => c[0] === `D${v}`), col = v => (v === null || v < 0 ? "rgba(0,0,0,0)" : cls(v)[3]);
       const yrs = [...new Set(days.map(d => ymd(d)[0]))], short = days.length <= 160;
       const sub = `${siteLine()} · U.S. Drought Monitor`;
-      box.innerHTML = top(`${dry} of ${n} weeks in drought (D1 to D4) and ${d0} abnormally dry (D0), ${Wd.dayLabel(days[0])} to ${Wd.dayLabel(days[days.length - 1])}.${R.missing ? ` ${R.missing} week${R.missing > 1 ? "s" : ""} did not answer; pick the location again to read ${R.missing > 1 ? "them" : "it"}.` : ""}`)
+      box.innerHTML = top(`${dry} of ${n} weeks in drought (D1 to D4) and ${d0} abnormally dry (D0), ${Wd.dayLabel(days[0])} to ${Wd.dayLabel(days[days.length - 1])}.${R.missing ? ` ${R.missing} week${R.missing > 1 ? "s" : ""} did not answer: reload to read ${R.missing > 1 ? "them" : "it"}. ${RETRY}` : ""}`)
         + card("wxUsdmHist", "Drought Monitor class, week by week", 200, { file: "drought_monitor_weekly", x: "Week", sub, table: () => usdmTable(days, dm), foot: `${DCLASS.slice().reverse().map(c => `<span style="display:inline-block;width:10px;height:10px;background:${c[3]};border:1px solid #0002;margin-right:3px"></span>${c[0]}`).join(" &nbsp; ")} &nbsp; No bar: no drought class. The class of each week's map at this point (its record starts in January 2000), ${esc(usdmSrc(R.src))}. Click a week to see its map. ${esc(USDM_CREDIT)}` })
         + card("wxUsdmShare", "Share of each year in each class", 200, { file: "drought_monitor_by_year", x: "Year", sub, foot: `Weeks in D0 to D4 as a share of the weeks read in each year${yrs.length > 1 && days.length < 52 * yrs.length ? "; the first and last years may be partial" : ""}.` });
       wire();
@@ -638,7 +647,7 @@ WG.weather = (function () {
       // a click on a date shows the Drought Monitor's map of that week (its record starts in 2000)
       const toMap = (e, els) => { if (els && els.length) { const d = days[els[0].index]; if (d >= Wd.epochDay(2000, 0, 4)) TM.showWeek(d); else WG.util.toast("The Drought Monitor's maps start in January 2000."); } };
       const history = () => ({ type: "bar", data: { labels: days.map(d => Wd.isoDay(d)), datasets: [{ label, data: vals, backgroundColor: vals.map(colorOf), barPercentage: 1, categoryPercentage: 1 }] },
-        options: { maintainAspectRatio: false, animation: false, onClick: toMap, plugins: { legend: { display: false }, tooltip: { callbacks: { afterLabel: c => { const cl = classed ? dclass(c.parsed.y) : null; return cl ? `${cl[0]} ${cl[2]}` : ""; } } } },
+        options: { maintainAspectRatio: false, animation: false, onClick: toMap, plugins: { legend: { display: false }, tooltip: { callbacks: { afterLabel: c => { const cl = classed ? dclass(c.parsed.y) : null; return cl ? `${cl[0]} ${cl[2]}` : classed ? "" : pclass(c.parsed.y); } } } },
           scales: { x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkipPadding: 18, maxTicksLimit: 10, callback: (v, k) => days[k] && ymd(days[k])[1] === 0 && ymd(days[k])[2] <= 5 ? ymd(days[k])[0] : "" } }, y: axis(label) } } });
       const doyLabels = Array.from({ length: 73 }, (_, k) => { const d = Date.UTC(2001, 0, 1) / 864e5 + k * 5; return `${ymd(d)[2]} ${MONTHS[ymd(d)[1]]}`; });
       const slotOf = new Map(driYears.map((y, k) => [y, k]));
@@ -660,7 +669,7 @@ WG.weather = (function () {
             <label>From<select id="wxDriFrom">${yOpt(driFrom)}</select></label><label>To<select id="wxDriTo">${yOpt(driTo)}</select></label>
             <label>Add a year<select id="wxDriYear" ${driYears.length >= YEAR_COLORS.length ? "disabled" : ""}><option value="">Choose…</option>${yrs.slice().reverse().filter(y => !driYears.includes(y)).map(y => `<option>${y}</option>`).join("")}</select></label></div>
           <div class="chips">${driYears.map((y, k) => `<span class="chip"><i class="yr-sw" style="background:${YEAR_COLORS[k % YEAR_COLORS.length]}"></i>${y}${byYear.get(y).length ? ` · mean ${fmt(meanOf(y), 2)}` : ""} <button class="link" data-dri-drop="${y}" title="Take ${y} off the chart" aria-label="Take ${y} off the chart">✕</button></span>`).join("")}</div></div>
-        ${card("wxDriHist", `${label}, ${driFrom}–${driTo}`, 220, { file: `drought_${driKey}_history`, x: "Date", sub, foot: (classed ? DCLASS.slice().reverse().map(c => `<span style="display:inline-block;width:10px;height:10px;background:${c[3]};border:1px solid #0002;margin-right:3px"></span>${c[0]} ≤ ${c[1]}`).join(" &nbsp; ") + " &nbsp; Blue: wetter than usual." : "PDSI below 0 is drier than usual (orange), above 0 wetter (blue); the Drought Monitor's classification gives no PDSI ranges, so none are drawn.") + " Click a date to see that week's Drought Monitor map (2000 on)." })}
+        ${card("wxDriHist", `${label}, ${driFrom}–${driTo}`, 220, { file: `drought_${driKey}_history`, x: "Date", sub, foot: (classed ? DCLASS.slice().reverse().map(c => `<span style="display:inline-block;width:10px;height:10px;background:${c[3]};border:1px solid #0002;margin-right:3px"></span>${c[0]} ≤ ${c[1]}`).join(" &nbsp; ") + " &nbsp; Blue: wetter than usual." : "PDSI below 0 is drier than usual (orange), above 0 wetter (blue). Palmer's classes: -2 to -2.99 moderate drought, -3 to -3.99 severe, -4 or less extreme; 2 and over moderately moist or wetter (the tooltip names each value's class).") + " Click a date to see that week's Drought Monitor map (2000 on)." })}
         ${card("wxDriYears", `${label}, year against year`, 230, { file: `drought_${driKey}_years`, x: "Day of the year", sub, foot: "Click a line to see that week's Drought Monitor map (2000 on)." })}
         ${card("wxDriShare", classed ? `Share of each year in drought (${label})` : `Mean ${label} by year`, 220, { file: `drought_${driKey}_by_year`, x: "Year", sub, foot: classed ? `Each 5-day value in D1 to D4 by the Drought Monitor's SPI and SPEI ranges, as a share of the year; years with 70 or more values${full.length ? ` (${full[0]}–${full[full.length - 1]})` : ""}.` : "" })}
         <p class="fine">Source: gridMET Drought (University of Idaho; Abatzoglou 2013, doi:10.1002/joc.3413), 4 km, every 5 days since 1980, ${viaText(new Set([all.src]))}; the latest values are provisional. SPI: Standardized Precipitation Index; SPEI: Standardized Precipitation-Evapotranspiration Index, over the window named. Classes: U.S. Drought Monitor (droughtmonitor.unl.edu).</p>`;

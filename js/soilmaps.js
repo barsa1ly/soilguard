@@ -701,7 +701,7 @@ WG.soilmaps = (function () {
     const { lat, lon } = WG.state.site, tabEl = k => document.getElementById(`tab-${k}`);
     const pTab = Promise.all(["soilmaps", "soilbasin"].map(k => (tabEl(k) && (k === "soilmaps" || partsOf(k).length) ? Wx.show(k, tabEl(k)) : null)));
     // soil moisture: js/soilmoisture.js's summary, or (a page where it is still a part of the Soil tab) its tables
-    const SMM = WG.soilmoisture && WG.soilmoisture.summary, wet = () => (WG.soilmoisture && WG.soilmoisture.soilRange ? `<br>${esc(WG.soilmoisture.soilRange())}` : ""), vol = v => (ok(v) ? ` <small>= ${fmt(100 * v, 0)}% water by volume</small>` : ""), partOf = k => PARTS.find(p => p.key === k);
+    const SMM = WG.soilmoisture && WG.soilmoisture.summary, wet = () => (WG.soilmoisture && WG.soilmoisture.soilRange ? `<br>${esc(WG.soilmoisture.soilRange())}` : ""), vol = v => (ok(v) ? ` <small>= ${fmt(100 * v, 0)}% water by volume</small>` : ""), volS = v => (ok(v) ? `= ${fmt(100 * v, 0)}% water by volume · ` : ""), partOf = k => PARTS.find(p => p.key === k);
     const has = k => (!k ? true : k === "moisture" ? !!(SMM || partOf(k)) : !!partOf(k)), tiles = TILES.filter(t => has(t[5]));
     // the tab a tile's Details open: its own where the page has that tab button, else the tab that holds its part
     const goTo = t => (document.querySelector(`.tabs [data-tab="${t[3]}"]`) ? t[3] : t[5] && partOf(t[5]) ? partOf(t[5]).tab || "soilmaps" : "soilmaps");
@@ -770,14 +770,14 @@ WG.soilmaps = (function () {
         if (MS === undefined) { tile("smm", undefined, "Reading soil moisture models…"); tile("stn", undefined, "Looking for a station within 400 km…"); }
         else if (MS instanceof Error) ["smm", "stn"].forEach(k => tile(k, "—", bad(MS)));
         else {
-          tile("smm", m && ok(num(m.top)) ? `${u(fmt(num(m.top), 2), "m³/m³")}${vol(num(m.top))}` : "—", m ? `top layer · root zone <b>${ok(num(m.root)) ? fmt(num(m.root), 2) : "—"}</b>${m.src ? ` · ${esc(m.src)}` : ""}${m.date ? `, ${esc(String(m.date))}` : ""}${wet()}` : "No model value here");
+          tile("smm", m && ok(num(m.top)) ? `${u(fmt(num(m.top), 2), "m³/m³")}` : "—", m ? `${volS(num(m.top))}top layer · root zone <b>${ok(num(m.root)) ? fmt(num(m.root), 2) : "—"}</b>${m.src ? ` · ${esc(m.src)}` : ""}${m.date ? `, ${esc(String(m.date))}` : ""}${wet()}` : "No model value here");
           tile("stn", s && ok(num(s.value)) ? u(fmt(num(s.value), 2), "m³/m³") : "—", s ? `${ok(num(s.depthIn)) ? `${esc(UN.fmt("depth", num(s.depthIn) * 2.54))} · ` : ""}${s.time ? `${esc(String(s.time))} · ` : ""}<b>${esc(s.name || "")}</b>${s.net ? `, ${esc(s.net)}` : ""}${ok(num(s.km)) ? `, ${dist(num(s.km))}${s.dir ? ` ${esc(s.dir)}` : ""}` : ""}` : "No station within 400 km");
         }
       } else if (has("moisture")) {
         const M = T.moisture_models, ifs = M ? M.rows.filter(r => /^ECMWF IFS/.test(r[0])) : [], era = M ? M.rows.filter(r => /^ERA5/.test(r[0])) : [], use = ifs.length ? ifs : era;
         const day = use.reduce((m, r) => (r[4] > m ? r[4] : m), ""), at = (a, b) => { const r = use.find(x => x[2] === a && x[3] === b && x[4] === day); return r && ok(r[5]) ? r[5] : null; };
         const v0 = at(0, 7), v28 = at(28, 100);
-        later("moisture", "smm", "soil moisture models", () => (ok(v0) ? [`${u(fmt(v0, 2), "m³/m³")}${vol(v0)}`, `0–7 cm · 28–100 cm <b>${ok(v28) ? fmt(v28, 2) : "—"}</b> · ${ifs.length ? "ECMWF IFS, today" : `ERA5-Land, ${esc(day)}`}${wet()}`] : null));
+        later("moisture", "smm", "soil moisture models", () => (ok(v0) ? [`${u(fmt(v0, 2), "m³/m³")}`, `${volS(v0)}0–7 cm · 28–100 cm <b>${ok(v28) ? fmt(v28, 2) : "—"}</b> · ${ifs.length ? "ECMWF IFS, today" : `ERA5-Land, ${esc(day)}`}${wet()}`] : null));
         const Sx = T.moisture_stations, rows = Sx && Sx.rows.length ? Sx.rows.filter(r => r[0] === Sx.rows[0][0] && ok(r[7])) : [], cm = rows.length ? Math.min(...rows.map(r => r[5])) : null;
         const atD = rows.filter(r => r[5] === cm), last = atD.find(r => /latest/.test(r[9])) || atD.reduce((m, r) => (!m || r[6] > m[6] ? r : m), null);
         later("moisture", "stn", "soil moisture station within 400 km", () => (last ? [u(fmt(last[7], 2), "m³/m³"), `${esc(last[4])} · ${esc(String(last[6]))} · <b>${esc(last[0])}</b>, ${esc(last[1])}, ${dist(last[3])}`] : null));

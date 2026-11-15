@@ -127,6 +127,38 @@ WG.util = (function () {
   // a place let go passes straight to the first in line
   function free(host) { const L = lines.get(host), w = L.wait.shift(); if (w) w.go(); else L.open--; }
 
+  /* A server that keeps failing is left alone for a while, in this browser: after 3 failures in a row (no connection,
+     an answer without a CORS header, HTTP 5xx or 429), its requests fail at once for 2 minutes with "<host> is busy;
+     try again in a minute", which the cards show with their reload icon; then one request goes as a trial, the others
+     waiting for it, and its success lets them all through again (its failure: 2 minutes more). With 100 visitors at
+     once, a server that is down then gets one request every 2 minutes from each page, not dozens, and is not met by
+     every page at once when it comes back. Any other answer (a 404 too) is an answer and ends the count, as does any
+     success; a caller's stop and this module's own time limits count neither way. */
+  const BRK_N = 3, BRK_MS = 120000, brk = new Map(); // host -> { fails, until, trial, end }
+  const busy = host => Object.assign(new Error(`${host} is busy; try again in a minute`), { busy: true });
+  // null: let through; the host's state: let through as its trial; throws when the host is left alone
+  async function pass(host) {
+    for (;;) {
+      const B = brk.get(host);
+      if (!B || B.fails < BRK_N) return null;
+      if (B.trial) { await B.trial; continue; }
+      if (Date.now() < B.until) throw busy(host);
+      B.trial = new Promise(res => { B.end = res; });
+      return B;
+    }
+  }
+  // bad: true a failure, false an answer, null neither; trial: what pass() gave this request
+  function mark(host, bad, trial) {
+    let B = brk.get(host);
+    if (bad === false) { if (B) { brk.delete(host); if (B.end) B.end(); } return; }
+    if (bad) {
+      if (!B) brk.set(host, (B = { fails: 0, until: 0, trial: null, end: null }));
+      if (++B.fails === BRK_N) console.warn(`${host} failed ${BRK_N} times in a row: left alone for 2 minutes`);
+      if (B.fails >= BRK_N) B.until = Date.now() + BRK_MS;
+    }
+    if (trial && trial === B && B.trial) { B.trial = null; B.end(); }
+  }
+
   /* Asked again, at most twice, when the server is busy or failing (HTTP 429, 502, 503, 504) or the request did not get
      through (fetch's TypeError: the network dropped, or an error page came without a CORS header): after about 1 s,
      then 3 s, each times a random 0.5 to 1.5 so that pages turned away at the same moment do not all come back at once,
@@ -160,19 +192,21 @@ WG.util = (function () {
   async function send(url, opts = {}, o = {}) {
     const { host, own } = where(url), sig = opts.signal, ctrl = new AbortController();
     const stop = () => ctrl.abort(sig.reason && sig.reason.name !== "AbortError" ? sig.reason : new DOMException("Stopped", "AbortError"));
-    const late = () => (o.plain ? ctrl.abort() : ctrl.abort(new Error(`${host} did not answer in time`)));
-    let timer = 0, hdr = 0, lent = false;
+    let timer = 0, hdr = 0, lent = false, over = false;
+    const late = () => { over = true; if (o.plain) ctrl.abort(); else ctrl.abort(new Error(`${host} did not answer in time`)); };
     if (sig) { if (sig.aborted) stop(); else sig.addEventListener("abort", stop, { once: true }); }
     try {
       for (let k = 0; ; k++) {
         if (!own) await slot(host, ctrl.signal);
-        let r = null, err = null, t0 = 0;
+        let r = null, err = null, t0 = 0, B = null;
         try {
+          if (!own) B = await pass(host);
           if (o.timeoutMs) timer = setTimeout(late, o.timeoutMs);
           if (o.headerMs) hdr = setTimeout(late, o.headerMs);
           t0 = Date.now();
           r = await fetch(url, { ...opts, signal: ctrl.signal });
         } catch (e) { err = e; } finally { clearTimeout(hdr); if (!own) free(host); }
+        if (!own && !(err && err.busy)) mark(host, err ? (ctrl.signal.aborted || over ? null : true) : r.status >= 500 || r.status === 429, B);
         if (k < BACK.length && !ctrl.signal.aborted && again(r, err, Date.now() - t0)) {
           clearTimeout(timer);
           const ms = backoff(r, k);
@@ -193,30 +227,56 @@ WG.util = (function () {
      wait for it to start, both from when it is sent; opts.signal stops it in line, between tries or while its body is read. */
   const fetchQ = (url, opts = {}, timeoutMs = 0, headerMs = 0) => send(url, opts, { timeoutMs, headerMs });
 
+  /* One request for the same GET asked again while it is on its way (two cards, or a card and a map, asking one URL at
+     once): the later callers share the first one's answer, each stopped by its own signal, and the request itself stops
+     only when every caller has stopped. The first caller's time limits stand. fetchJSON parses the text for each
+     caller, so no caller sees another's changes. (fetchQ is not shared: its callers read the Response themselves.) */
+  const flying = new Map(); // key -> { p, ctrl, users }
+  const getKey = (kind, url, opts = {}) => ((opts.method || "GET").toUpperCase() === "GET" && !opts.body ? `${kind} ${url} ${JSON.stringify(opts.headers || {})}` : null);
+  function shared(key, sig, run) {
+    if (!key) return run(sig);
+    let f = flying.get(key);
+    if (!f) {
+      const ctrl = new AbortController(), done = () => { if (flying.get(key) === f) flying.delete(key); };
+      f = { ctrl, users: 0, p: run(ctrl.signal) };
+      flying.set(key, f);
+      f.p.then(done, done);
+    }
+    if (!sig) { f.users = Infinity; return f.p; }
+    const why = () => (sig.reason && sig.reason.name !== "AbortError" ? sig.reason : new DOMException("Stopped", "AbortError"));
+    if (sig.aborted) return Promise.reject(why());
+    f.users++;
+    return new Promise((res, rej) => {
+      const off = () => { rej(why()); if (--f.users === 0) { if (flying.get(key) === f) flying.delete(key); f.ctrl.abort(why()); } };
+      sig.addEventListener("abort", off, { once: true });
+      f.p.then(v => { sig.removeEventListener("abort", off); res(v); }, e => { sig.removeEventListener("abort", off); rej(e); });
+    });
+  }
+
   /* headerMs caps the wait for the server to start answering; timeoutMs caps the whole download; a caller's own signal
      (opts.signal) cancels the request too. good(json), if given: whether a kept source's answer is kept (as keep). */
   async function fetchJSON(url, opts = {}, timeoutMs = 45000, headerMs = timeoutMs, good = null) {
     const key = keepKey(url, opts), hit = key && (await kept(key));
     if (hit) { try { return await hit.json(); } catch (e) { /* a broken copy: asked again */ } }
-    return send(url, opts, { timeoutMs, headerMs, read: async r => {
+    return JSON.parse(await shared(getKey("J", url, opts), opts.signal, sig => send(url, { ...opts, signal: sig }, { timeoutMs, headerMs, read: async r => {
       if (!r.ok) {
         let msg = r.status + " " + r.statusText;
         try { const j = await r.json(); msg = j.reason || j.message || msg; } catch (e) { /* not json */ }
         throw new Error(msg);
       }
       if (key) keep(key, r, good && (t => good(JSON.parse(t))));
-      return r.json();
-    } });
+      return r.text();
+    } })));
   }
 
   async function fetchText(url, timeoutMs = 45000, headerMs = timeoutMs, good = null) { // good(text): as fetchJSON's
     const key = keepKey(url, {}), hit = key && (await kept(key));
     if (hit) { try { return await hit.text(); } catch (e) { /* a broken copy: asked again */ } }
-    return send(url, {}, { timeoutMs, headerMs, plain: true, read: async r => {
+    return shared(getKey("T", url), null, () => send(url, {}, { timeoutMs, headerMs, plain: true, read: async r => {
       if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
       if (key) keep(key, r, good);
       return r.text();
-    } });
+    } }));
   }
 
   /* a file as a Blob; type: a pattern its Content-Type must match, as some servers answer an error with a page and
@@ -224,13 +284,13 @@ WG.util = (function () {
   async function fetchBlob(url, timeoutMs = 45000, type = null) {
     const key = keepKey(url, {}), hit = key && (await kept(key));
     if (hit) { try { const b = await hit.blob(); if (!type || type.test(b.type)) return b; } catch (e) { /* a broken copy: asked again */ } }
-    return send(url, {}, { timeoutMs, read: async r => {
+    return shared(getKey(`B ${type || ""}`, url), null, () => send(url, {}, { timeoutMs, read: async r => {
       if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
       const ct = r.headers.get("Content-Type") || "";
       if (type && !type.test(ct)) { const t = await r.text().catch(() => ""); throw new Error(`the server answered ${ct || "no type"}${t ? `: ${t.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 160)}` : ""}`); }
       if (key) keep(key, r);
       return r.blob();
-    } });
+    } }));
   }
 
   /* Map items through an async fn with at most n requests in flight; results keep input order. */

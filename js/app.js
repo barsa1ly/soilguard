@@ -71,6 +71,17 @@
   const map = L.map("map", { zoomControl: false, preferCanvas: true, worldCopyJump: false, tap: true })
     .setView([32.2, -100.6], 6);
   WG.map = map;
+  /* reset view: a "[ ]" button under + and - (alone on phones, where + and - are hidden): the map fits the chosen states
+     again. Added before the zoom control, as Leaflet stacks later bottom controls above earlier ones. */
+  const ResetView = L.Control.extend({ options: { position: "bottomright" }, onAdd() {
+    const b = L.DomUtil.create("button", "map-reset");
+    b.type = "button"; b.title = "Reset view: the chosen states"; b.setAttribute("aria-label", "Reset view: show the chosen states");
+    b.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>';
+    L.DomEvent.disableClickPropagation(b);
+    L.DomEvent.on(b, "click", e => { L.DomEvent.preventDefault(e); if (regionBounds) map.fitBounds(regionBounds, { animate: true }); else map.setView([32.2, -100.6], 6); });
+    return b;
+  } });
+  new ResetView().addTo(map);
   if (window.matchMedia("(min-width: 768px)").matches) L.control.zoom({ position: "bottomright" }).addTo(map);
   L.control.scale({ imperial: true, metric: true, position: "bottomright" }).addTo(map);
 
@@ -729,6 +740,7 @@
   }
   async function goToResult(r) {
     clearTimeout(typeTimer); clearTimeout(streetTimer);
+    if (r.lookup) { zipLookup(r.lookup); return; } // a ZIP code not in the list: looked up when its row is picked
     const seq = ++searchSeq; // a suggestion or a search still on its way no longer shows
     results.hidden = true;
     input.value = r.title;
@@ -785,7 +797,10 @@
       if (zip.length < 3) { showResults([], "Keep typing: a ZIP code, or a house number and street"); return; }
       let zs;
       try { zs = await WG.places.zips(zip, ASSET_V); } catch (e) { if (seq === searchSeq) showResults([], `${e.message || e}. ${ENTER_HINT}.`); return; }
-      if (seq === searchSeq) showResults(zs.map(zipItem), `No ZIP code starts with ${zip} in the 48 contiguous states. ${ENTER_HINT}.`);
+      if (seq !== searchSeq) return;
+      // a whole ZIP code not in the list (a PO box's, a university's own): OpenStreetMap is asked on Enter or when this row is picked, not while typing
+      if (!zs.length && zip.length === 5) showResults([{ title: `ZIP ${zip}`, sub: "Not in the Census ZIP list: press Enter or pick this to look it up on OpenStreetMap", lookup: zip }]);
+      else showResults(zs.map(zipItem), `No ZIP code starts with ${zip} in the 48 contiguous states. ${ENTER_HINT}.`);
       return;
     }
     const addr = WG.places.looksAddress(t);
@@ -796,7 +811,8 @@
       items = WG.places.loaded() ? findPlaces(q, addr ? 3 : 10) : [];
     }
     // plain words that name a town stay with the towns; a street, an address or words no town matches ask Photon too
-    if (!addr && (items.length || t.length < 4)) { showResults(items, `No town, city or county starts with "${t}". ${ENTER_HINT}.`, items.length ? ENTER_HINT : ""); return; }
+    // Photon only from 4 characters (fewer would ask its fair-use server for every short guess)
+    if (t.length < 4 || (!addr && items.length)) { showResults(items, addr && !items.length ? "Keep typing: a house number and street" : `No town, city or county starts with "${t}". ${ENTER_HINT}.`, items.length ? ENTER_HINT : ""); return; }
     showResults(items, WAIT, items.length ? WAIT : "", true);
     // about 350 ms after the last key (80 ms went before this): Photon is asked once typing pauses, not for every letter
     streetTimer = setTimeout(async () => {
@@ -867,14 +883,33 @@
       if (seq === searchSeq) showResults([], `The place search (OpenStreetMap) did not answer: ${e.message || e}. Try again in a moment, or enter lat, lon.`);
     }
   }
+  /* A ZIP code that is no Census ZIP code area (a PO box's, a university's or a firm's own: 79409 is Texas Tech
+     University's) from Nominatim's postal code search, asked only on Enter or when its row is picked, within its usage
+     policy (one request a second, answers kept: nominatim above). One in the states that can be shown goes there as
+     "ZIP 79409 · Lubbock, TX"; more, or one in a state that comes later, are listed. */
+  async function zipLookup(zip) {
+    const seq = ++searchSeq;
+    showResults([], `Looking up ZIP ${zip} on OpenStreetMap…`, "", true);
+    let rows;
+    try { rows = await nominatim(`search?${new URLSearchParams({ postalcode: zip, countrycodes: "us", format: "jsonv2", addressdetails: "1", limit: "5" })}`); }
+    catch (e) { if (seq === searchSeq) showResults([], `The ZIP search (OpenStreetMap) did not answer: ${e.message || e}. Try again in a moment, or enter lat, lon.`); return; }
+    if (seq !== searchSeq) return;
+    const items = (rows || []).map(r => {
+      const a = r.address || {}, iso = a["ISO3166-2-lvl4"] || "", x = iso.startsWith("US-") ? STATE_OF[iso.slice(3)] : null, town = a.city || a.town || a.village || a.hamlet || a.county || "";
+      const title = `ZIP ${zip} · ${town ? `${town}, ` : ""}${x ? x.c : ""}`;
+      return x && x.l48 ? { title, sub: "Postal code area from OpenStreetMap", lat: +r.lat, lon: +r.lon, zoom: 12, place: title, adds: !region.codes.includes(x.c) && canLive(x.c) ? x.n : null, later: !canLive(x.c) } : null;
+    }).filter(Boolean);
+    if (items.length === 1 && !items[0].later) goToResult(items[0]);
+    else showResults(items, `ZIP ${zip} is neither in the ZIP list nor known to OpenStreetMap. Try a town name, or enter lat, lon.`);
+  }
   $("#searchForm").addEventListener("submit", e => {
     e.preventDefault();
     clearTimeout(typeTimer); clearTimeout(streetTimer);
     const c = U.parseCoords(input.value);
     if (c) { results.hidden = true; input.blur(); ensureState(c.lat, c.lon).then(ok => ok && selectSite(c.lat, c.lon, { zoom: 14 })); return; }
     // a whole ZIP code goes there (the ZIP list, no server); one not in it asks OpenStreetMap
-    const z = WG.places.zipOf(input.value), q = input.value;
-    if (z && z.length === 5) { WG.places.zips(z, ASSET_V, 1).then(([hit]) => (hit && hit.exact ? goToResult(zipItem(hit)) : runSearch(q)), () => runSearch(q)); return; }
+    const z = WG.places.zipOf(input.value);
+    if (z && z.length === 5) { WG.places.zips(z, ASSET_V, 1).then(([hit]) => (hit && hit.exact ? goToResult(zipItem(hit)) : zipLookup(z)), () => zipLookup(z)); return; }
     // a whole name and its state ("Temple, TX", "temple texas") goes there; anything else asks OpenStreetMap
     const top = WG.places.loaded() && findPlaces(input.value, 1)[0];
     if (top && top.exact) { goToResult(top); return; }
@@ -1315,7 +1350,7 @@
   }
 
   async function reverseGeocode(lat, lon) {
-    const j = await nominatim(`reverse?lat=${lat.toFixed(4)}&lon=${lon.toFixed(4)}&format=jsonv2&zoom=12&addressdetails=1`); // about 11 m: nearby clicks share an answer
+    const j = await nominatim(`reverse?lat=${lat.toFixed(2)}&lon=${lon.toFixed(2)}&format=jsonv2&zoom=12&addressdetails=1`); // the point to 0.01° (about 1 km; the town is asked): taps nearby share one answer, kept for the visit
     const a = j.address || {};
     const town = a.city || a.town || a.village || a.hamlet || a.locality;
     const county = a.county;
