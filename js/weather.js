@@ -171,6 +171,7 @@ WG.weather = (function () {
     const id = sec.id.replace(/^tab-/, ""), name = id === "droughthist" ? "drought" : id; /* Drought's History is drawn with Drought */
     if (!RENDER[name]) return;
     e.preventDefault();
+    WG.say("Reloading");
     (name.startsWith("soil") ? ["soiloverview", "soilmaps", "soilbasin", "soilmoist"] : [name]).forEach(n => { const s = document.getElementById(`tab-${n}`); if (s) s.dataset.key = ""; });
     show(name, document.getElementById(`tab-${name}`) || sec);
   });
@@ -716,12 +717,22 @@ WG.weather = (function () {
     await Promise.allSettled(jobs);
   };
 
+  /* Spoken status (WG.say, js/util.js) once a section has finished drawing, if it is still on show: ready, or how many
+     of its parts could not be read. Drought's History is drawn with Drought, so its reload buttons count too. */
+  const SAY = { drought: "Drought", soiloverview: "Soil overview", soilmaps: "Soil maps", soilbasin: "Basin", soilmoist: "Soil moisture" };
+  function sayDone(tab, el) {
+    const boxes = [el, tab === "drought" ? document.getElementById("tab-droughthist") : null].filter(Boolean);
+    if (!boxes.some(b => !b.hidden)) return;
+    const n = boxes.reduce((s, b) => s + b.querySelectorAll("button.wx-retry").length, 0), name = SAY[tab] || tab;
+    WG.say(!n ? `${name} ready` : `${name}: ${n} ${n > 1 ? "parts" : "part"} could not be read; ${n > 1 ? "each has" : "it has"} a reload button`);
+  }
   async function show(tab, el) {
     const tok = WG.state.token, key = `${tok}|${UN.query()}|${tab === "drought" ? driVer : ""}`;
     if (el.dataset.key === key) { setTimeout(() => WG.charts.resizeAll(), 0); return; } // drawn for this location, units and period
     el.dataset.key = key;
     try { await RENDER[tab](el, () => tok === WG.state.token && el.dataset.key === key); }
     catch (e) { console.warn(tab, e); if (tok === WG.state.token && el.dataset.key === key) el.innerHTML = failed(`the ${tab} data`, e); }
+    if (tok === WG.state.token && el.dataset.key === key) sayDone(tab, el);
   }
 
   return { THEMES, layers, legend, fresh, timeLabel, show, RENDER, card, once, siteLine, wait, failed, ok, usdmDate, usdmLast, usdmAt, usdmHere, usdmRange, usdmTable, usdmSrc, usdmMapUrl, DCLASS, USDM_CREDIT, USDM_DAY0, LA_CREDIT };

@@ -1161,6 +1161,7 @@
     state.token++;
     state.soil = null; state.edits = null; state.wind = null; state.windRaw = null; state.windSets = null; state.windStation = null; state.windAirport = null; state.windTower = null; state.windSkipped = []; state.nlcd = null; state.elev = null;
     state.place = opts.place || null;
+    WG.say(state.place ? `Loading ${state.place}` : "Loading this location");
 
     const ll = L.latLng(lat, lon);
     if (!marker) {
@@ -1590,6 +1591,15 @@
     b.textContent = riskMoreOpen ? "Less ▴" : "More ▾";
     try { localStorage.setItem("fg.riskmore", riskMoreOpen ? "1" : "0"); } catch (err) { /* storage off: for this visit */ }
   });
+  /* the card's answer read out for screen readers (WG.say, js/util.js): once for a place, and again only when it
+     changes (a new period, soil edits, the units); only in the Wind erosion theme, whose card it is */
+  let riskSaid = "";
+  function sayRisk(text) {
+    const k = `${state.token}|${text}`;
+    if (k === riskSaid || state.theme !== "erosion") return;
+    riskSaid = k;
+    WG.say(text);
+  }
   function renderRisk() {
     const rc = $("#riskCard");
     const r = riskModel();
@@ -1604,6 +1614,7 @@
         $("#riskUnit").textContent = "";
         $("#riskFacts").innerHTML = "";
         $("#riskLevel").textContent = noGroup ? "No erodibility group" : "Soil data unavailable";
+        sayRisk(`Wind erosion: ${noGroup ? "no erodibility group" : "soil data unavailable"}`);
         $("#riskText").textContent = state.soil.error ? `Soil survey request failed (${state.soil.error}). Try again or enter your soil test on the Soil tab.`
           : !noGroup ? "No soil survey component with texture data here (water, urban or rock?). Enter your soil test on the Soil tab."
           : state.edits ? "These surface values don't place the soil in a Wind Erodibility Group. Enter sand, silt and clay on the Soil tab, or reset to the survey."
@@ -1615,6 +1626,7 @@
         $("#riskUnit").textContent = "";
         $("#riskFacts").innerHTML = "";
         $("#riskLevel").textContent = state.wind ? "Climatic factor unavailable" : "Analyzing…";
+        if (state.wind) sayRisk("Wind erosion: climatic factor unavailable");
         $("#riskText").textContent = state.wind ? (state.wind.annualized === false ? "NRCS gives no climatic factor C for this map unit, and estimating one needs a period that covers all 12 months."
           : "NRCS gives no climatic factor C for this map unit, and the wind history could not be used to estimate one.")
           : `Fetching hourly wind for ${periodLabel()}…`;
@@ -1628,6 +1640,7 @@
     rc.className = notSoil ? "risk-card" : `risk-card r${r.level}`;
     const E = UN.fmtCls("soilLoss", r.E, 0), lv = LEVEL_NAME[r.level];
     $("#riskLevel").textContent = notSoil ? `Not rated · ${dom.compname || "not soil"}` : `${lv} · ${E}`;
+    sayRisk(notSoil ? `Wind erosion: not rated, ${dom.compname || "not soil"}` : `Wind erosion risk here: ${lv}, ${E}`);
     Ch.gauge($("#riskGauge"), notSoil ? null : r.frac);
     renderRiskScale(notSoil ? 0 : r.level);
     const peak = w && !w.error && w.riskMonths.length ? monthsText(w.riskMonths) : null;

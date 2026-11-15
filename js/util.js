@@ -402,3 +402,27 @@ WG.util = (function () {
   return { MONTHS, MONTHS_LONG, COMPASS, $, $$, esc, num, fmt, clamp, msToMph, compass, fetchJSON, fetchText, fetchBlob, fetchQ, keptInfo, keepClear, stashGet, stashPut, pool, debounce,
     parseCoords, toast, download, linreg, cache, focusHead };
 })();
+
+/* Spoken status for screen readers, in the hidden polite live region #srSay (index.html): a place loading, the wind
+   erosion answer, a panel section ready or with parts that could not be read. Words that come within 400 ms of each
+   other are read as one message ("A. B."), at most about one message a second. The region is emptied first and filled
+   100 ms later, so the same words are read again. Without #srSay it does nothing. */
+WG.say = (function () {
+  let queue = [], timer = 0, last = 0;
+  const dot = t => (/[.!?]$/.test(t) ? t : `${t}.`);
+  function flush() {
+    timer = 0;
+    const box = document.getElementById("srSay"), text = queue.length > 1 ? queue.map(dot).join(" ") : queue[0];
+    queue = [];
+    if (!box || !text) return;
+    last = Date.now();
+    box.textContent = "";
+    setTimeout(() => { box.textContent = text; }, 100);
+  }
+  return function say(text) {
+    const t = String(text ?? "").replace(/\s+/g, " ").trim();
+    if (!t || !document.getElementById("srSay")) return;
+    if (!queue.includes(t)) queue.push(t);
+    if (!timer) timer = setTimeout(flush, Math.max(400, last + 1000 - Date.now()));
+  };
+})();
