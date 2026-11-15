@@ -212,38 +212,29 @@ WG.soilmaps = (function () {
   Wx.layers.soilmaps = LAYERS;
 
   /* ---------- the tab: what each source says at the point ---------- */
-  const SDA = "https://SDMDataAccess.sc.egov.usda.gov/Tabular/post.rest";
-  async function sda(query) {
-    const j = await fetchJSON(SDA, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query, format: "JSON+COLUMNNAME" }) }, 40000);
-    const t = j.Table || [];
-    return t.length ? t.slice(1).map(r => Object.fromEntries(t[0].map((c, i) => [c, r[i]]))) : [];
-  }
+  const sda = WG.soil.sda; // Soil Data Access, one request for a question asked twice at once (js/soil.js)
   const km = (a, b, c, d) => { const r = Math.PI / 180, x = Math.sin(((c - a) * r) / 2) ** 2 + Math.cos(a * r) * Math.cos(c * r) * Math.sin(((d - b) * r) / 2) ** 2; return 12742 * Math.asin(Math.sqrt(x)); };
   const bearing = (a, b, c, d) => { const r = Math.PI / 180, y = Math.sin((d - b) * r) * Math.cos(c * r), x = Math.cos(a * r) * Math.sin(c * r) - Math.sin(a * r) * Math.cos(c * r) * Math.cos((d - b) * r); return compass(Math.atan2(y, x) / r); };
   const dist = k => UN.fmt("distance", k, k < 10 ? 1 : 0);
-  const pt = (lat, lon) => `POINT(${(+lon).toFixed(6)} ${(+lat).toFixed(6)})`;
 
   /* Each source at a point, as a plain function of lat and lon (for other parts of the app), and as the tab reads it:
      once per location (Wx.once, keyed by WG.state.token). */
-  /* the survey's chemistry: every horizon of the map unit's major components (representative values) */
+  /* the survey's chemistry: every horizon of the map unit's major components (representative values), largest component
+     first, then by cokey. Read from the survey answer the wind erosion card reads (js/soil.js tablesAt): one Soil Data
+     Access request for both, shared while it is on its way and kept for the last few points. */
   async function surveyAt(lat, lon) {
-    const rows = await sda(`SELECT mu.mukey, mu.musym, mu.muname, l.areasymbol, c.cokey, c.compname, c.comppct_r, c.compkind, h.hzname, h.hzdept_r, h.hzdepb_r,
-      h.ph1to1h2o_r, h.ph01mcacl2_r, h.ec_r, h.sar_r, h.esp_r, h.cec7_r, h.ecec_r, h.sumbases_r, h.om_r, h.caco3_r, h.gypsum_r
-      FROM (SELECT TOP 1 mukey FROM SDA_Get_Mukey_from_intersection_with_WktWgs84('${pt(lat, lon)}')) g
-      JOIN mapunit mu ON mu.mukey = g.mukey JOIN legend l ON l.lkey = mu.lkey
-      JOIN component c ON c.mukey = mu.mukey AND c.majcompflag = 'Yes' LEFT JOIN chorizon h ON h.cokey = c.cokey
-      ORDER BY c.comppct_r DESC, c.cokey, h.hzdept_r`);
-    const comps = [];
-    rows.forEach(r => {
-      let c = comps.find(x => x.cokey === r.cokey);
-      if (!c) comps.push((c = { cokey: r.cokey, name: r.compname, pct: num(r.comppct_r), kind: r.compkind, hz: [] }));
-      if (r.hzdept_r === null || r.hzdepb_r === null) return;
-      const n = k => num(r[k]), ph = n("ph1to1h2o_r"), cec7 = n("cec7_r"), sb = n("sumbases_r");
-      c.hz.push({ name: r.hzname || "", t: n("hzdept_r"), b: n("hzdepb_r"), ph: ok(ph) ? ph : n("ph01mcacl2_r"), cacl2: !ok(ph) && ok(n("ph01mcacl2_r")),
-        ec: n("ec_r"), sar: n("sar_r"), esp: n("esp_r"), cec: ok(cec7) ? cec7 : n("ecec_r"), ecec: !ok(cec7) && ok(n("ecec_r")),
-        bs: ok(sb) && ok(cec7) && cec7 > 0 ? (100 * sb) / cec7 : null, om: n("om_r"), caco3: n("caco3_r"), gyps: n("gypsum_r") });
-    });
-    return { mu: rows[0] ? { key: rows[0].mukey, sym: rows[0].musym, name: rows[0].muname, area: rows[0].areasymbol } : null, comps };
+    const t = await WG.soil.tablesAt(+lat, +lon);
+    const big = t ? t.comps.filter(c => c.majcompflag === "Yes").sort((a, b) => (num(b.comppct_r) ?? -1) - (num(a.comppct_r) ?? -1) || num(a.cokey) - num(b.cokey)) : [];
+    if (!big.length || !t.mu.mukey) return { mu: null, comps: [] };
+    const seen = new Set(); // a horizon with two texture groups marked representative comes twice in that answer: kept once
+    const comps = big.map(c => ({ cokey: c.cokey, name: c.compname, pct: num(c.comppct_r), kind: c.compkind,
+      hz: t.hz.filter(r => r.cokey === c.cokey && r.hzdept_r !== null && r.hzdepb_r !== null && !seen.has(r.chkey) && seen.add(r.chkey)).map(r => {
+        const n = k => num(r[k]), ph = n("ph1to1h2o_r"), cec7 = n("cec7_r"), sb = n("sumbases_r");
+        return { name: r.hzname || "", t: n("hzdept_r"), b: n("hzdepb_r"), ph: ok(ph) ? ph : n("ph01mcacl2_r"), cacl2: !ok(ph) && ok(n("ph01mcacl2_r")),
+          ec: n("ec_r"), sar: n("sar_r"), esp: n("esp_r"), cec: ok(cec7) ? cec7 : n("ecec_r"), ecec: !ok(cec7) && ok(n("ecec_r")),
+          bs: ok(sb) && ok(cec7) && cec7 > 0 ? (100 * sb) / cec7 : null, om: n("om_r"), caco3: n("caco3_r"), gyps: n("gypsum_r") };
+      }) }));
+    return { mu: { key: t.mu.mukey, sym: t.mu.musym, name: t.mu.muname, area: t.mu.areasymbol }, comps };
   }
   const survey = (lat, lon) => Wx.once("sm:survey", () => surveyAt(lat, lon));
   // the thickness-weighted mean over a..b cm of the horizons that have a value
@@ -691,11 +682,13 @@ WG.soilmaps = (function () {
   const facts = rows => rows.filter(Boolean).map(([k, v, n]) => `<span class="k">${esc(k)}</span><span class="v">${esc(v)}</span><span class="n">${esc(n || "")}</span>`).join("");
   const rowOf = (t, re, unit) => (t && t.rows.find(r => re.test(String(r[0])) && (!unit || r[2] === unit))) || null;
   const val = r => (r && ok(num(r[1])) ? num(r[1]) : null);
-  // id, title, tag, the tab and card its Details open (a | between choices: the first the tab has), and the part it needs
+  // id, title, tag, the tab and card its Details open (a | between choices: the first the tab has), and the part it needs;
+  // in the order a grower acts on: soil moisture, then pH and salinity, then the rest
   const TILES = [
+    ["smm", "Soil moisture today", "model", "soilmoist", "#smmToday", "moisture"], ["stn", "Nearest station", "station", "soilmoist", "#smmSt|#smmToday", "moisture"],
     ["ph", "Soil pH, 0–15 cm", "survey", "soilmaps", "#smSurvey"], ["salt", "Salinity · sodicity", "survey", "soilmaps", "#smSurvey"], ["cec", "CEC · organic matter", "survey", "soilmaps", "#smSurvey"],
     ["n", "Total nitrogen, 0–5 cm", "model", "soilmaps", "#smN"], ["basin", "Watershed (HU12)", "model", "soilbasin", "#smPart-basin", "basin"], ["storm", "Design-storm runoff", "TR-55", "soilbasin", "#bsCnOut", "basin"],
-    ["loss", "Soil loss (RUSLE)", "model", "soilbasin", "#bsRusleOut", "basin"], ["smm", "Soil moisture today", "model", "soilmoist", "#smmToday", "moisture"], ["stn", "Nearest station", "station", "soilmoist", "#smmSt|#smmToday", "moisture"]];
+    ["loss", "Soil loss (RUSLE)", "model", "soilbasin", "#bsRusleOut", "basin"]];
 
   Wx.RENDER.soiloverview = async (el, live) => {
     const { lat, lon } = WG.state.site, tabEl = k => document.getElementById(`tab-${k}`);
@@ -734,8 +727,11 @@ WG.soilmaps = (function () {
               ["Salinity, EC", ok(l.ec) ? `${fmt(l.ec, 1)} dS/m` : "—", salinity(l.ec)], ["Sodicity, SAR · ESP", `${fmt(l.sar, 1)} · ${ok(l.esp) ? `${fmt(l.esp, 0)}%` : "—"}`, sodicity(l.ec, l.sar, l.esp)],
               ["Organic matter", ok(l.om) ? `${fmt(l.om, 1)}%` : "—", ok(l.caco3) && l.caco3 > 0 ? `CaCO₃ ${fmt(l.caco3, 0)}%` : ""]])}</div>` : ""}</div>
           <p class="risk-text">${why ? esc(why) : `${esc(S.mu.name)} (${esc(S.mu.sym)} · ${esc(S.mu.area)}). ${esc(SURVEY_NOTE)}`}</p>
-          <div class="risk-links"><button class="link risk-how" data-goto="soilmaps" data-so-go="#smSurvey">Chemistry by depth →</button>${hzLink("risk-how")}<button class="link risk-how" data-methods="m-sources">Sources →</button></div>`;
+          <div class="risk-links"><button class="link risk-how" data-goto="soilmaps" data-so-go="#smSurvey">pH and chemistry by depth →</button>${hzLink("risk-how")}<button class="link risk-how" data-methods="m-sources">Sources →</button></div>`;
       }
+      // the pH tile only while the headline gives no pH: then its Details are the headline's links
+      const phT = box("so-ph");
+      if (phT) phT.hidden = !!(l && ok(l.ph));
       const sw = "Reading the soil survey…";
       if (S === undefined) ["ph", "salt", "cec"].forEach(k => tile(k, undefined, sw));
       else if (S instanceof Error) ["ph", "salt", "cec"].forEach(k => tile(k, "—", bad(S)));
@@ -807,6 +803,11 @@ WG.soilmaps = (function () {
       card.classList.remove("so-flash"); void card.offsetWidth; card.classList.add("so-flash");
       WG.util.focusHead(card); // keyboard focus to the card's heading, not left on the link in the tab just hidden
     }, 0);
+  });
+  // an Overview tile tapped anywhere but on its buttons (or to select text): its Details link, which stays for the keyboard
+  document.addEventListener("click", e => {
+    const t = e.target.closest && e.target.closest(".so-tile"), d = t && !e.target.closest("button, a, input, select, summary") && t.querySelector(".so-go[data-so-go]");
+    if (d && !String(window.getSelection ? window.getSelection() : "").trim()) d.click();
   });
 
   return { init(h) { hooks = h; WG.map.on("layeradd layerremove", chipSoon); }, pick, layers: LAYERS, legendOf, choose, tables: () => tables, chemLegend, addPart: p => PARTS.push(p), sda, km, head, grid, th, r1, showBtn, allBtn,

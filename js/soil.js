@@ -26,16 +26,83 @@ WG.soil = (function () {
   const modVolume = mods => mods.reduce((v, m) => { const k = FRAG_MOD.exec(m); return k ? Math.max(v, k[2] === "X" ? 75 : k[2] === "V" ? 47.5 : 25) : v; }, 0);
 
   /* ---------------- SDA ---------------- */
-  async function sda(query) {
-    const j = await fetchJSON(SDA, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query, format: "JSON+COLUMNNAME" }),
-    }, 40000);
-    const t = j.Table || [];
-    if (!t.length) return [];
-    const cols = t[0];
-    return t.slice(1).map(r => Object.fromEntries(cols.map((c, i) => [c, r[i]])));
+  /* One query's answer (every table in it), asked once while it is on its way: two parts that ask the same question at
+     once share one request (POSTs are not shared by js/util.js). Each caller gets rows of its own (rowsOf), so no caller
+     sees another's changes. */
+  const flying = new Map(); // query -> promise of SDA's answer
+  function answer(query) {
+    let p = flying.get(query);
+    if (!p) {
+      p = fetchJSON(SDA, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query, format: "JSON+COLUMNNAME" }),
+      }, 40000);
+      flying.set(query, p);
+      const done = () => { if (flying.get(query) === p) flying.delete(query); };
+      p.then(done, done);
+    }
+    return p;
+  }
+  const rowsOf = t => (t && t.length ? t.slice(1).map(r => Object.fromEntries(t[0].map((c, i) => [c, r[i]]))) : []);
+  const sda = async query => rowsOf((await answer(query)).Table);
+
+  /* The point's map unit and every table read from it, in one request (it took nine). SDA answers each SELECT as a table
+     of its own (Table, Table1, …) but stops at the first SELECT that finds no rows (tested 15 Nov 2026), so each one is
+     joined to a one-row table: when it finds nothing it answers one row with hit NULL, which hits() drops. The soil's
+     horizons carry the chemistry the Soil maps tab shows (js/soilmaps.js surveyAt reads the same answer). The rows come
+     in the order the nine requests gave them (checked at five Texas points). */
+  const one = (cols, from, order = "") => `SELECT x.hit, ${cols.split(",").map(c => `x.${c.trim().replace(/^\w+\./, "")}`).join(", ")}
+    FROM (SELECT 1 AS one) d LEFT JOIN (SELECT 1 AS hit, ${cols} FROM ${from}) x ON 1 = 1${order ? ` ORDER BY ${order}` : ""};`;
+  const hits = t => rowsOf(t).filter(r => r.hit !== null).map(r => { delete r.hit; return r; });
+  function batch(lat, lon) {
+    const inMu = "IN (SELECT cokey FROM component WHERE mukey = @m)";
+    return `~DeclareInt(@m)~
+    SELECT TOP 1 @m = mukey FROM SDA_Get_Mukey_from_intersection_with_WktWgs84('point(${lon.toFixed(6)} ${lat.toFixed(6)})');
+    SELECT @m AS mukey;
+    ${one(`mu.mukey, mu.musym, mu.muname, mu.mukind, l.areasymbol, l.areaname, sc.saverest,
+             ma.slopegraddcp, ma.slopegradwta, ma.brockdepmin, ma.wtdepannmin, ma.flodfreqdcd, ma.drclassdcd,
+             ma.hydgrpdcd, ma.aws0150wta, ma.niccdcd, ma.iccdcd, ma.wtdepaprjunmin`,
+      `mapunit mu JOIN legend l ON l.lkey = mu.lkey LEFT JOIN muaggatt ma ON ma.mukey = mu.mukey
+           LEFT JOIN sacatalog sc ON sc.areasymbol = l.areasymbol WHERE mu.mukey = @m`)}
+    ${one(`cokey, compname, comppct_r, majcompflag, compkind, localphase, taxclname, taxorder, taxsuborder,
+             taxgrtgroup, taxsubgrp, taxpartsize, taxtempregime, taxmoistscl, drainagecl, hydgrp, slope_l, slope_r,
+             slope_h, slopelenusle_r, weg, wei, tfact, albedodry_r, runoff, elev_r, nirrcapcl, nirrcapscl, irrcapcl,
+             irrcapscl, rsprod_r, geomdesc, map_r, airtempa_r, ffd_r, erocl, hydricrating`, "component WHERE mukey = @m", "x.comppct_r DESC")}
+    ${one(`ch.cokey, ch.chkey, ch.hzname, ch.hzdept_r, ch.hzdepb_r, ch.sandtotal_r, ch.silttotal_r,
+             ch.claytotal_r, ch.sandvf_r, ch.sandfine_r, ch.sandmed_r, ch.sandco_r, ch.sandvc_r, ch.om_r,
+             ch.dbthirdbar_r, ch.wthirdbar_r, ch.wfifteenbar_r, ch.wsatiated_r, ch.awc_r, ch.ksat_r,
+             ch.ph1to1h2o_r, ch.cec7_r, ch.ecec_r, ch.caco3_r, ch.gypsum_r, ch.ec_r, ch.sar_r, ch.kwfact, ch.kffact,
+             ch.sieveno10_r, ch.frag3to10_r, ch.fraggt10_r, ch.fragvoltot_r, ch.lep_r, ch.partdensity, tg.texture, tg.texdesc,
+             ch.ph01mcacl2_r, ch.esp_r, ch.sumbases_r`,
+      `chorizon ch LEFT JOIN chtexturegrp tg ON tg.chkey = ch.chkey AND tg.rvindicator = 'Yes' WHERE ch.cokey ${inMu}`, "x.cokey, x.hzdept_r")}
+    ${one("la.areasymbol, la.areaname, la.areatypename, mo.areaovacres", `muaoverlap mo JOIN laoverlap la ON la.lareaovkey = mo.lareaovkey WHERE mo.mukey = @m`, "x.areaovacres DESC")}
+    ${one("cokey, ecoclassid, ecoclassname, ecoclasstypename", `coecoclass WHERE cokey ${inMu}`)}
+    ${one("cokey, cropname, yldunits, nonirryield_r, irryield_r", `cocropyld WHERE cokey ${inMu}`)}
+    ${one("cokey, plantsym, plantsciname, plantcomname, rangeprod", `coeplants WHERE cokey ${inMu}`)}
+    ${one("cokey, reskind, reshard, resdept_r, resdepb_r", `corestrictions WHERE cokey ${inMu}`)}`;
+  }
+  // the answer for a point, kept for the last few points of the visit (a failed one is asked again)
+  const asked = new Map(); // "lat,lon" -> promise of SDA's answer
+  function answerAt(lat, lon) {
+    const k = `${lat.toFixed(6)},${lon.toFixed(6)}`;
+    let p = asked.get(k);
+    if (!p) {
+      p = answer(batch(lat, lon));
+      asked.set(k, p);
+      p.catch(() => { if (asked.get(k) === p) asked.delete(k); });
+      if (asked.size > 8) asked.delete(asked.keys().next().value);
+    }
+    return p;
+  }
+  /* The survey's tables at a point as fresh rows ({ mukey, mu, comps, hz, areas, eco, ylds, plants, restr }); null where
+     no map unit is found */
+  async function tablesAt(lat, lon) {
+    const j = await answerAt(lat, lon), mk = rowsOf(j.Table);
+    if (!mk.length || mk[0].mukey === null) return null;
+    if (!j.Table8) throw new Error("Soil Data Access sent only part of the survey; try again");
+    const [mu, comps, hz, areas, eco, ylds, plants, restr] = [1, 2, 3, 4, 5, 6, 7, 8].map(k => hits(j[`Table${k}`]));
+    return { mukey: parseInt(mk[0].mukey, 10), mu: mu[0] || {}, comps, hz, areas, eco, ylds, plants, restr };
   }
 
   /* The county at the point (Census 2020 counties, TIGERweb) as SSURGO writes county symbols: postal code + county
@@ -58,40 +125,10 @@ WG.soil = (function () {
   const pickCounty = (counties, at) => (at && (!counties.length || counties.includes(at)) ? at : counties[0] || null);
 
   async function fetchSoil(lat, lon) {
-    const pt = `point(${lon.toFixed(6)} ${lat.toFixed(6)})`;
     const atP = countyAt(lat, lon); // asked alongside the survey; it never throws
-    const mk = await sda(`SELECT mukey FROM SDA_Get_Mukey_from_intersection_with_WktWgs84('${pt}')`);
-    if (!mk.length) return null;
-    const mukey = parseInt(mk[0].mukey, 10);
-    const inMu = `IN (SELECT cokey FROM component WHERE mukey = ${mukey})`;
-
-    const [mu, comps, hz, areas, eco, ylds, plants, restr] = await Promise.all([
-      sda(`SELECT mu.mukey, mu.musym, mu.muname, mu.mukind, l.areasymbol, l.areaname, sc.saverest,
-             ma.slopegraddcp, ma.slopegradwta, ma.brockdepmin, ma.wtdepannmin, ma.flodfreqdcd, ma.drclassdcd,
-             ma.hydgrpdcd, ma.aws0150wta, ma.niccdcd, ma.iccdcd, ma.wtdepaprjunmin
-           FROM mapunit mu JOIN legend l ON l.lkey = mu.lkey LEFT JOIN muaggatt ma ON ma.mukey = mu.mukey
-           LEFT JOIN sacatalog sc ON sc.areasymbol = l.areasymbol
-           WHERE mu.mukey = ${mukey}`),
-      sda(`SELECT cokey, compname, comppct_r, majcompflag, compkind, localphase, taxclname, taxorder, taxsuborder,
-             taxgrtgroup, taxsubgrp, taxpartsize, taxtempregime, taxmoistscl, drainagecl, hydgrp, slope_l, slope_r,
-             slope_h, slopelenusle_r, weg, wei, tfact, albedodry_r, runoff, elev_r, nirrcapcl, nirrcapscl, irrcapcl,
-             irrcapscl, rsprod_r, geomdesc, map_r, airtempa_r, ffd_r, erocl, hydricrating
-           FROM component WHERE mukey = ${mukey} ORDER BY comppct_r DESC`),
-      sda(`SELECT ch.cokey, ch.chkey, ch.hzname, ch.hzdept_r, ch.hzdepb_r, ch.sandtotal_r, ch.silttotal_r,
-             ch.claytotal_r, ch.sandvf_r, ch.sandfine_r, ch.sandmed_r, ch.sandco_r, ch.sandvc_r, ch.om_r,
-             ch.dbthirdbar_r, ch.wthirdbar_r, ch.wfifteenbar_r, ch.wsatiated_r, ch.awc_r, ch.ksat_r,
-             ch.ph1to1h2o_r, ch.cec7_r, ch.ecec_r, ch.caco3_r, ch.gypsum_r, ch.ec_r, ch.sar_r, ch.kwfact, ch.kffact,
-             ch.sieveno10_r, ch.frag3to10_r, ch.fraggt10_r, ch.fragvoltot_r, ch.lep_r, ch.partdensity, tg.texture, tg.texdesc
-           FROM chorizon ch LEFT JOIN chtexturegrp tg ON tg.chkey = ch.chkey AND tg.rvindicator = 'Yes'
-           WHERE ch.cokey ${inMu} ORDER BY ch.cokey, ch.hzdept_r`),
-      sda(`SELECT la.areasymbol, la.areaname, la.areatypename, mo.areaovacres FROM muaoverlap mo
-           JOIN laoverlap la ON la.lareaovkey = mo.lareaovkey WHERE mo.mukey = ${mukey} ORDER BY mo.areaovacres DESC`),
-      sda(`SELECT cokey, ecoclassid, ecoclassname, ecoclasstypename FROM coecoclass WHERE cokey ${inMu}`),
-      sda(`SELECT cokey, cropname, yldunits, nonirryield_r, irryield_r FROM cocropyld WHERE cokey ${inMu}`),
-      sda(`SELECT cokey, plantsym, plantsciname, plantcomname, rangeprod FROM coeplants WHERE cokey ${inMu}`),
-      sda(`SELECT cokey, reskind, reshard, resdept_r, resdepb_r FROM corestrictions WHERE cokey ${inMu}`),
-    ]);
-    return assemble({ lat, lon, mukey, mu: mu[0] || {}, comps, hz, areas, eco, ylds, plants, restr, countyAt: await atP });
+    const t = await tablesAt(lat, lon);
+    if (!t) return null;
+    return assemble({ lat, lon, ...t, countyAt: await atP });
   }
 
   function assemble(raw) {
@@ -461,6 +498,6 @@ WG.soil = (function () {
     return { ef: Math.min(1, Math.max(0, ef)), scf, inRange };
   }
 
-  return { fetchSoil, parseTexture, textureClass, refineCode, wegFromSurface, saxtonRawls, profileLayers, siteParams, surfaceIndex,
+  return { fetchSoil, tablesAt, sda, parseTexture, textureClass, refineCode, wegFromSurface, saxtonRawls, profileLayers, siteParams, surfaceIndex,
     rweq, toCSV, slu1, TEX, FAMILY, WEG_I, WEG_INFO, wegInfo, curveNumber, DRAIN, pickCounty, symOf };
 })();

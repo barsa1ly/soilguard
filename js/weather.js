@@ -566,13 +566,15 @@ WG.weather = (function () {
 
   /* the tab in two parts, each drawn as its sources answer: this week (the Drought Monitor, the latest indices one by
      one, CPC's outlooks) and between years (the chosen index's whole series, from and to the chosen years) */
+  // This week's indices in three groups, the short term to the long term: [heading, [[index, its name here]]]
+  const DR_GROUPS = [["Short term", [["spi30d", "SPI, 30 days"]]], ["Season", [["spei90d", "SPEI, 90 days"]]], ["Long term", [["spei1y", "SPEI, 1 year"], ["pdsi", "Palmer index (PDSI)"]]]];
   RENDER.drought = async (el, live) => {
     const { lat, lon } = WG.state.site;
     el.innerHTML = `<div class="card"><div class="card-h"><h3>This week</h3><span class="tag" id="drDate"></span></div>
-        <div class="usdm-now" id="drNow"><span>Loading…</span></div>
-        <div class="wx-kv" style="margin-top:10px" id="drLatest">${["spi30d", "spei90d", "spei1y", "pdsi"].map(k => `<div id="drL_${k}"><span>${esc(DRI.find(x => x[0] === k)[1])}</span><b>…</b><span>Loading…</span></div>`).join("")}</div>
+        <div class="usdm-now dr-head" id="drNow" data-nofold><span>Drought Monitor: loading…</span></div>
+        <div class="dr-groups" id="drLatest" data-nofold>${DR_GROUPS.map(([h, ks]) => `<div class="dr-g"><h4>${esc(h)}</h4><div>${ks.map(([k, n]) => `<div class="dr-r" id="drL_${k}"><span class="dr-n">${esc(n)}</span><b>…</b><span class="dr-c">Loading…</span></div>`).join("")}</div></div>`).join("")}</div>
         <div class="wx-kv" style="margin-top:8px" id="drOutl"><div><span>Drought outlook, this month</span><b style="font-size:14px">Loading…</b></div><div><span>Drought outlook, this season</span><b style="font-size:14px">Loading…</b></div></div>
-        <p class="fine">Indices below 0 are drier than usual for the time of year. SPI and SPEI take the Drought Monitor's ranges for them (D0 to D4) and PDSI Palmer's classes, but the Monitor's own map weighs many indicators and local reports, so its class can differ. gridMET ranks each window against the years since 1980, so near the record's driest the values come in steps and two windows can show the same value. Sources: U.S. Drought Monitor; gridMET Drought (University of Idaho, 4 km)<span id="drLSrc"></span>; NOAA CPC outlooks. ${esc(USDM_CREDIT)}</p></div>
+        <p class="fine">Why they can differ: the Drought Monitor's map weighs many indicators and local reports, while each index looks at one window of time: SPI at the rain, SPEI at the rain less the evaporation and the Palmer index at a running soil water balance, so a wet month can lift the short term while the season or the year stays dry. Below 0 is drier than usual for the time of year; SPI and SPEI take the Monitor's ranges for them (D0 to D4) and the Palmer index Palmer's own classes. gridMET ranks each window against the years since 1980, so near the record's driest the values come in steps and two windows can show the same value. Sources: U.S. Drought Monitor; gridMET Drought (University of Idaho, 4 km)<span id="drLSrc"></span>; NOAA CPC outlooks. ${esc(USDM_CREDIT)}</p></div>
       <div id="drUsdm"></div>
       <div id="drYears">${yearsWait()}</div>`;
     const at = id => (live() ? el.querySelector(`#${id}`) : null);
@@ -580,16 +582,18 @@ WG.weather = (function () {
     const latest = ["spi30d", "spei90d", "spei1y", "pdsi"].map(k => [k, metLatest(k)]);
     const series = metSeries(driKey, () => { const x = at("drYears"); if (x && x.querySelector(".skeleton")) x.innerHTML = yearsWait(); });
     const srcs = new Set(), srcNote = () => { const x = at("drLSrc"); if (x) x.textContent = `, ${viaText(srcs)}`; };
-    // its class in words (the Drought Monitor's for SPI and SPEI, Palmer's for PDSI) and its date; a failed read says so, with the reload icon
+    // its value, its class in words (the Drought Monitor's ranges for SPI and SPEI, with their colour; Palmer's classes for PDSI) and its date; a failed read says so, with the reload icon
     const latestRow = ([k, v, d, err]) => {
-      const c = DRI.find(x => x[0] === k), cl = c[3] ? dclass(v) : null, word = cl ? `${cl[0]} ${cl[2].toLowerCase()}` : !ok(v) ? "" : c[3] ? "no drought class" : pclass(v);
-      return `<span>${esc(c[1])}</span><b>${ok(v) ? fmt(v, 2) : "—"}</b><span>${err ? `could not be read ${RETRY}` : [word, d ? Wd.dayLabel(d) : ""].filter(Boolean).join(" · ")}</span>`;
+      const c = DRI.find(x => x[0] === k), name = DR_GROUPS.flatMap(g => g[1]).find(x => x[0] === k)[1], cl = c[3] ? dclass(v) : null;
+      const word = cl ? `<i style="background:${cl[3]}"></i>${esc(cl[2].toLowerCase())} range (${cl[0]})` : !ok(v) ? "" : c[3] ? "normal or wetter" : esc(pclass(v));
+      return `<span class="dr-n">${esc(name)}</span><b>${ok(v) ? fmt(v, 2) : "—"}</b><span class="dr-c">${err ? `could not be read ${RETRY}` : [word, d ? Wd.dayLabel(d) : ""].filter(Boolean).join(" · ")}</span>`;
     };
     const outl = a => (a === undefined ? "could not be read" : !a ? "none issued here" : `${String(a.outlook || "—").replace(/_/g, " ")}${a.target ? ` (${a.target})` : ""}`); // CPC writes No_Drought
     const jobs = [
       usdmDate().then(d => { const x = at("drDate"); if (x) x.textContent = `Drought Monitor of ${Wd.dayLabel(d)}`; }).catch(() => {}),
-      usdmHere(lat, lon).then(dm => { const x = at("drNow"), c = dm < 0 ? null : DCLASS.find(c => c[0] === `D${dm}`); if (x) x.innerHTML = c ? `<i style="background:${c[3]}"></i><b>${c[0]} · ${esc(c[2])}</b>` : `<i style="background:#fff"></i><b>No drought class: normal or wet</b>`; },
-        () => { const x = at("drNow"); if (x) x.innerHTML = "<span>The Drought Monitor could not be read.</span>"; }),
+      // the headline: the Drought Monitor's class here this week, its colour as a chip
+      usdmHere(lat, lon).then(dm => { const x = at("drNow"), c = dm < 0 ? null : DCLASS.find(c => c[0] === `D${dm}`); if (x) x.innerHTML = c ? `<i style="background:${c[3]}"></i><b>Drought Monitor: ${esc(c[2])} (${c[0]}) this week</b>` : `<i style="background:#fff"></i><b>Drought Monitor: no drought this week (normal or wet)</b>`; },
+        () => { const x = at("drNow"); if (x) x.innerHTML = `<span>The Drought Monitor could not be read. ${RETRY}</span>`; }),
       droughtOutlook(lat, lon).then(([om, os]) => { const x = at("drOutl"); if (x) x.innerHTML = `<div><span>Drought outlook, this month</span><b style="font-size:14px">${esc(outl(om))}</b></div><div><span>Drought outlook, this season</span><b style="font-size:14px">${esc(outl(os))}</b></div>`; }),
       ...latest.map(([k, p]) => p.then(x => { let n = x.vals.length - 1; while (n > 0 && !ok(x.vals[n])) n--; srcs.add(x.src); srcNote(); return [k, x.vals[n], x.days[n]]; }).catch(e => [k, null, null, e || true])
         .then(r => { const x = at(`drL_${k}`); if (x) x.innerHTML = latestRow(r); })),

@@ -1545,3 +1545,32 @@ table.weg-table .here { font-size: 11px; }
   border-radius: 12px; background: var(--surface); color: var(--ink-2); box-shadow: var(--shadow); cursor: pointer; }
 .leaflet-control.map-reset:hover, .leaflet-control.map-reset:focus-visible { color: var(--accent); }
 .leaflet-control.map-reset svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* audit round 2 */
+/* the drought card (js/weather.js RENDER.drought): the Drought Monitor's class as its headline, the indices in three groups */
+.dr-head b { font-size: 16px; line-height: 1.3; }
+.dr-groups { display: grid; gap: 6px; margin-top: 10px; }
+.dr-g { display: grid; grid-template-columns: 82px minmax(0, 1fr); gap: 0 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); }
+.dr-g h4 { margin: 4px 0 0; font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+.dr-g > div { display: grid; gap: 8px; min-width: 0; }
+.dr-r { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 10px; align-items: baseline; }
+.dr-n { font-size: 12.5px; color: var(--ink-2); }
+.dr-r > b { font-size: 21px; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
+.dr-c { grid-column: 1 / -1; font-size: 12px; color: var(--muted); }
+.dr-c i { display: inline-block; width: 10px; height: 10px; margin-right: 5px; border: 1px solid rgba(0, 0, 0, .15); border-radius: 2px; vertical-align: -1px; }
+@container (max-width: 340px) { .dr-g { grid-template-columns: minmax(0, 1fr); } .dr-g h4 { margin: 0 0 4px; } }
+/* the Wind erosion Overview (js/app.js renderRisk): one plain sentence over the factors, the formulas under the card's More */
+.risk-legend .risk-plain { grid-column: 1 / -1; margin: 0 0 4px; font-size: 13px; line-height: 1.45; color: var(--ink-2); }
+.risk-more { grid-column: 1 / -1; display: grid; gap: 4px; margin-top: 2px; padding-top: 6px; border-top: 1px solid var(--line); font-size: 12px; line-height: 1.45; color: var(--ink-2); }
+.risk-more p { margin: 0; }
+.risk-more-tg { grid-column: 1 / -1; justify-self: end; min-height: 32px; margin-top: 2px; padding: 0 11px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--muted); font-size: 12px; line-height: 1; white-space: nowrap; cursor: pointer; }
+.risk-more-tg:hover, .risk-more-tg[aria-expanded="true"] { color: var(--ink); border-color: var(--muted); }
+@media print { #riskMore[hidden] { display: grid !important; } .risk-more-tg { display: none !important; } }
+/* the Soil maps Overview's tiles open their card on a tap anywhere (js/soilmaps.js); the Details link stays for the keyboard */
+.so-tile:has(.so-go) { cursor: pointer; transition: box-shadow .15s; }
+.so-tile:has(.so-go):hover { box-shadow: 0 0 0 1.5px var(--accent), var(--shadow); }
+/* phones: a point opens with its results on about half of the screen (46 % of the rows, the panel's top 16 px into the
+   map row), the map strip above larger than before (38 / 62); the grip, the bar and the swipes as before */
+@media (max-width: 767px) and (min-height: 561px) {
+  .app.has-site { grid-template-rows: minmax(0, 54fr) minmax(0, 46fr); }
+}

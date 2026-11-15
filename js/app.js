@@ -1095,12 +1095,16 @@
   WG.region = { inRegion, stateAt, countyC, tableC, codes: () => region.codes.slice(), recs: () => region.recs.slice(), site: () => state.siteState || null };
 
   /* Map clicks and pin drags: refuse points on a building, road or water body (area.js asks USA Structures, Census
-     TIGER and USGS NHD; if they are slow the point is accepted). */
+     TIGER and USGS NHD; if they are slow the point is accepted). The point's soil survey and elevation, the slowest
+     reads that need nothing but the point, start while it is checked: each is kept for the point (js/soil.js tablesAt,
+     fetchElevation), so the analysis takes them up instead of asking again; a refused point leaves them unused. */
   let pickSeq = 0;
   async function pickSite(lat, lon, opts) {
     if (!inRegion(lat, lon) || !WG.area) return selectSite(lat, lon, opts);
     const my = ++pickSeq, el = map.getContainer();
     el.classList.add("checking");
+    S.fetchSoil(lat, lon).catch(() => {});
+    fetchElevation(lat, lon).catch(() => {});
     const hit = await WG.area.excludedAt(lat, lon);
     if (my !== pickSeq) return;
     el.classList.remove("checking");
@@ -1358,20 +1362,54 @@
     return county ? `${county}, ${a.state || ""}`.replace(/, $/, "") : (j.name || null);
   }
 
-  /* Elevation, slope and aspect from 5 points ~100 m apart: USGS 3DEP (1–10 m lidar/DEM) from the Elevation
-     Point Query Service, else the Copernicus 90 m DEM via Open-Meteo. */
+  /* Elevation, slope and aspect from 5 points ~100 m apart: USGS 3DEP (1–10 m lidar/DEM), else the Copernicus 90 m DEM
+     via Open-Meteo. The five 3DEP points are one request to The National Map's 3DEP image service (getSamples at the
+     nearest cell: the very values its Elevation Point Query Service gives one point a request, which took five; the
+     same at Temple and Lubbock, 15 Nov 2026), kept in this browser for 15 days under the point. A point is looked up
+     once while its answer is on its way (pickSite starts it while a tap is checked), and a 3DEP answer is kept for the
+     last few points of the visit; the Copernicus stand-in or a failure is asked again next time. */
   // how long the USGS 3DEP answer (1 m) is waited for before the Copernicus DEM (90 m, about a second) is used instead
   const ELEV_WAIT = 4000;
-  async function fetchElevation(lat, lon) {
+  const DEP = "https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer/getSamples";
+  const elevAsked = new Map(); // "lat,lon" -> promise of { e, later }
+  function fetchElevation(lat, lon) {
+    const k = `${lat.toFixed(6)},${lon.toFixed(6)}`;
+    let p = elevAsked.get(k);
+    if (!p) {
+      p = elevationAt(lat, lon);
+      elevAsked.set(k, p);
+      if (elevAsked.size > 6) elevAsked.delete(elevAsked.keys().next().value);
+      const drop = () => { if (elevAsked.get(k) === p) elevAsked.delete(k); };
+      p.then(({ e, later }) => later.then(x => {
+        if (x) { if (elevAsked.get(k) === p) elevAsked.set(k, Promise.resolve({ e: x, later: Promise.resolve(null) })); } // the 3DEP answer, from now on at once
+        else if (!e.src.startsWith("USGS")) drop();
+      }), drop);
+    }
+    return p.then(({ e, later }) => ({ e: { ...e }, later: later.then(x => x && { ...x }) })); // copies: no caller sees another's changes
+  }
+  // the five points' 3DEP values in one request; throws where 3DEP has none (NoData leaves a point out of the answer)
+  async function dep(lats, lons) {
+    const key = `${DEP}?fg-pts=${lats[0].toFixed(6)},${lons[0].toFixed(6)}`, kept = await U.stashGet(key);
+    if (kept) return kept;
+    const q = new URLSearchParams({ geometry: JSON.stringify({ points: lats.map((y, k) => [+lons[k].toFixed(6), +y.toFixed(6)]), spatialReference: { wkid: 4326 } }),
+      geometryType: "esriGeometryMultipoint", returnFirstValueOnly: "true", interpolation: "RSP_NearestNeighbor", f: "json" });
+    const j = await U.fetchJSON(`${DEP}?${q}`, {}, 15000);
+    if (j.error) throw new Error(j.error.message || "3DEP refused the request");
+    const by = new Map((j.samples || []).map(s => [s.locationId, s])), p = lats.map((y, k) => num((by.get(k) || {}).value));
+    if (p.some(v => v === null || v < -1000)) throw new Error("no 3DEP coverage");
+    const v = { pts: p, src: `USGS 3DEP ${fmt(by.get(0).resolution, 0)} m` };
+    U.stashPut(key, v);
+    return v;
+  }
+  async function elevationAt(lat, lon) {
     const d = 0.0009, dl = d / Math.cos(lat * Math.PI / 180);
     const lats = [lat, lat + d, lat - d, lat, lat], lons = [lon, lon, lon, lon + dl, lon - dl];
     let pts, src;
-    // the five 3DEP points and the Copernicus DEM (one request for all five points) are asked at once. The 3DEP answer is
+    // the 3DEP request and the Copernicus DEM (one request for all five points) are asked at once. The 3DEP answer is
     // used when it arrives within ELEV_WAIT; otherwise the Copernicus one, which answers in about a second. A slow 3DEP
-    // point used to hold the lookup for its full 15 s timeout before the same fallback
+    // answer used to hold the lookup for its full 15 s timeout before the same fallback
     const settle = p => p.then(v => ({ ok: true, v }), e => ({ ok: false, e }));
-    const usgs = settle(Promise.all(lats.map((y, k) => U.fetchJSON(`https://epqs.nationalmap.gov/v1/json?x=${lons[k].toFixed(6)}&y=${y.toFixed(6)}&wkid=4326&units=Meters&includeDate=false`, {}, 15000)))
-      .then(js => { const p = js.map(j => num(j.value)); if (p.some(v => v === null || v < -1000)) throw new Error("no 3DEP coverage"); return { pts: p, src: `USGS 3DEP ${fmt(js[0].resolution, 0)} m` }; }));
+    const usgs = settle(dep(lats, lons));
     const cop = settle(U.fetchJSON(`https://api.open-meteo.com/v1/elevation?latitude=${lats.map(v => v.toFixed(5)).join(",")}&longitude=${lons.map(v => v.toFixed(5)).join(",")}`, {}, 10000)
       .then(j => ({ pts: j.elevation, src: "Copernicus 90 m DEM" })));
     const shape = ({ pts, src }) => {
@@ -1506,6 +1544,18 @@
     $("#riskScale").setAttribute("aria-label", `Risk classes, ${UN.sym("soilLoss")}`);
   }
 
+  /* the card's More (its formulas): open or shut as last left on this device, kept over a redraw */
+  let riskMoreOpen = false;
+  try { riskMoreOpen = localStorage.getItem("fg.riskmore") === "1"; } catch (e) { /* storage off */ }
+  $("#riskCard").addEventListener("click", e => {
+    const b = e.target.closest(".risk-more-tg"), box = $("#riskMore");
+    if (!b || !box) return;
+    riskMoreOpen = box.hidden;
+    box.hidden = !riskMoreOpen;
+    b.setAttribute("aria-expanded", String(riskMoreOpen));
+    b.textContent = riskMoreOpen ? "Less ▴" : "More ▾";
+    try { localStorage.setItem("fg.riskmore", riskMoreOpen ? "1" : "0"); } catch (err) { /* storage off: for this visit */ }
+  });
   function renderRisk() {
     const rc = $("#riskCard");
     const r = riskModel();
@@ -1538,20 +1588,30 @@
       return;
     }
     rc.className = `risk-card r${r.level}`;
-    $("#riskLevel").textContent = `${LEVEL_NAME[r.level]} · ${UN.fmtCls("soilLoss", r.E, 0)}`;
+    const E = UN.fmtCls("soilLoss", r.E, 0), lv = LEVEL_NAME[r.level];
+    $("#riskLevel").textContent = `${lv} · ${E}`;
     Ch.gauge($("#riskGauge"), r.frac);
     renderRiskScale(r.level);
     const peak = w && !w.error && w.riskMonths.length ? monthsText(w.riskMonths) : null;
-    const est = !r.cSrc.startsWith("NRCS"), tDp = UN.sym("soilLoss") === "t/ha/yr" ? 1 : 0;
-    $("#riskFacts").innerHTML = facts([
-      ["Soil erodibility I", UN.fmt("soilLoss", r.I, 0), `WEG ${r.weg || "—"} (1 most, 8 least erodible)`],
-      ["Wind climatic factor C", `${est ? "≈ " : ""}${fmtC(r.C)}`, `${est ? "estimated · " : "NRCS · "}Garden City, KS = 100; windier and drier = more; not RUSLE's C`],
-      ["E = I × C ÷ 100", UN.fmtCls("soilLoss", r.E, 0), "a yearly loss from bare, smooth, unsheltered ground, not your field's"],
-      r.T ? ["Tolerable loss T", UN.fmt("soilLoss", r.T, tDp), "NRCS rating for this soil"] : null,
-      r.EI ? ["Erodibility index C·I/T", `${est ? "≈ " : ""}${fmt(r.EI, 1)}`, r.EI >= 8 ? "C·I ÷ T: 8 or more = highly erodible land (HEL), NRCS" : "C·I ÷ T: highly erodible land (HEL) starts at 8, NRCS"] : null,
+    const est = !r.cSrc.startsWith("NRCS"), ap = est ? "≈ " : "", tDp = UN.sym("soilLoss") === "t/ha/yr" ? 1 : 0;
+    /* the answer first: one plain sentence under the level and its scale, then the factors under plain names; the
+       formulas wait under the card's More */
+    const plain = `Bare, smooth, unsheltered ground here could lose ${r.E < 0.5 ? `under ${UN.fmt("soilLoss", 0.5, 1)}` : `about ${E}`} of soil to wind, ${r.level === 5 ? "an" : "a"} ${lv.toLowerCase()} risk; cover, residue, roughness and barriers can cut that by 80–99%.`;
+    const more = [
+      `E = I × C ÷ 100: ${UN.fmt("soilLoss", r.I, 0)} × ${ap}${fmtC(r.C)} ÷ 100 = ${E}, the yearly loss from bare, smooth, unsheltered ground, not your field's.`,
+      r.EI ? `Erodibility index = C·I/T, that is E ÷ T: ${UN.fmt("soilLoss", r.E, 1)} ÷ ${UN.fmt("soilLoss", r.T, tDp)} = ${ap}${fmt(r.EI, 1)}. NRCS counts land as highly erodible (HEL) from 8.` : null,
+      `Soil erodibility I: the yearly loss from a wide, bare, smooth field of this soil where C is 100, set by its Wind Erodibility Group (WEG ${r.weg || "—"}; 1 most, 8 least erodible).`,
+      `Wind factor C: ${r.cSrc}; Garden City, KS = 100, windier and drier = more. It is the wind erosion equation's climatic factor, not RUSLE's cover factor C.`,
+    ].filter(Boolean);
+    $("#riskFacts").innerHTML = `<p class="risk-plain">${esc(plain)}</p>${facts([
+      ["Soil erodibility (I)", UN.fmt("soilLoss", r.I, 0), "how easily this soil blows when bare"],
+      ["Wind factor (C)", `${ap}${fmtC(r.C)}`, `${est ? "estimated" : "NRCS"} · windier and drier places score higher`],
+      r.T ? ["Tolerable loss (T)", UN.fmt("soilLoss", r.T, tDp), "the yearly loss this soil can take (NRCS)"] : null,
+      ["Erodibility group (WEG)", r.weg || "—", "1 most erodible, 8 least"],
+      r.EI ? ["Erodibility index", `${ap}${fmt(r.EI, 1)}`, r.EI >= 8 ? "highly erodible land (NRCS)" : "not highly erodible land (NRCS)"] : null,
       peak ? ["Highest-risk months", peak, ""] : null,
-    ]);
-    $("#riskUnit").textContent = "Cover, residue, roughness and barriers can cut this by 80–99%.";
+    ])}<div class="risk-more" id="riskMore"${riskMoreOpen ? "" : " hidden"}>${more.map(t => `<p>${esc(t)}</p>`).join("")}</div><button type="button" class="risk-more-tg" aria-controls="riskMore" aria-expanded="${riskMoreOpen}">${riskMoreOpen ? "Less ▴" : "More ▾"}</button>`;
+    $("#riskUnit").textContent = "";
     $("#riskText").textContent = "";
   }
 
@@ -1737,7 +1797,7 @@
     }
     if (s && !s.error) rows.push(["Soil profile, WEG, I, T", `SSURGO map unit ${esc(String(s.mukey))}${s.dominant ? `, ${esc(s.dominant.compname)}` : ""} (${esc(s.mapunit.areasymbol || "")})`, `USDA-NRCS ${A("https://sdmdataaccess.nrcs.usda.gov/", "Soil Data Access")} (direct)`]);
     if (cf) rows.push(["Climatic factor C", `${cf.src.startsWith("NRCS") ? "" : "≈ "}${fmtC(cf.C)}`, cf.how]);
-    if (e) rows.push(["Elevation and slope", `${UN.fmt("elev", e.z)}, ${fmt(e.slope, 1)}% slope`, e.src.startsWith("USGS") ? `${e.src}, ${A("https://apps.nationalmap.gov/epqs/", "Elevation Point Query Service")} (direct)` : `${e.src} via Open-Meteo (USGS did not respond)`]);
+    if (e) rows.push(["Elevation and slope", `${UN.fmt("elev", e.z)}, ${fmt(e.slope, 1)}% slope`, e.src.startsWith("USGS") ? `${e.src}, ${A("https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer", "3DEP elevation image service")} (direct)` : `${e.src} via Open-Meteo (USGS did not respond)`]);
     if (state.nlcd) rows.push(["Land cover", state.nlcd.name || "no answer", state.nlcd.src === "nlcd" ? `NLCD 2021, ${A("https://www.mrlc.gov/", "MRLC")} WMS (direct)`
       : state.nlcd.src === "io" ? `Sentinel-2 10 m land cover, ${A("https://livingatlas.arcgis.com/landcover/", "Impact Observatory, Microsoft, Esri")} (NLCD server refuses browser requests)`
         : "neither NLCD nor the Sentinel-2 land-cover service answered"]);
@@ -2149,7 +2209,7 @@
       try { U.download("WG.SOL", WG.models.writers.dssatSol(WG.models.surveySoil(state))); }
       catch (e) { console.warn(e); U.toast(`No DSSAT soil file for ${d.compname}: ${e.message || e}.`, 6000); }
     };
-    if ($("#profSource")) $("#profSource").innerHTML = `Source: USDA-NRCS Soil Survey Geographic Database (SSURGO) via <a href="https://sdmdataaccess.nrcs.usda.gov/" target="_blank" rel="noopener">Soil Data Access</a>, map unit key ${s.mukey}, ${esc(s.mapunit.areaname || "")}${s.mapunit.saverest ? `, survey dated ${esc(String(s.mapunit.saverest).split(/[ T]/)[0])}` : ""}. Elevation/slope: ${e ? esc(e.src) + (e.src.startsWith("USGS") ? " (Elevation Point Query Service)" : " via Open-Meteo") : "loading"}. Water retention of a layer with edited sand, silt, clay or organic matter: Saxton &amp; Rawls (2006). <button class="link" data-methods="m-soil">Equations →</button>`;
+    if ($("#profSource")) $("#profSource").innerHTML = `Source: USDA-NRCS Soil Survey Geographic Database (SSURGO) via <a href="https://sdmdataaccess.nrcs.usda.gov/" target="_blank" rel="noopener">Soil Data Access</a>, map unit key ${s.mukey}, ${esc(s.mapunit.areaname || "")}${s.mapunit.saverest ? `, survey dated ${esc(String(s.mapunit.saverest).split(/[ T]/)[0])}` : ""}. Elevation/slope: ${e ? esc(e.src) + (e.src.startsWith("USGS") ? " (3DEP elevation image service)" : " via Open-Meteo") : "loading"}. Water retention of a layer with edited sand, silt, clay or organic matter: Saxton &amp; Rawls (2006). <button class="link" data-methods="m-soil">Equations →</button>`;
   }
 
   /* ============ PRACTICES TAB ============ */
