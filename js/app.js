@@ -40,7 +40,8 @@
     if (/^\d{4}-\d{2}-\d{2}$/.test(q.get("from") || "") && /^\d{4}-\d{2}-\d{2}$/.test(q.get("to") || "")) state.period = { from: q.get("from"), to: q.get("to") };
     else if (["5", "10", "20"].includes(q.get("period"))) state.period = { n: +q.get("period") };
     if (q.get("model") === "ecmwf") state.gridModel = "ecmwf"; // checked against the dates with the period controls below
-    state.theme = WG.weather.THEMES.some(t => t.key === q.get("map")) ? q.get("map") : "erosion";
+    const mq = q.get("map") === "soil" ? "soilmaps" : q.get("map"); // a hand-typed ?map=soil opens Soil maps
+    state.theme = WG.weather.THEMES.some(t => t.key === mq) ? mq : "erosion";
   }
   const L48 = SI.list.filter(x => x.l48).map(x => x.c); // the 48 contiguous states and DC: the picker's Whole US
   // the states this copy lets a visitor choose (js/config.js); the rest are listed as "(later)" and kept in the code and data
@@ -442,9 +443,9 @@
   function tabRow() {
     $$(".tabs button[data-tab]").forEach(b => { b.hidden = !b.dataset.for.split(" ").includes(state.theme) || (!details && b.hasAttribute("data-detail")); });
     const more = $("#tabMore"), names = $$(".tabs button[data-detail]").filter(b => b.dataset.for.split(" ").includes(state.theme)).map(b => (b.querySelector(".full") || b).textContent.trim());
-    more.hidden = !names.length; // Drought has no details
+    more.hidden = !names.length; // a theme without detail tabs: no Details button
     if (!names.length) return;
-    const say = details ? "Hide the detail tabs" : `Details: show the ${names.slice(0, -1).join(", ")} and ${names[names.length - 1]} tabs`;
+    const say = details ? "Hide the detail tabs" : names.length > 1 ? `Details: show the ${names.slice(0, -1).join(", ")} and ${names[names.length - 1]} tabs` : `Details: show the ${names[0]} tab`;
     more.setAttribute("aria-expanded", String(details));
     more.setAttribute("aria-label", say);
     more.title = say; // out, it is only an arrow
@@ -1017,6 +1018,8 @@
   window.addEventListener("resize", U.debounce(() => { map.invalidateSize(); Ch.resizeAll(); }, 150));
 
   /* ---------- tabs ---------- */
+  // the weather tab a panel tab is drawn with: Drought's History with Drought's own (js/weather.js RENDER.drought)
+  function wx(n) { return n === "droughthist" ? "drought" : n; }
   function showTab(name) {
     if (!details && isDetail(name)) { details = true; tabRow(); } // a step to a detail tab brings the details out with it (for this visit)
     $$(".tabs button").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
@@ -1024,7 +1027,7 @@
     $("#panelBody").scrollTop = 0;
     fitTabRow();
     if (name === "wind" && state.wind) setTimeout(renderWindCharts, 0);
-    if (["drought", "soilmaps", "soiloverview", "soilbasin", "soilmoist"].includes(name) && state.site) WG.weather.show(name, $("#tab-" + name));
+    if (["drought", "soilmaps", "soiloverview", "soilbasin", "soilmoist"].includes(wx(name)) && state.site) WG.weather.show(wx(name), $("#tab-" + wx(name)));
     if (name === "download" && state.site) WG.datasheet.show();
   }
   /* A tab row wider than the panel (tablets; some themes on phones) scrolls under the sticky DOWNLOAD at its right end.
@@ -1587,16 +1590,22 @@
       }
       return;
     }
-    rc.className = `risk-card r${r.level}`;
+    /* WEG 8 (I = 0) where the survey names a miscellaneous area (urban land, pits, water): not farm soil, so the card gives
+       no class rather than "Low · 0"; a stony or wet soil of WEG 8 keeps its Low, with a line on why */
+    const dom = (state.soil && state.soil.dominant) || {};
+    const notSoil = r.I === 0 && !state.edits && (/miscellaneous/i.test(dom.compkind || "") || /\b(urban land|pits?|dumps?|water|made land)\b/i.test(dom.compname || ""));
+    rc.className = notSoil ? "risk-card" : `risk-card r${r.level}`;
     const E = UN.fmtCls("soilLoss", r.E, 0), lv = LEVEL_NAME[r.level];
-    $("#riskLevel").textContent = `${lv} · ${E}`;
-    Ch.gauge($("#riskGauge"), r.frac);
-    renderRiskScale(r.level);
+    $("#riskLevel").textContent = notSoil ? `Not rated · ${dom.compname || "not soil"}` : `${lv} · ${E}`;
+    Ch.gauge($("#riskGauge"), notSoil ? null : r.frac);
+    renderRiskScale(notSoil ? 0 : r.level);
     const peak = w && !w.error && w.riskMonths.length ? monthsText(w.riskMonths) : null;
     const est = !r.cSrc.startsWith("NRCS"), ap = est ? "≈ " : "", tDp = UN.sym("soilLoss") === "t/ha/yr" ? 1 : 0;
     /* the answer first: one plain sentence under the level and its scale, then the factors under plain names; the
        formulas wait under the card's More */
-    const plain = `Bare, smooth, unsheltered ground here could lose ${r.E < 0.5 ? `under ${UN.fmt("soilLoss", 0.5, 1)}` : `about ${E}`} of soil to wind, ${r.level === 5 ? "an" : "a"} ${lv.toLowerCase()} risk; cover, residue, roughness and barriers can cut that by 80–99%.`;
+    const plain = notSoil ? `The soil survey maps this point as ${dom.compname || "a miscellaneous area"}, not farm soil, so a wind-erosion rate does not apply here (Wind Erodibility Group 8, I = 0). For a field nearby, tap it on the map, or enter its soil test on the Soil tab.`
+      : r.I === 0 ? "This soil is in Wind Erodibility Group 8 (I = 0): stony, gravelly or wet ground that the wind does not move, so bare ground here rates no loss."
+      : `Bare, smooth, unsheltered ground here could lose ${r.E < 0.5 ? `under ${UN.fmt("soilLoss", 0.5, 1)}` : `about ${E}`} of soil to wind, ${r.level === 5 ? "an" : "a"} ${lv.toLowerCase()} risk; cover, residue, roughness and barriers can cut that by 80–99%.`;
     const more = [
       `E = I × C ÷ 100: ${UN.fmt("soilLoss", r.I, 0)} × ${ap}${fmtC(r.C)} ÷ 100 = ${E}, the yearly loss from bare, smooth, unsheltered ground, not your field's.`,
       r.EI ? `Erodibility index = C·I/T, that is E ÷ T: ${UN.fmt("soilLoss", r.E, 1)} ÷ ${UN.fmt("soilLoss", r.T, tDp)} = ${ap}${fmt(r.EI, 1)}. NRCS counts land as highly erodible (HEL) from 8.` : null,
@@ -2252,7 +2261,7 @@
     if (state.wind && !state.wind.error) renderWind();
     renderSoilSummary(); renderSoilDetail(); renderPractices();
     const tab = $(".tabs button.active"); // a weather tab on show is drawn again in the new units, from the data read for this location
-    if (tab && ["drought", "soilmaps", "soiloverview", "soilbasin", "soilmoist"].includes(tab.dataset.tab)) WG.weather.show(tab.dataset.tab, $("#tab-" + tab.dataset.tab));
+    if (tab && ["drought", "soilmaps", "soiloverview", "soilbasin", "soilmoist"].includes(wx(tab.dataset.tab))) WG.weather.show(wx(tab.dataset.tab), $("#tab-" + wx(tab.dataset.tab)));
     const { lat, lon } = state.site;
     try { history.replaceState(null, "", `?lat=${lat.toFixed(5)}&lon=${lon.toFixed(5)}${windQ()}${UN.query()}${KEEP_Q}`); } catch (e) { /* file:// */ }
   });

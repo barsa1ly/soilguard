@@ -1574,3 +1574,21 @@ table.weg-table .here { font-size: 11px; }
 @media (max-width: 767px) and (min-height: 561px) {
   .app.has-site { grid-template-rows: minmax(0, 54fr) minmax(0, 46fr); }
 }
+/* audit round 3 */
+/* the drought card's one plain line under its headline (js/weather.js RENDER.drought summary) */
+.dr-sum { margin: 8px 0 0; font-size: 13.5px; line-height: 1.45; color: var(--ink-2); }
+/* the save dialog's map hint: one line, its More opening the rest (js/downloads.js) */
+.sv-bar .sv-tips-tg { font-size: inherit; vertical-align: baseline; }
+/* phones: 44 px tap targets for the tab row (its bottom padding gives most of the height back), the panel head's buttons
+   and the legend's show / hide (its margins keep the legend's size); the Details arrow, once out, wider by the row's gaps */
+@media (max-width: 767px) {
+  .tabs { padding-bottom: 2px; }
+  .tabs button { min-height: 44px; }
+  .head-actions .icon-btn { width: 44px; height: 44px; }
+  #dataBtn { display: none; } /* the DOWNLOAD tab just below does the same; its room keeps the place's lines from wrapping */
+  .legend h5 button { min-height: 44px; min-width: 44px; margin: -14px -10px -14px 0; }
+}
+@media (max-width: 400px) {
+  .tabs:has(> .tab-more[aria-expanded="true"]:not([hidden])) { gap: 1px; }
+  .tabs button.tab-more[aria-expanded="true"] { padding-left: 5px; padding-right: 5px; }
+}

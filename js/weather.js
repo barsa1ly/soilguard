@@ -168,11 +168,11 @@ WG.weather = (function () {
   document.addEventListener("click", e => {
     const b = e.target.closest && e.target.closest("[data-wx-retry]"), sec = b && b.closest("section.tab");
     if (!sec || !WG.state.site) return;
-    const name = sec.id.replace(/^tab-/, "");
+    const id = sec.id.replace(/^tab-/, ""), name = id === "droughthist" ? "drought" : id; /* Drought's History is drawn with Drought */
     if (!RENDER[name]) return;
     e.preventDefault();
     (name.startsWith("soil") ? ["soiloverview", "soilmaps", "soilbasin", "soilmoist"] : [name]).forEach(n => { const s = document.getElementById(`tab-${n}`); if (s) s.dataset.key = ""; });
-    show(name, sec);
+    show(name, document.getElementById(`tab-${name}`) || sec);
   });
 
   const RENDER = {}; // tab -> async (el, live) => void, below
@@ -570,14 +570,17 @@ WG.weather = (function () {
   const DR_GROUPS = [["Short term", [["spi30d", "SPI, 30 days"]]], ["Season", [["spei90d", "SPEI, 90 days"]]], ["Long term", [["spei1y", "SPEI, 1 year"], ["pdsi", "Palmer index (PDSI)"]]]];
   RENDER.drought = async (el, live) => {
     const { lat, lon } = WG.state.site;
+    // the week-by-week and between-years parts: on the theme's History tab (a detail tab, index.html) when the page has one
+    const hist = document.getElementById("tab-droughthist"), HIST = `<div id="drUsdm"></div><div id="drYears">${yearsWait()}</div>`;
     el.innerHTML = `<div class="card"><div class="card-h"><h3>This week</h3><span class="tag" id="drDate"></span></div>
         <div class="usdm-now dr-head" id="drNow" data-nofold><span>Drought Monitor: loading…</span></div>
+        <p class="dr-sum" id="drSum" data-nofold hidden></p>
         <div class="dr-groups" id="drLatest" data-nofold>${DR_GROUPS.map(([h, ks]) => `<div class="dr-g"><h4>${esc(h)}</h4><div>${ks.map(([k, n]) => `<div class="dr-r" id="drL_${k}"><span class="dr-n">${esc(n)}</span><b>…</b><span class="dr-c">Loading…</span></div>`).join("")}</div></div>`).join("")}</div>
         <div class="wx-kv" style="margin-top:8px" id="drOutl"><div><span>Drought outlook, this month</span><b style="font-size:14px">Loading…</b></div><div><span>Drought outlook, this season</span><b style="font-size:14px">Loading…</b></div></div>
         <p class="fine">Why they can differ: the Drought Monitor's map weighs many indicators and local reports, while each index looks at one window of time: SPI at the rain, SPEI at the rain less the evaporation and the Palmer index at a running soil water balance, so a wet month can lift the short term while the season or the year stays dry. Below 0 is drier than usual for the time of year; SPI and SPEI take the Monitor's ranges for them (D0 to D4) and the Palmer index Palmer's own classes. gridMET ranks each window against the years since 1980, so near the record's driest the values come in steps and two windows can show the same value. Sources: U.S. Drought Monitor; gridMET Drought (University of Idaho, 4 km)<span id="drLSrc"></span>; NOAA CPC outlooks. ${esc(USDM_CREDIT)}</p></div>
-      <div id="drUsdm"></div>
-      <div id="drYears">${yearsWait()}</div>`;
-    const at = id => (live() ? el.querySelector(`#${id}`) : null);
+      ${hist ? `<div class="card cta"><div><h3>History</h3><p class="fine">The Drought Monitor here week by week since 2000, and the drought indices year against year since 1980.</p></div><button class="btn" data-goto="droughthist">Show history</button></div>` : HIST}`;
+    if (hist) hist.innerHTML = HIST;
+    const at = id => (live() ? el.querySelector(`#${id}`) || (hist && hist.querySelector(`#${id}`)) : null);
     // each row and part drawn as its own answer comes; This week's values asked first (js/h5range.js also puts them first)
     const latest = ["spi30d", "spei90d", "spei1y", "pdsi"].map(k => [k, metLatest(k)]);
     const series = metSeries(driKey, () => { const x = at("drYears"); if (x && x.querySelector(".skeleton")) x.innerHTML = yearsWait(); });
@@ -589,14 +592,37 @@ WG.weather = (function () {
       return `<span class="dr-n">${esc(name)}</span><b>${ok(v) ? fmt(v, 2) : "—"}</b><span class="dr-c">${err ? `could not be read ${RETRY}` : [word, d ? Wd.dayLabel(d) : ""].filter(Boolean).join(" · ")}</span>`;
     };
     const outl = a => (a === undefined ? "could not be read" : !a ? "none issued here" : `${String(a.outlook || "—").replace(/_/g, " ")}${a.target ? ` (${a.target})` : ""}`); // CPC writes No_Drought
+    /* one plain line under the headline that puts the Monitor's class and the indices together, once the four indices
+       have answered (drawn again with the Monitor's class): the windows whose rain is normal or wetter, those drier than
+       usual, and the slower Palmer index */
+    const seen = {}, WIN = { spi30d: "the last 30 days", spei90d: "the season", spei1y: "the year" };
+    const andList = a => (a.length > 1 ? `${a.slice(0, -1).join(", ")} and ${a[a.length - 1]}` : a[0] || "");
+    const summary = () => {
+      const x = at("drSum");
+      if (!x || !["spi30d", "spei90d", "spei1y", "pdsi"].every(k => k in seen)) return;
+      const ks = Object.keys(WIN).filter(k => ok(seen[k])), pd = ok(seen.pdsi) ? seen.pdsi : null;
+      const wet = ks.filter(k => !dclass(seen[k])).map(k => WIN[k]), dry = ks.filter(k => dclass(seen[k])).map(k => WIN[k]);
+      const pdDry = pd !== null && pd <= -0.5, pw = pd === null ? "" : pclass(pd);
+      const wetPart = wet.length ? `rain over ${andList(wet)} is normal or wetter${pd !== null && !pdDry ? ", as is the Palmer index" : ""}`
+        : pd !== null && !pdDry ? "the Palmer index is normal or wetter" : "";
+      const dryPart = andList([dry.length ? `${andList(dry)} ${dry.length > 1 || dry[0] === WIN.spi30d ? "have" : "has"} been drier than usual` : "",
+        pdDry ? `the slower Palmer index ${wetPart ? "still " : ""}shows ${/^incipient/.test(pw) ? "an " : ""}${pw}` : ""].filter(Boolean));
+      const said = [wetPart, dryPart].filter(Boolean).join("; ");
+      if (!said) return;
+      const dryAny = dry.length > 0 || pdDry, dm = seen.dm;
+      const tail = dm === undefined ? "" : dm >= 0 && !dryAny ? " The Monitor's weekly map is slower to change, so it can still show dryness after rain."
+        : dm < 0 && dryAny ? " The Monitor's map does not show a drought here yet: one to watch." : "";
+      x.textContent = `In short: ${said}.${tail}`;
+      x.hidden = false;
+    };
     const jobs = [
       usdmDate().then(d => { const x = at("drDate"); if (x) x.textContent = `Drought Monitor of ${Wd.dayLabel(d)}`; }).catch(() => {}),
       // the headline: the Drought Monitor's class here this week, its colour as a chip
-      usdmHere(lat, lon).then(dm => { const x = at("drNow"), c = dm < 0 ? null : DCLASS.find(c => c[0] === `D${dm}`); if (x) x.innerHTML = c ? `<i style="background:${c[3]}"></i><b>Drought Monitor: ${esc(c[2])} (${c[0]}) this week</b>` : `<i style="background:#fff"></i><b>Drought Monitor: no drought this week (normal or wet)</b>`; },
+      usdmHere(lat, lon).then(dm => { const x = at("drNow"), c = dm < 0 ? null : DCLASS.find(c => c[0] === `D${dm}`); if (x) x.innerHTML = c ? `<i style="background:${c[3]}"></i><b>Drought Monitor: ${esc(c[2])} (${c[0]}) this week</b>` : `<i style="background:#fff"></i><b>Drought Monitor: no drought this week (normal or wet)</b>`; seen.dm = dm; summary(); },
         () => { const x = at("drNow"); if (x) x.innerHTML = `<span>The Drought Monitor could not be read. ${RETRY}</span>`; }),
       droughtOutlook(lat, lon).then(([om, os]) => { const x = at("drOutl"); if (x) x.innerHTML = `<div><span>Drought outlook, this month</span><b style="font-size:14px">${esc(outl(om))}</b></div><div><span>Drought outlook, this season</span><b style="font-size:14px">${esc(outl(os))}</b></div>`; }),
       ...latest.map(([k, p]) => p.then(x => { let n = x.vals.length - 1; while (n > 0 && !ok(x.vals[n])) n--; srcs.add(x.src); srcNote(); return [k, x.vals[n], x.days[n]]; }).catch(e => [k, null, null, e || true])
-        .then(r => { const x = at(`drL_${k}`); if (x) x.innerHTML = latestRow(r); })),
+        .then(r => { const x = at(`drL_${k}`); if (x) x.innerHTML = latestRow(r); seen[k] = r[1]; summary(); })),
       series.then(S => { if (live()) drawYears(S); }, e => { const x = at("drYears"); if (x) x.innerHTML = failed("gridMET's drought index", e); }),
       usdmHistory(),
     ];

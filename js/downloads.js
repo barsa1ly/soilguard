@@ -399,6 +399,14 @@ WG.downloads = (function () {
   const ITEMS = [["legend", "Legend"], ["title", "Title"], ["scale", "Scale bar"], ["north", "North arrow"], ["credits", "Credits"]];
   const ITEM_NAME = Object.fromEntries(ITEMS), FLOW = ["title", "scale", "credits"]; // the band's second column, in order
   const HINT0 = $("#svHint").textContent;
+  // the map's hint (set in place() below): its More opens the rest of the help, its Less shuts it
+  $("#svHint").addEventListener("click", e => {
+    const b = e.target.closest(".sv-tips-tg"), t = $("#svHint .sv-tips");
+    if (!b || !t) return;
+    t.hidden = !t.hidden;
+    b.setAttribute("aria-expanded", String(!t.hidden));
+    b.textContent = t.hidden ? "More ▾" : "Less ▴";
+  });
   const GRIP = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M3 12h18M12 3 9.5 5.5M12 3l2.5 2.5M12 21l-2.5-2.5M12 21l2.5-2.5M3 12l2.5-2.5M3 12l2.5 2.5M21 12l-2.5-2.5M21 12l-2.5 2.5"/></svg>`;
   let LY = null, drag = null, nudgeT = 0;
   const items = () => (job && job.el ? [...job.el.querySelectorAll(".mi-it")] : []);
@@ -440,7 +448,7 @@ WG.downloads = (function () {
     items().forEach(prepItem);
     w.append(c, job.el);
     $("#svStage").appendChild(w);
-    $("#svHint").textContent = "Drag the legend, title, scale bar, north arrow or credits by its ✥ handle to place it anywhere on the image; drag its corner square to change its width (with Shift: its size), or use A− A+ (and 1, 2, 3 columns for the legend). Click or tap a text to change it; empty it, or use its ×, to leave it out.";
+    $("#svHint").innerHTML = `Drag an item by its ✥ handle to move it; tap a text to change it. <button type="button" class="link sv-tips-tg" aria-expanded="false">More ▾</button><span class="sv-tips" hidden> Drag an item's corner square to change its width (with Shift: its size), or use A− A+ (and 1, 2, 3 columns for the legend). Empty a text, or use its ×, to leave it out. Fit shows the whole file in the box; Actual size shows it pixel for pixel.</span>`;
     panel();
     place();
     // shares still measured when the dialog opened: added to the legend when they come, the option then offered
