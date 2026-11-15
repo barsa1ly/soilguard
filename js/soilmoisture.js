@@ -45,8 +45,9 @@ WG.soilmoisture = (function () {
   const hasMap = (D, s) => D.spans.some(([a, b]) => s >= a && s <= b);
   const smapUrl = (k, date) => `${GIBS}${SMAP_L[k]}/default/${date || "default"}/GoogleMapsCompatible_Level6/{z}/{y}/{x}.png`;
   const tiles = (url, o) => L.tileLayer(url, { pane: "thematic", maxZoom: 19, tileSize: 256, ...o });
-  const smapSf = tiles(smapUrl("sf"), { maxNativeZoom: 6, attribution: "NASA GIBS; SMAP L4 (NASA GMAO)" });
-  const smapRz = tiles(smapUrl("rz"), { maxNativeZoom: 6, attribution: "NASA GIBS; SMAP L4 (NASA GMAO)" });
+  // in CORS mode (GIBS allows it): the time slider's GIF draws the tiles as they are, without asking for them twice
+  const smapSf = tiles(smapUrl("sf"), { maxNativeZoom: 6, crossOrigin: "anonymous", attribution: "NASA GIBS; SMAP L4 (NASA GMAO)" });
+  const smapRz = tiles(smapUrl("rz"), { maxNativeZoom: 6, crossOrigin: "anonymous", attribution: "NASA GIBS; SMAP L4 (NASA GMAO)" });
   // the chosen day; the latest is GIBS's "default" time, so nothing is asked before the layer is shown
   function smapSet() { smapSf.setUrl(smapUrl("sf", pick.date)); smapRz.setUrl(smapUrl("rz", pick.date)); redrawLegend(); }
 
@@ -147,7 +148,8 @@ WG.soilmoisture = (function () {
   // the day shown: the one chosen, else the latest GIBS holds (kept once read, so the latest chosen again is known at once)
   let smapLatest = null;
   const smapTag = () => pick.date || smapLatest || smapDays().then(D => (smapLatest = D.latest));
-  const smapShares = k => ({ id: `smap_${k}`, tiles: { url: () => smapUrl(k, pick.date), zmin: 2, zmax: 6 }, tag: smapTag, none: "No data (water, or not modelled)", full: true });
+  // the tiles of the day in the tag, not of pick.date when measured: the slider may have moved on by the time its turn comes
+  const smapShares = k => ({ id: `smap_${k}`, tiles: { url: t => smapUrl(k, /^\d{4}-\d\d-\d\d$/.test(t || "") ? t : pick.date), zmin: 2, zmax: 6 }, tag: smapTag, none: "No data (water, or not modelled)", full: true });
   const SHARES = { smap_sf: smapShares("sf"), smap_rz: smapShares("rz"), nwm: { id: "nwm", rest: { url: NWM_REST.replace(/\/$/, ""), id: 3 }, none: "No data", full: true },
     sport: { id: "sport", tiles: { url: `${NIDIS}nasa-sport-3km/{z}/{x}/{y}.png`, zmin: 2, zmax: 9, bounds: NIDIS_BOX }, none: "No data (water, or outside the model)" },
     // GRACE leaves near normal clear: its legend's clear row takes the uncoloured share
@@ -155,6 +157,25 @@ WG.soilmoisture = (function () {
   LAYERS.forEach(x => { if (SHARES[x.key]) x.shares = SHARES[x.key]; SM.layers.push(x); });
   const T = Wx.THEMES.find(t => t.key === "soilmaps");
   if (T) T.note = `${T.note} Soil moisture: NASA SMAP by day since 2015, the National Water Model's saturation, drought.gov's percentiles and the stations that measure it; the Soil moisture tab gives the models, SMAP and the stations by depth over any period since 1950, year against year.`;
+
+  /* the time slider (js/timeslider.js): SMAP's days since 31 March 2015 that GIBS holds, on both layers, the day the
+     legend's picker shows (the slider moves pick.date as the picker does; the legend, drawn again, shows the day) */
+  let smapD = null; // the days GIBS holds as epoch days: spans and the latest, once read
+  const smapRead = () => smapDays().then(D => (smapD = smapD && smapD.D === D ? smapD : { D, latest: dayOf(D.latest), spans: D.spans.map(([a, b]) => [dayOf(a), dayOf(b || a)]) }));
+  const smapFrames = (a, b) => { const out = []; (smapD ? smapD.spans : [[dayOf(SMAP0), b]]).forEach(([x, y]) => { for (let d = Math.max(a, x), e = Math.min(b, y); d <= e; d++) out.push(d); }); return out; };
+  // the day on the map; a promise that resolves when its tiles are in (at most 8 s), at once when nothing changed
+  function smapShow(day, layer) {
+    pick.date = smapD && day >= smapD.latest ? null : iso(day);
+    const was = layer._url, p = new Promise(r => { layer.once("load", r); setTimeout(r, 8000); });
+    smapSet();
+    return layer._url === was || !layer._map ? Promise.resolve() : p;
+  }
+  const smapDay = d => (smapD && d >= smapD.latest ? "default" : iso(d)); // the latest is GIBS's default time, as smapUrl asks for it
+  LAYERS.filter(x => x.key === "smap_sf" || x.key === "smap_rz").forEach(it => (WG.tsAdapters = WG.tsAdapters || []).push({
+    key: it.key.replace("_", "-"), item: it, label: it.key === "smap_sf" ? "Soil moisture 0–5 cm (SMAP L4)" : "Soil moisture 0–100 cm (SMAP L4)", start: dayOf(SMAP0), step: "day",
+    end: () => smapRead().then(x => x.latest), frames: smapFrames, show: d => smapShow(d, it.layer),
+    current: () => (pick.date ? dayOf(pick.date) : smapD ? smapD.latest : null), dateLabel: d => WG.wind.dayLabel(d),
+    prefetch: d => WG.timeslider.prefetch(it.layer, s => s.replace(/\/default\/[^/]+\/GoogleMapsCompatible/, `/default/${smapDay(d)}/GoogleMapsCompatible`)) }));
 
   // the day chosen under the SMAP legend
   function setDate(v) { pick.date = v || null; smapDays().then(D => { if (pick.date === D.latest) pick.date = null; }, () => {}).then(smapSet); }

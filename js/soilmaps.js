@@ -596,7 +596,7 @@ WG.soilmaps = (function () {
           <h4 class="sm-h">Each major component, depth-weighted</h4>${grid(cols, rowsHtml)}
           <p class="fine">Depth-weighted over the horizons with a value; each horizon is in Horizons › Chemistry below. Base saturation is the sum of bases over CEC at pH 7 (shown as 100+ in calcareous soils, where bases exceed it). "CaCl₂": the survey gives only pH in calcium chloride (common in New England), about 0.5 below water pH. "ECEC": effective CEC, given where CEC at pH 7 is not (acid soils). Classes: Soil Survey Manual (reaction, salinity); sodic at SAR 13 or ESP 15 or more, saline at EC 4 dS/m or more (U.S. Salinity Laboratory, Handbook 60). SAR is the sodium adsorption ratio of the saturated-paste extract, ESP the % of the CEC held by sodium. Rough guides: CEC under 5 in sand, 10–25 in loam, 25–40+ in clay or high-organic soils; organic matter under 1% low, 1–3% usual in cropland, over 4% high. USDA-NRCS SSURGO through Soil Data Access, representative values of the map unit's major components, public domain. ${SURVEY_NOTE}</p></div>`;
       if (hz) drawChem(hz, S);
-    }, e => { fail("smSurvey", "the soil survey's chemistry")(e); const hz = at("smHzChem"); if (hz) hz.innerHTML = `<p class="fine">Could not read the survey's chemistry: ${esc(e.message || String(e))}. <button type="button" class="link wx-retry" data-wx-retry>Reload</button></p>`; });
+    }, e => { fail("smSurvey", "the soil survey's chemistry")(e); const hz = at("smHzChem"); if (hz) hz.innerHTML = `<p class="fine">Could not read the survey's chemistry: ${esc(e.message || String(e))}. <button type="button" class="wx-retry" data-wx-retry title="Reload this part" aria-label="Reload this part"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/></svg></button></p>`; });
 
     /* the Forest Service's 30 m values: each property's column fills as its service answers */
     const R = {}, drawUsfs = () => {
@@ -717,7 +717,7 @@ WG.soilmaps = (function () {
     const tile = (id, v, s) => { const x = box(`so-${id}`), t = tiles.find(q => q[0] === id); if (!x || !t) return;
       x.innerHTML = `<span class="k"><span>${esc(t[1])}</span><span class="tag">${esc(t[2])}</span></span>${v === undefined ? `<span class="v"><span class="skeleton" style="width:55%"></span></span><span class="s">${s}</span>`
         : `<span class="v">${v}</span><span class="s">${s}</span>`}${v === undefined ? "" : `<span class="so-links"><button class="link so-go" data-goto="${goTo(t)}" data-so-go="${t[4]}">Details →</button>${id === "ph" ? hzLink("so-go") : ""}</span>`}`; };
-    const bad = e => `Could not read: ${esc(e.message || String(e))} <button type="button" class="link wx-retry" data-wx-retry>Reload</button>`, u = (v, unit) => `${v}${unit ? ` <small>${esc(unit)}</small>` : ""}`;
+    const bad = e => `Could not read: ${esc(e.message || String(e))} <button type="button" class="wx-retry" data-wx-retry title="Reload this part" aria-label="Reload this part"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/></svg></button>`, u = (v, unit) => `${v}${unit ? ` <small>${esc(unit)}</small>` : ""}`;
     function draw() {
       if (!live()) return;
       /* the survey: the headline, pH, salinity and sodicity, CEC and organic matter of the dominant component, 0-15 cm */

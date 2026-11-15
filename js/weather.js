@@ -18,7 +18,7 @@ WG.weather = (function () {
       note: "Statewide 1 km overlays from the soil survey, NRCS climatic factors and NASA POWER's 2001–2025 wind climatology. The panel shows Overview, Wind, Soil and Practices." },
     { key: "drought", name: "Drought", short: "Drought", title: "Drought: the U.S. Drought Monitor, and drought between years", icon: ICON.drought, layersTitle: "Drought",
       hint: "to see this week's drought and how drought has come and gone between years.",
-      note: "The Drought Monitor of this week or any week since 2000. The panel shows Drought: this week at the point, and drought indices between chosen years since 1980." },
+      note: "The Drought Monitor of this week or any week since 2000, and gridMET's drought indices (SPI, SPEI, EDDI, PDSI) on any 5-day step since 1980. The panel shows Drought: this week at the point, and drought indices between chosen years since 1980." },
   ];
   THEMES.forEach(t => { if (!t.layersNote) t.layersNote = ""; });
 
@@ -104,9 +104,9 @@ WG.weather = (function () {
       usdmLayer("usdm", "Drought Monitor, this week", 0, true),
       usdmLayer("usdm1", "Drought Monitor, a year ago", 52),
       usdmLayer("usdm5", "Drought Monitor, five years ago", 261),
-      { key: "usdmPast", name: "Drought Monitor, a past week", sub: "any week since January 2000: choose the year and month", layer: usdmPast,
+      { key: "usdmPast", name: "Drought Monitor, a past week", sub: "any week since January 2000: on the time slider at the map's foot", layer: usdmPast,
         note: `D0 abnormally dry, D1 moderate, D2 severe, D3 extreme, D4 exceptional drought. ${USDM_DATED} ${USDM_CREDIT}`,
-        legend: { title: "Drought Monitor, a past week", img: legendImg(USDM("usdm_current_wms"), "usdm_current") }, dateOf: () => TM.label("usdm").replace(/^Week of /, "") || null, // the week chosen on the bar
+        legend: { title: "Drought Monitor, a past week", img: legendImg(USDM("usdm_current_wms"), "usdm_current") }, dateOf: () => TM.label("usdm").replace(/^Week of /, "") || null, // the week chosen on the time slider or the Drought tab's charts
         shares: { id: "usdmPast", tag: pastWeek, url: (b, W, H, t) => usdmMapUrl(+t, b, W, H), classes: dmClasses, none: DM_NONE } },
       { key: "dro1", name: "Drought outlook, this month", sub: "NOAA Climate Prediction Center", layer: wms(DRO, "5", { attribution: "NOAA CPC" }), dateOf: droTo(1),
         note: "Where drought is expected to persist, improve, end or develop by the end of the month: NOAA Climate Prediction Center's monthly drought outlook, issued on the month's last day.",
@@ -161,7 +161,7 @@ WG.weather = (function () {
   }
   const siteLine = () => { const s = WG.state; return `${s.place ? `${s.place} · ` : ""}${s.site.lat.toFixed(4)}, ${s.site.lon.toFixed(4)}`; };
   const wait = what => `<div class="card"><p class="fine"><span class="skeleton" style="width:60%"></span></p><p class="fine">Reading ${esc(what)}…</p></div>`;
-  const failed = (what, e) => `<div class="card"><p class="fine">Could not read ${esc(what)}: ${esc(e.message || String(e))}. <button type="button" class="link wx-retry" data-wx-retry>Reload</button></p></div>`;
+  const failed = (what, e) => `<div class="card"><p class="fine">Could not read ${esc(what)}: ${esc(e.message || String(e))}. <button type="button" class="wx-retry" data-wx-retry title="Reload this part" aria-label="Reload this part"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/></svg></button></p></div>`;
   /* Reload on a part that could not be read: its tab is drawn again for this location. What was read is kept (once() and
      the keep cache), so only the failed parts are asked again; the Soil maps tabs draw each other, so all four are redrawn. */
   document.addEventListener("click", e => {
@@ -268,6 +268,149 @@ WG.weather = (function () {
   /* This week needs only the latest values, read on their own so that a row does not wait for a whole series: from the
      file server their chunk is the series' last, fetched once for both (js/h5range.js) */
   const metLatest = key => once(`driL:${key}`, () => metRead(key, true));
+
+  /* ---------- gridMET's drought indices as a map: any 5-day step since 1980 ----------
+     The University of Idaho's THREDDS server draws each index's grid for a date (its WMS, ncWMS 1.x, TIME=; a CORS
+     header on every answer). It is asked in 15 grey bands that fall on the classes' limits (COLORSCALERANGE and
+     NUMCOLORBANDS; wetter than D0 transparent, drier than the bands red), and each tile is drawn again here in the
+     Drought Monitor's colours, so the map, its legend and the panel's charts share one set of classes: SPI, SPEI and EDDI
+     by the Monitor's SPI ranges (DCLASS; gridMET turns EDDI's sign so that below 0 is dry, as its own categories say),
+     PDSI by gridMET's own PDSI categories (-1 to -5, which it aligns with the Monitor's). Its dates: days 5, 10 ... 365
+     of each year (73 a year) from 5 January 1980, the latest from the index's OPeNDAP header. When THREDDS does not
+     answer the map stays empty and its legend says so (the panel's charts then read the file server, which draws no
+     maps). The time slider (js/timeslider.js) steps it through WG.tsAdapters; the legend's % column measures each date. */
+  const GM_WMS = "https://thredds.northwestknowledge.net/thredds/wms/agg_met_", GM_DAY0 = Wd.epochDay(1980, 0, 5);
+  const GMI = [["spei30d", "SPEI, 30 days"], ["spei90d", "SPEI, 90 days"], ["spei180d", "SPEI, 180 days"], ["spei1y", "SPEI, 1 year"], ["spei2y", "SPEI, 2 years"], ["spei5y", "SPEI, 5 years"],
+    ["spi30d", "SPI, 30 days"], ["spi90d", "SPI, 90 days"], ["spi180d", "SPI, 180 days"], ["spi1y", "SPI, 1 year"], ["spi2y", "SPI, 2 years"],
+    ["eddi14d", "EDDI, 14 days"], ["eddi30d", "EDDI, 30 days"], ["eddi90d", "EDDI, 90 days"], ["eddi180d", "EDDI, 180 days"], ["eddi1y", "EDDI, 1 year"], ["pdsi", "PDSI, Palmer index"]];
+  const GM_N = 15, GM_GREY = [0, 17, 34, 51, 68, 85, 102, 119, 136, 153, 170, 187, 204, 221, 255]; // ncWMS's greyscale palette in 15 bands, as its legend and test images give it
+  const gmVar = ds => (ds === "pdsi" ? "daily_mean_palmer_drought_severity_index" : ds.replace(/\d.*$/, ""));
+  const gmLim = ds => (ds === "pdsi" ? [-5, -4, -3, -2, -1] : DCLASS.map(c => c[1])); // the upper limits of D4 ... D0
+  // bands 0.1 wide from -1.995 (SPI, SPEI, EDDI) or a third from -5.995 (PDSI): values come in hundredths, so none sits on a band's edge and each band lies in one class
+  const gmRange = ds => (ds === "pdsi" ? [-5.995, -0.995] : [-1.995, -0.495]);
+  // each band's class (0 D4 ... 4 D0) by its middle value, and each grey's class through the nearest band's grey
+  const gmLut = ds => {
+    const [a, b] = gmRange(ds), lim = gmLim(ds), cls = GM_GREY.map((_, k) => lim.findIndex(l => a + ((k + 0.5) * (b - a)) / GM_N <= l + 1e-9)), lut = new Int8Array(256);
+    for (let g = 0; g < 256; g++) { let k = 0; GM_GREY.forEach((x, j) => { if (Math.abs(x - g) < Math.abs(GM_GREY[k] - g)) k = j; }); lut[g] = cls[k]; }
+    return { cls, lut };
+  };
+  const gmParams = ds => ({ layers: gmVar(ds), styles: "boxfill/greyscale", colorscalerange: gmRange(ds).join(","), numcolorbands: GM_N, abovemaxcolor: "transparent", belowmincolor: "0xFF0000" });
+  const gmUrl = ds => `${GM_WMS}${ds}_1979_CurrentYear_CONUS.nc`;
+  let gmKey = "spei90d", gmDay = null, gmLast = null, gmLut0 = gmLut(gmKey), gmLeg = null; // the index on the map, its date (null: the latest), the latest known, the legend drawn last
+  // a tile: the grey image read (CORS) and drawn again in the classes' colours; a pixel under half opaque stays clear
+  const GmTiles = L.TileLayer.WMS.extend({
+    createTile(c, done) {
+      const cv = document.createElement("canvas"), s = this.getTileSize(), im = new Image(), lut = gmLut0.lut;
+      cv.width = s.x; cv.height = s.y;
+      im.crossOrigin = "anonymous";
+      im.onload = () => {
+        try {
+          const x = cv.getContext("2d", { willReadFrequently: true });
+          x.drawImage(im, 0, 0, s.x, s.y);
+          const D = x.getImageData(0, 0, s.x, s.y), p = D.data;
+          for (let i = 0; i < p.length; i += 4) {
+            const k = p[i + 3] < 128 ? -1 : p[i] > 200 && p[i + 1] < 80 ? 0 : lut[p[i + 1]]; // red: drier than the bands, D4
+            if (k < 0) { p[i + 3] = 0; continue; }
+            const rgb = DCLASS[k][4];
+            p[i] = rgb[0]; p[i + 1] = rgb[1]; p[i + 2] = rgb[2]; p[i + 3] = 255;
+          }
+          x.putImageData(D, 0, 0);
+          done(null, cv);
+        } catch (e) { done(e, cv); }
+      };
+      im.onerror = () => done(new Error("gridMET's map server did not answer"), cv);
+      im.src = this.getTileUrl(c);
+      return cv;
+    },
+  });
+  const gmLayer = new GmTiles(gmUrl(gmKey), { format: "image/png", transparent: true, version: "1.3.0", pane: "thematic", maxZoom: 19, maxNativeZoom: 10, bounds: L.latLngBounds([24.5, -125.5], [50, -66.5]), attribution: "gridMET Drought (University of Idaho)", ...gmParams(gmKey) });
+  // the k-th date (from 0): day 5(k mod 73 + 1) of 1980 + k div 73, a leap year's last on 30 December
+  const gmStep = k => Wd.epochDay(1980 + Math.floor(k / 73), 0, 5 * ((k % 73) + 1));
+  const gmEnd = (ds = gmKey) => metHead(ds).then(([dds]) => { const n = +((dds.match(/day = (\d+)\]/) || [])[1]); if (!(n > 0)) throw new Error(`no time axis in ${ds}`); const d = gmStep(n - 1); if (ds === gmKey) gmLast = d; return d; });
+  const yearOf = d => new Date(d * 864e5).getUTCFullYear();
+  const gmFrames = (a, b) => {
+    const out = [], top = Math.min(b, gmLast === null ? Infinity : gmLast);
+    for (let y = Math.max(1980, yearOf(a)); y <= yearOf(top); y++) for (let k = 1; k <= 73; k++) { const d = Wd.epochDay(y, 0, 5 * k); if (d >= a && d <= top) out.push(d); }
+    return out;
+  };
+  const gmName = () => (GMI.find(x => x[0] === gmKey) || GMI[1])[1];
+  const gmRows = ds => { const lim = gmLim(ds), f = v => v.toFixed(1); return DCLASS.map((c, i) => [c[3], `${c[0]} ${c[2]} (${i ? `${f(lim[i])} to ${f(lim[i - 1] + 0.1)}` : `${f(lim[0])} or less`})`]).reverse(); };
+  const GM_NOTE = { spei: "SPEI: rain less the evaporative demand over the window named, against the same window in other years.", spi: "SPI: rain over the window named, against the same window in other years.",
+    eddi: "EDDI: the evaporative demand (the air's thirst) over the window named, against other years; gridMET gives it the sign of the others, below 0 dry.", pdsi: "PDSI: the Palmer Drought Severity Index, a water balance of months." };
+  const gmNote = () => `${GM_NOTE[gmVar(gmKey).replace(/^daily.*/, "pdsi")]} The classes are the Drought Monitor's for ${gmKey === "pdsi" ? "the PDSI as gridMET classes it" : "SPI"}; the index is not the Drought Monitor, which weighs many. gridMET Drought (University of Idaho; Abatzoglou 2013), 4 km, every 5 days since 5 January 1980; the latest values are provisional. Choose the date on the time bar.`;
+  // the legend: the index's classes, the date in the title, a choice of index under it (as the soil maps' depths)
+  function gmDrawLegend(el, it, min, toggle) {
+    gmLeg = [el, it, min, toggle];
+    it.legend.title = `${gmName()} (gridMET)`; it.legend.rows = gmRows(gmKey); it.note = gmNote();
+    legend(el, it, min, toggle);
+    const h = el.querySelector("h5");
+    if (h) h.insertAdjacentHTML("afterend", `<div class="sm-ctl"><label>Index<select data-gm-idx>${GMI.map(([k, n]) => `<option value="${k}"${k === gmKey ? " selected" : ""}>${esc(n)}</option>`).join("")}</select></label></div>`);
+  }
+  const gmRedraw = () => { if (gmLeg && gmLeg[1].on && gmLeg[0].isConnected) gmDrawLegend(...gmLeg); };
+  const GM_ITEM = { key: "gridmet", name: "Drought index on a date (gridMET)", sub: "SPI, SPEI, EDDI or PDSI, 4 km: any 5-day step since 1980", layer: gmLayer, drawLegend: gmDrawLegend,
+    legend: { title: "SPEI, 90 days (gridMET)", rows: [] }, note: "",
+    dateOf: () => (gmDay !== null ? Wd.dayLabel(gmDay) : gmEnd().then(Wd.dayLabel)),
+    when: () => gmEnd().then(() => "", () => "gridMET's map server (THREDDS, University of Idaho) is not answering now: the map stays empty until it is back. The Drought Monitor's maps do not need it."),
+    // the date's image of the box in the same grey bands; its classes are the bands' greys (and the red beyond them)
+    shares: { id: "gridmet", tag: () => (gmDay !== null ? `${gmKey}|${Wd.isoDay(gmDay)}` : gmEnd().then(d => `${gmKey}|${Wd.isoDay(d)}`)), none: DM_NONE,
+      url: (b, W, H, t) => { const [ds0, d] = String(t).split("|"), ds = ds0 || gmKey; return `${gmUrl(ds)}?service=WMS&version=1.3.0&request=GetMap&${new URLSearchParams(gmParams(ds))}&crs=CRS:84&bbox=${b.join(",")}&width=${W}&height=${H}&format=image/png&transparent=true${d ? `&time=${d}T00:00:00.000Z` : ""}`; },
+      classes: (it, t) => { const ds = String(t || "").split("|")[0] || gmKey, { cls } = gmLut(ds); return gmRows(ds).map(([, label], j) => ({ label, colors: [...(j === 4 ? ["#ff0000"] : []), ...GM_GREY.filter((_, k) => cls[k] === 4 - j).map(g => `rgb(${g},${g},${g})`)] })); } } };
+  gmLayer.on("add", () => { gmEnd().catch(() => {}); });
+  // a date: the tiles asked again for it; resolves when they have come (or failed), or after 8 s
+  const gmShown = () => new Promise(res => {
+    if (!gmLayer._map) { res(); return; }
+    const fin = () => { clearTimeout(t); gmLayer.off("load", fin); res(); }, t = setTimeout(fin, 8000);
+    gmLayer.on("load", fin);
+  });
+  function gmShow(day) {
+    gmDay = day;
+    const p = gmShown();
+    gmLayer.setParams({ time: `${Wd.isoDay(day)}T00:00:00.000Z` });
+    gmRedraw();
+    return p;
+  }
+  let gmPicked = 0;
+  function gmPick(k) {
+    if (k === gmKey || !GMI.some(x => x[0] === k)) return;
+    const me = ++gmPicked;
+    // a date chosen on the slider is first held to the new index's latest (PDSI's can be days before SPEI's), so the map
+    // never asks for a date the index does not have; the time slider then reads the index's name and frames again
+    (gmDay === null ? Promise.resolve(null) : gmEnd(k).then(d => (gmDay === null ? null : Math.min(gmDay, d)), () => gmDay)).then(d => {
+      if (me !== gmPicked) return;
+      gmKey = k; gmLut0 = gmLut(k); gmLast = null;
+      if (d !== null) { gmDay = d; gmLayer.wmsParams.time = `${Wd.isoDay(d)}T00:00:00.000Z`; }
+      gmLayer.setUrl(gmUrl(k), true);
+      gmLayer.setParams(gmParams(k));
+      gmEnd().catch(() => {});
+      gmRedraw();
+      const T = WG.timeslider;
+      if (T && T.adapter && T.adapter.key === "gridmet") T.refresh();
+    });
+  }
+  /* the next frame's grey tiles asked for while this one shows, so a played index does not go blank between frames: each
+     tile is a canvas drawn from its image, which the slider's own prefetch (it reads the tiles' addresses) cannot see.
+     The images are asked for in the tiles' CORS mode and held here, so the browser hands them over when the layer asks */
+  const gmPre = new Map();
+  function gmPrefetch(day) {
+    if (!gmLayer._map || !gmLayer._tiles) return;
+    const P = gmLayer.wmsParams, t0 = P.time;
+    P.time = `${Wd.isoDay(day)}T00:00:00.000Z`;
+    try {
+      Object.values(gmLayer._tiles).forEach(t => {
+        const u = t.current && gmLayer.getTileUrl(t.coords);
+        if (!u || gmPre.has(u)) return;
+        const im = new Image();
+        im.crossOrigin = "anonymous"; im.src = u;
+        gmPre.set(u, im);
+        if (gmPre.size > 300) gmPre.delete(gmPre.keys().next().value);
+      });
+    } finally { if (t0 === undefined) delete P.time; else P.time = t0; }
+  }
+  document.addEventListener("change", e => { const s = e.target.closest && e.target.closest("[data-gm-idx]"); if (s) gmPick(s.value); });
+  layers.drought.splice(layers.drought.findIndex(x => x.key === "usdmPast") + 1, 0, GM_ITEM);
+  (WG.tsAdapters = WG.tsAdapters || []).push({ key: "gridmet", item: GM_ITEM, get label() { return `${gmName()} (gridMET)`; }, start: GM_DAY0, end: () => gmEnd(), step: "5day", frames: gmFrames, show: gmShow,
+    current: () => (gmDay !== null ? gmDay : gmLast), dateLabel: d => Wd.dayLabel(d), prefetch: gmPrefetch,
+    reset: () => { gmDay = null; delete gmLayer.wmsParams.time; gmLayer.redraw(); gmRedraw(); } }); // back to the latest (not in the contract: for a slider that closes)
   /* The Drought Monitor's class at a point (-1 none, 0 to 4 D0 to D4) on this week's map, or on the map of week d (its
      date, a Tuesday): MapServer's GetFeatureInfo on a box of ±0.0001°, 3 × 3 pixels of about 7 m. A wider box lets the
      query's tolerance reach the class next door, and the worse of the two was then taken (±0.01° did so in about one
@@ -459,7 +602,7 @@ WG.weather = (function () {
       let R;
       try {
         R = await usdmWeeks(lat, lon, usdmSpan, alive, (n, t) => { const x = alive() && at("drUsdmNote"); if (x) x.textContent = t ? `Reading the Drought Monitor at this point: ${n} of ${t} weeks (those read before come from this browser)…` : "From this browser…"; });
-      } catch (e) { if (alive() && (box = at("drUsdm"))) { box.innerHTML = top(esc(`The Drought Monitor could not be read: ${e.message || e}.`) + ` <button type="button" class="link wx-retry" data-wx-retry>Reload</button>`); wire(); } return; }
+      } catch (e) { if (alive() && (box = at("drUsdm"))) { box.innerHTML = top(esc(`The Drought Monitor could not be read: ${e.message || e}.`) + ` <button type="button" class="wx-retry" data-wx-retry title="Reload this part" aria-label="Reload this part"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/></svg></button>`); wire(); } return; }
       if (!alive() || !(box = at("drUsdm"))) return;
       const { days, dm } = R, n = dm.filter(v => v !== null).length, dry = dm.filter(v => v !== null && v >= 1).length, d0 = dm.filter(v => v === 0).length;
       const cls = v => DCLASS.find(c => c[0] === `D${v}`), col = v => (v === null || v < 0 ? "rgba(0,0,0,0)" : cls(v)[3]);

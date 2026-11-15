@@ -187,7 +187,9 @@
     nlcd: { name: "Land cover (NLCD 2021)", sub: "cropland, rangeland, shrubland…",
       layer: L.tileLayer.wms("https://www.mrlc.gov/geoserver/mrlc_display/wms", {
         layers: "NLCD_2021_Land_Cover_L48", format: "image/png", transparent: true, pane: "thematic", opacity: 0.6,
-        attribution: "NLCD / MRLC" }), on: false },
+        attribution: "NLCD / MRLC" }), on: false,
+      // its legend and how its classes are measured (js/landcover.js: NLCD 2021, or the Annual NLCD year chosen on the time bar), for WG.shares.forLegend
+      key: "nlcd", get legend() { return WG.landcover ? WG.landcover.ITEM.legend : null; }, get shares() { return WG.landcover ? WG.landcover.ITEM.shares : null; } },
     ssurgo: { name: "Soil map units (SSURGO)", sub: "polygon lines and map symbols, zoom 13+",
       layer: L.tileLayer.wms("https://SDMDataAccess.sc.egov.usda.gov/Spatial/SDM.wms", {
         layers: "mapunitpoly", format: "image/png", transparent: true, pane: "refs", minZoom: 13, maxZoom: 19, opacity: 0.85,
@@ -571,6 +573,18 @@
   let legendMin = window.matchMedia("(max-width: 767px)").matches;
   /* with the NLCD overlay on, its colour key (js/landcover.js) is added under whatever legend the theme has */
   const lcKey = () => { if (soilLayers.nlcd.on && WG.landcover) WG.landcover.legend($("#legend"), legendMin, () => { legendMin = !legendMin; renderLegend(); }); };
+  /* the land cover by year on the time bar (js/timeslider.js): Annual NLCD, a frame a year from 1985 (js/landcover.js);
+     NLCD 2021 stays on the map until a year is chosen, and comes back with reset */
+  {
+    const yr = d => new Date(d * 864e5).getUTCFullYear(), jan1 = y => Date.UTC(y, 0, 1) / 864e5, A = () => WG.landcover.annual, lay = soilLayers.nlcd.layer;
+    let ys = null;
+    const drawn = () => new Promise(res => { if (!lay._map) { res(); return; } const fin = () => { clearTimeout(t); lay.off("load", fin); res(); }, t = setTimeout(fin, 8000); lay.on("load", fin); });
+    const put = y => { const p = drawn(); A().set(y, lay); lcKey(); return p; };
+    (WG.tsAdapters = WG.tsAdapters || []).push({ key: "nlcd", item: soilLayers.nlcd, label: "Land cover (Annual NLCD)", start: jan1(1985), step: "year",
+      end: () => A().years().then(l => { ys = l; return jan1(Math.max(...l)); }),
+      frames: (a, b) => (ys || Array.from({ length: new Date().getUTCFullYear() - 1985 }, (_, k) => 1985 + k)).map(jan1).filter(d => d >= a && d <= b),
+      show: d => put(yr(d)), current: () => jan1(A().year() || 2021), dateLabel: d => String(yr(d)), reset: () => put(null) });
+  }
   function renderLegend() {
     drawBaseLegend();
     lcKey();

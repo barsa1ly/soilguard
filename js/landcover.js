@@ -138,7 +138,31 @@ WG.landcover = (function () {
       if (!have.length) throw new Error("no shares for the states on the map");
       return { km2: CLASSES.map((_, i) => have.reduce((s, r) => s + d.states[r.code].km2[i], 0)), note: "NLCD 2021 Land Cover (MRLC), its 30 m cells counted inside each state's outline (equal area), pre-built." };
     }));
-  const ITEM = { key: "nlcd", name: "Land cover (NLCD 2021)", legend: { rows: CLASSES.map(c => [c[2], c[1]]) }, shares: { id: "nlcd", exact, none: null } };
+  /* ---------- land cover by year: Annual NLCD (USGS), 1985 on ----------
+     USGS's Annual NLCD (Collection 1) maps every year from 1985 in NLCD 2021's 16 classes and colours, drawn by USGS
+     EROS's GeoServer as one WMS layer with a TIME dimension (a year each; a CORS header on every answer). The overlay
+     shows NLCD 2021 (MRLC) until a year is chosen on the time bar (js/timeslider.js, through app.js's adapter); then
+     that year, the legend's % column measured from that year's image of the states or your boundary (each pixel's
+     colour, js/shares.js), as there are no counts of it made in advance. The years: the WMS capabilities' TIME list. */
+  const ANNUAL = "https://dmsdata.cr.usgs.gov/geoserver/mrlc_Land-Cover-Native_conus_year_data/wms", ANNUAL_LAYER = "Land-Cover-Native_conus_year_data";
+  let year = null, yearsP = null; // the Annual NLCD year on the map (null: NLCD 2021)
+  const years = () => yearsP || (yearsP = WG.util.fetchText(`${ANNUAL}?service=WMS&version=1.3.0&request=GetCapabilities`, 60000).then(t => {
+    const m = /<Dimension name="time"[^>]*>([^<]+)</.exec(t), ys = m ? m[1].split(",").map(s => parseInt(s, 10)).filter(Number.isFinite) : [];
+    if (!ys.length) throw new Error("no years in Annual NLCD's capabilities");
+    return ys;
+  }).catch(e => { yearsP = null; throw e; }));
+  // the overlay (app.js's L.tileLayer.wms) to a year, or back to NLCD 2021 (null): its own address and layer are kept on it the first time
+  function setYear(y, layer) {
+    if (!layer._lc21) layer._lc21 = { url: layer._url, layers: layer.wmsParams.layers };
+    year = y;
+    if (y === null) { delete layer.wmsParams.time; layer.setUrl(layer._lc21.url, true); layer.setParams({ layers: layer._lc21.layers }); }
+    else { layer.setUrl(ANNUAL, true); layer.setParams({ layers: ANNUAL_LAYER, time: `${y}-01-01` }); }
+  }
+  const SH21 = { id: "nlcd", exact, none: null };
+  const SHY = { id: "nlcd-annual", tag: () => String(year), none: "No data",
+    url: (b, W, H, t) => `${ANNUAL}?service=WMS&version=1.3.0&request=GetMap&layers=${ANNUAL_LAYER}&styles=&crs=EPSG:4326&bbox=${b[1]},${b[0]},${b[3]},${b[2]}&width=${W}&height=${H}&format=image/png&transparent=true&time=${t}-01-01` };
+  const tagOf = () => (year === null ? "NLCD 2021" : `Annual NLCD ${year}`);
+  const ITEM = { key: "nlcd", get name() { return `Land cover (${tagOf()})`; }, legend: { rows: CLASSES.map(c => [c[2], c[1]]) }, get shares() { return year === null ? SH21 : SHY; } };
 
   /* ---------- the map legend: the classes' colours, and the way to their shares ----------
      Added under the theme's legend (app.js renderLegend); alone, it has its own hide button. Its link opens Soil maps › Soil
@@ -149,7 +173,7 @@ WG.landcover = (function () {
     el.hidden = false;
     el.classList.toggle("min", min);
     host.className = "lc";
-    host.innerHTML = `<h5><span>Land cover <small>NLCD 2021</small></span>${alone ? `<button class="lcMin">${min ? "show" : "hide"}</button>` : ""}</h5>
+    host.innerHTML = `<h5><span>Land cover <small>${tagOf()}</small></span>${alone ? `<button class="lcMin">${min ? "show" : "hide"}</button>` : ""}</h5>
       <div class="rows lc-key">${CLASSES.map(c => `<div class="row"><i class="sw" style="background:${c[2]}"></i><span>${esc(c[1]).replace(/\//g, "/<wbr>")}</span></div>`).join("")}</div>
       <p class="lnote"><button class="link lc-go" data-lc-go>Shares and curve numbers: Soil maps › Soil</button></p>`;
     el.appendChild(host);
@@ -211,5 +235,5 @@ WG.landcover = (function () {
   }
   // a boundary drawn, uploaded or cleared (js/area.js), or other states on the map (app.js): the card counts them
   ["wg-boundary", "wg-states"].forEach(ev => document.addEventListener(ev, drawCard));
-  return { legend, card, CLASSES, albers, readTiff, count, boundaryShares, classAt, exact, ITEM };
+  return { legend, card, CLASSES, albers, readTiff, count, boundaryShares, classAt, exact, ITEM, annual: { years, set: setYear, year: () => year, URL: ANNUAL } };
 })();

@@ -26,9 +26,10 @@ This file lists every calculation the app makes, with its source. `docs/RESEARCH
 | Soil profile, WEG, I, T, MLRA, C | USDA-NRCS SSURGO | Soil Data Access, direct | 1:12k–1:24k map units | none |
 | Elevation, slope, aspect | USGS 3DEP | Elevation Point Query Service, direct | 1–10 m | Copernicus GLO-90 via Open-Meteo |
 | Land cover | USGS/MRLC NLCD 2021 | MRLC WMS, direct (MRLC currently refuses browser requests) | 30 m | Sentinel-2 10 m land cover, latest year (Impact Observatory, Microsoft, Esri) |
+| Land cover by year (time slider) | USGS Annual NLCD, Collection 1 | USGS EROS GeoServer WMS, a year as `TIME`, direct (§16) | 30 m · yearly, 1985 on | NLCD 2021 stays on the map |
 | Land cover shares: % and km² (Soil maps › Soil, Land cover card) | USGS/MRLC NLCD 2021 (16 classes, CONUS) | Statewide: counted in advance by `tools/build_landcover.py` from the MRLC WCS 2.0.1 inside each state's outline (EPSG:5070, equal area) into `data/states/landcover.json`. A drawn or uploaded boundary: counted live in the browser from the same WCS (uncompressed GeoTIFF of its box, cells kept when their centre is inside the boundary) | States: 30 m for small states up to 270 m (about 25 million samples each, nearest neighbour); boundary: 30 m, coarser above 3.6 million cells | The state's shares, with a note |
 | Statewide maps | SSURGO via UC Davis SoilWeb; NRCS county or survey-area C (estimated where SSURGO gives a county no usable value); NASA POWER climatology | pre-built (`tools/`) | 1 km | — |
-| Live map: drought | U.S. Drought Monitor (NDMC, USDA, NOAA, NASA); NOAA CPC drought outlooks | NDMC MapServer WMS and NWS map services, direct (§8) | weekly, 2000 on | — |
+| Live map: drought | U.S. Drought Monitor (NDMC, USDA, NOAA, NASA); NOAA CPC drought outlooks; gridMET Drought, University of Idaho | NDMC MapServer WMS, NWS map services and gridMET's THREDDS WMS, direct (§8) | weekly, 2000 on; 4 km every 5 days, 1980 on | gridMET's map stays empty, and its legend says so |
 | Drought tab | U.S. Drought Monitor at the point; Esri Living Atlas copy of its weekly maps (US_Drought_Intensity_v1); gridMET Drought (SPI, SPEI, PDSI), University of Idaho | NDMC WMS GetFeatureInfo; Living Atlas FeatureServer point query; THREDDS OPeNDAP, direct | weekly 2000 on; 4 km, every 5 days, 1980 on | Living Atlas: NDMC's dated maps; gridMET Drought: the same NetCDF-4 files on the University of Idaho's file server, read in place by byte ranges, only the chunks that hold the cell, straight away while THREDDS is remembered down; else the tab says why |
 | Drought Monitor in downloads | U.S. Drought Monitor (NDMC, USDA, NOAA, NASA); Esri Living Atlas | data sheet: the point's weekly classes as above; area grid: NDMC WMS GetMap PNGs read by colour (§8) | weekly, 2000 on; about 0.001° | a week not read is left out and named |
 | Soil maps: pH, CEC, organic matter | USDA Forest Service gNATSGO 2022 (SSURGO rasterized), CC0 | imagery.geoplatform.gov image services (exportImage, getSamples), direct | 30 m; 0–5, 5–25, 25–50, 50–100 cm | the layer or value is left blank |
@@ -431,8 +432,9 @@ The sources, layer by layer:
   - National Water Model: `idp_validtime` of layer 2 of `https://mapservices.weather.noaa.gov/raster/rest/services/obs/NWM_Land_Analysis/MapServer`.
   - SPoRT-LIS and GRACE-DA: the `date` (YYYYMMDD) in each product's NIDIS `info.json`.
 
-**A past week (map).** The Drought theme has a layer *a past week*; a bar on the map chooses the week, steps back and forward, and plays the weeks one after another (one request at a time, each map shown for about 1.2 s once drawn). Code: `js/timemap.js`.
-- *Drought Monitor:* any week since 4 January 2000 (`usdm_YYYYMMDD_wms.map`, layer `usdmYYYYMMDD`, the Tuesday the map is valid for). A chosen year and month show the month's last week; a date shows the week on or before it: d − ((d − 4 Jan 2000) mod 7). Clicking the Drought tab's history or year-against-year chart shows that week.
+**A past week or date (map).** The Drought theme has a layer *a past week* and a layer *a drought index on a date*. The time slider at the map's foot (§16) chooses the frame, steps through the frames, plays them one at a time and saves them as a GIF. Code: `js/timemap.js`, `js/timeslider.js`.
+- *Drought Monitor:* any week since 4 January 2000 (`usdm_YYYYMMDD_wms.map`, layer `usdmYYYYMMDD`, the Tuesday the map is valid for). The slider's frames are its Tuesdays; a date sent from a tab shows the week on or before it: d − ((d − 4 Jan 2000) mod 7). Clicking the Drought tab's history or year-against-year chart shows that week.
+- *Drought index on a date (gridMET):* SPEI over 30, 90 or 180 days or 1, 2 or 5 years; SPI over 30, 90 or 180 days or 1 or 2 years; EDDI over 14, 30, 90 or 180 days or 1 year; or the Palmer index (PDSI), chosen in the legend. 4 km, one date every 5 days (days 5, 10 … 365 of each year, a leap year's last on 30 December) since 5 January 1980. The University of Idaho's THREDDS server draws the index's grid for a date (ncWMS GetMap with `TIME=`) in 15 grey bands whose edges fall on the classes' limits; each tile is read back (the server sends a CORS header) and drawn again in the Drought Monitor's colours, so the map, its legend and the Drought tab's charts share one set of classes. SPI, SPEI and EDDI take the Monitor's SPI ranges (D0 −0.5 to −0.7, D1 −0.8 to −1.2, D2 −1.3 to −1.5, D3 −1.6 to −1.9, D4 −2.0 or less; gridMET gives EDDI the same sign, below 0 dry), and PDSI gridMET's own PDSI categories (D0 −1.0 to −1.9 up to D4 −5.0 or less); wetter than D0 is not coloured. The latest date is read from the index's OPeNDAP header. Another index keeps the date on show unless it ends earlier (PDSI can lag the others by days), when its latest is shown instead. When THREDDS does not answer the map stays empty and its legend says so. The index is one measure; the Drought Monitor weighs many.
 
 
 **Drought tab.**
@@ -877,11 +879,15 @@ A last row gives the share the map leaves uncoloured, under a name that says wha
 
 The land cover's shares (NLCD 2021) are not measured from a picture: they are its 30 m cells counted inside the state's outline (pre-built, equal-area) or inside your boundary from MRLC's WCS, the same numbers as the Soil tab's Land cover card. That key has no uncoloured row.
 
+A year of Annual NLCD (chosen on the time slider, §16) has no counts made in advance: its shares are measured from that year's picture (USGS's GetMap) like the other maps, each pixel matched to the 16 classes' colours, with "No data" as the uncoloured row. gridMET's drought index is measured from the same grey-band picture its tiles are drawn from, each grey standing for its class (§8).
+
 **The uncoloured row's names.**
 
 | Layer | The uncoloured row |
 |---|---|
 | Drought Monitor (this week, a year or five years ago, a past week); monthly and seasonal drought outlooks | Data not available / no drought (these maps leave uncoloured both land in no drought and any place or week they do not cover) |
+| Drought index on a date (gridMET) | Data not available / no drought (wetter than D0, or no data) |
+| Land cover, a year of Annual NLCD | No data |
 | Wind erosion susceptibility; Wind Erodibility Group; soil pH, CEC, organic matter, salinity, sodicity | No data (water, built-up or not surveyed) |
 | Climatic factor C; spring wind; USGS total elements; National Water Model saturation | No data |
 | SoilGrids total N | No data (water, built-up) |
@@ -899,6 +905,48 @@ The land cover's shares (NLCD 2021) are not measured from a picture: they are it
 - Colours the legend does not list (smoothed edges, labels) are left out of the denominator, as above; the tooltip gives their share.
 - Ground the producer does not cover (water, built-up land, outside a model's domain) is in the uncoloured row, not in any class.
 - A legend that gives no colours to match cannot be measured, and the head says so.
+
+## 16. The time slider: maps through time
+
+**What it is.** Whenever the map on show has dates, a bar runs along the foot of the map. Its track spans every frame the map's source keeps, from the first to the latest, with a tick each year and the years written where they fit. Resting the pointer on the track shows the date of the frame under it (its week, day or year, so the months of a year can be read off by moving along it); dragging moves the map, which asks for a frame once the hand rests for 0.16 s, so a fast drag does not send a request for every frame it passes. The frame's date is written on the bar, the map's name under it. With two dated maps on (the land cover over a drought map) it follows the one turned on last.
+
+**Which maps have it.** Every map in the app was checked for a dated archive that is free and answers a browser. Those that have one join the slider by registering their frames (`WG.tsAdapters`: the first day, a promise of the latest, the frames between two days, how to show a day and what to call it):
+
+| Map (theme) | One frame | From | To | Read from |
+|---|---|---|---|---|
+| Drought Monitor: this week, a year ago, five years ago, a past week (Drought) | a week: the Tuesday the map is valid for | 4 January 2000 | this week's map (out each Thursday) | NDMC's MapServer WMS, one map file a week (§8) |
+| Drought index on a date: SPI, SPEI, EDDI or PDSI (Drought) | 5 days: days 5, 10 … 365 of each year | 5 January 1980 | the index's latest date, from its OPeNDAP header (PDSI's can be days before the others') | gridMET's THREDDS WMS, `TIME=` (§8) |
+| Soil moisture 0–5 cm and 0–100 cm, SMAP L4 (Soil maps) | a day | 31 March 2015 | the latest day NASA GIBS holds; days it lacks are left out | GIBS WMTS and its list of days (§13) |
+| Land cover by year, Annual NLCD (the Land cover overlay, in any theme) | a year | 1985 | the last year in USGS's list (2025 in November 2026) | USGS EROS GeoServer WMS, `TIME=` |
+
+Maps without a slider, and why:
+
+| Map | Why not |
+|---|---|
+| Drought outlooks, this month and this season | NOAA CPC's map service holds only the current outlook. |
+| National Water Model saturation; NASA SPoRT-LIS and GRACE-DA percentiles (Soil maps) | Their free services give only the latest hour, day or week (drought.gov's tiles carry no date). |
+| Wind erosion overlays, soil property maps, watersheds and streams, soil map units, base maps and reference layers | One survey or a long-term climate: they have no dates. |
+
+NLCD 2021 stays the land cover overlay until a year is chosen on the slider. Annual NLCD (USGS, Collection 1) maps every year from 1985 in the same 16 classes and colours; its legend then names the year ("Annual NLCD 1990") and its % column is measured from that year's picture (§15). Turning a map off puts back its own default for the next time it is turned on: gridMET's latest date, NLCD 2021.
+
+**Playing.** Play loops over a range of frames, starting after the frame on show. Each frame is asked for and waited for until its picture has loaded (up to 8 s, never more than 45 s), then held for the chosen speed: Fast 0.25 s, Normal 0.6 s (the default), Slow 1.2 s or Slower 2.5 s. One frame is in flight at a time, so none is skipped while it loads and no burst of requests is sent; while a frame shows, the next one's tiles are asked for ahead (Drought Monitor, gridMET, SMAP), so it usually appears at once. The From and To dates set the range (each snaps to the nearest frame) and the bar counts its frames; at first it is the last 52 weeks, 30 days, 36 five-day steps (about six months) or 20 years of frames, and Reset brings that back. Each map keeps its own range while the page is open. ‹ and › step one frame, as do the arrow keys; Page Up and Page Down move about a year; Home and End go to the first and the latest frame; Space plays or pauses while the slider has the focus. The map's own controls (SMAP's day in the legend, the Drought tab's charts) move the slider with them. On a phone, or a map under 1,024 px wide, the range, speed and GIF sit behind the ⋯ button, and the legend moves up under the theme bar.
+
+**The legend.** Each frame gives the legend its date (in the title), and the % column is measured for that frame and kept (§15), so frames played again show their numbers at once.
+
+**The GIF.** Download GIF saves the range as an animated GIF, made in the browser and never uploaded:
+- *Frames:* at most 120; a longer range takes one frame in every k (k = its frames ÷ 120, rounded up), and the message says so. Each frame shows for the chosen speed, the last for twice as long, and the GIF loops.
+- *Size:* the map's size on the screen, scaled down to 640 pixels wide at most.
+- *Each frame:* the map as the map image draws it (§14: base, overlay, outline), with the frame's date and the map's name at the top left, a compact legend at the bottom left, and the data's credit along the foot. The legend gives each class's % when it is measured within 8 s; a frame whose numbers take longer repeats the last ones under the head "% not measured for this frame". A colour scale (SMAP) is drawn as a bar with its ticks.
+- *Encoding:* gifenc 1.0.3 (MIT), loaded from jsdelivr the first time a GIF is made; each frame has its own palette of up to 256 colours.
+- *While it is made:* the map is held still (no panning or zooming), the bar shows a progress bar and Cancel, and afterwards the frame on show before comes back. The file is named after the app, the map and the range: `soilguard-drought-monitor-2026-10-20_to_2026-11-10.gif`.
+
+**Limits.**
+- A frame is drawn only once its map is in, so a GIF takes about as long as playing its range: 3 of gridMET's dates took 6.9 s in a test, and Drought Monitor weeks already seen come at once.
+- A layer whose server refuses the browser a copy of its pictures is left out of the frames, as in the map image (§14).
+- With 256 colours a frame, a smooth colour scale (SMAP) comes out slightly banded.
+- When a map's latest date cannot be read (its server is down), its frames run to today, the bar adds "latest date not read", and the last frames may be empty.
+
+Code: `js/timeslider.js`; each map's frames in `js/timemap.js` (Drought Monitor), `js/weather.js` (gridMET), `js/soilmoisture.js` (SMAP), and `js/app.js` with `js/landcover.js` (Annual NLCD).
 
 ## Known gaps
 

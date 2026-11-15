@@ -22,9 +22,11 @@
   const strip = h => (h ? new DOMParser().parseFromString(String(h), "text/html").body.textContent.trim() : ""); // a credit's text, without its links
 
   /* ---------- pictures: a copy the canvas may keep ---------- */
-  /* same-origin, data: and blob: pictures are drawn as they are; another server's is asked for again with CORS, and once
-     more under a new address when that fails (a copy kept from the plain request may lack the header); a server that
-     refuses both is not asked again for the rest of its pictures */
+  // whether a picture can go into a canvas that is read back: tried on a new 1-pixel canvas (a tainted one stays tainted)
+  const clean = i => { try { const c = document.createElement("canvas"), x = c.getContext("2d"); c.width = c.height = 1; x.drawImage(i, 0, 0, 1, 1); x.getImageData(0, 0, 1, 1); return true; } catch (e) { return false; } };
+  /* same-origin, data: and blob: pictures are drawn as they are, and so is one its layer already asked for in CORS mode;
+     another server's is asked for again with CORS, and once more under a new address when that fails (a copy kept from
+     the plain request may lack the header); a server that refuses both is not asked again for the rest of its pictures */
   function copier() {
     const got = new Map(), bad = new Set();
     const load = src => new Promise(res => {
@@ -39,6 +41,8 @@
       let u;
       try { u = new URL(src, location.href); } catch (e) { return Promise.resolve(null); }
       if (u.protocol === "data:" || u.protocol === "blob:" || u.origin === location.origin) return Promise.resolve(el);
+      // a picture the layer already asked for in CORS mode and got (js/timemap.js, js/soilmoisture.js) is drawn as it is
+      if (el.crossOrigin !== null && el.crossOrigin !== undefined && el.complete && el.naturalWidth && clean(el)) return Promise.resolve(el);
       if (!got.has(src)) got.set(src, (async () => {
         if (bad.has(u.host)) return null;
         const i = (await load(src)) || (bad.has(u.host) ? null : await load(`${src}${src.includes("?") ? "&" : "?"}_cors=1`));
@@ -531,5 +535,20 @@
     } finally { j.release(); }
   }
 
-  WG.mapimage = { save, make, prepare };
+  /* the map alone at o.k pixels per CSS pixel (1 by default), drawn as for the file: a frame of the time slider's GIF
+     (js/timeslider.js). o.copy: one copier for all the frames, so a picture already copied, or a server that refuses its
+     pictures, is not asked again. Resolves to { canvas, W, H (the map's CSS size), miss (layers left out) } */
+  async function still(o = {}) {
+    const map = WG.map, el = map.getContainer();
+    await settle(map);
+    const b = el.getBoundingClientRect(), W = Math.round(b.width), H = Math.round(b.height), miss = new Set();
+    if (W < 20 || H < 20) throw new Error("the map is not on the screen");
+    const g = surface(W, H, o.k || 1), skip = new Set([map.getPane("tooltipPane"), map.getPane("popupPane")].filter(Boolean));
+    g.fillStyle = getComputedStyle(el).backgroundColor || "#ffffff";
+    g.fillRect(0, 0, W, H);
+    await paint(g, map.getPane("mapPane"), 1, { ox: b.left, oy: b.top, W, H, k: o.k || 1, copy: o.copy || copier(), miss, nameOf: namer(map, []), skip });
+    return { canvas: g.canvas, W, H, miss: [...miss] };
+  }
+
+  WG.mapimage = { save, make, prepare, still, copier };
 })();

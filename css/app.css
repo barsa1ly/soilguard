@@ -1419,3 +1419,87 @@ table.grid.sm-table small.bs-mean { display: block; font-weight: 400; white-spac
 /* the line saying the streets are being looked up turns a small ring after its words (the app's spin) */
 .search-results button.sr-wait::after { content: ""; display: inline-block; width: 9px; height: 9px; margin-left: 7px; vertical-align: -1px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .search-results button.sr-wait::after { animation: none; } }
+
+/* time slider */
+/* the time slider (js/timeslider.js): a bar along the foot of the map while a dated map is on show, its options (range,
+   speed, GIF) in its row on wide screens and behind its ⋯ button on phones; the legend, the past-date bar and the zoom
+   buttons move up clear of it (--ts-h: its height, kept by the script) */
+.ts-bar { position: absolute; z-index: 1000; left: 12px; right: 12px; bottom: 28px; max-width: 1000px; margin: 0 auto; background: rgba(255, 255, 255, .96); border-radius: 12px; box-shadow: var(--shadow); padding: 6px 10px 0; font-size: 12px; color: var(--ink); }
+.ts-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.ts-btns { display: flex; gap: 4px; }
+.ts-b { width: 30px; height: 30px; display: grid; place-items: center; flex: none; padding: 0; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--ink); cursor: pointer; }
+.ts-b:disabled { opacity: .4; cursor: default; }
+.ts-b svg { width: 16px; height: 16px; fill: currentColor; stroke: none; }
+.ts-b svg.st { fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.ts-play { background: var(--accent); border-color: var(--accent); color: #fff; }
+.ts-now { flex: 1 1 130px; min-width: 0; display: flex; flex-direction: column; line-height: 1.2; }
+.ts-now b { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ts-now small { color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ts-bar.loading .ts-now b::after { content: ""; display: inline-block; width: 9px; height: 9px; margin-left: 6px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; vertical-align: -1px; animation: spin .8s linear infinite; }
+.ts-more { display: none; }
+.ts-opts { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.ts-opts label { display: flex; align-items: center; gap: 4px; color: var(--muted); font-size: 11px; }
+.ts-opts input, .ts-opts select { height: 28px; border: 1px solid var(--line); border-radius: 7px; padding: 0 4px; font: inherit; font-size: 12px; background: var(--surface); color: var(--ink); min-width: 0; }
+.ts-n { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.ts-opts .link { font-size: 11px; }
+.ts-gif { height: 28px; padding: 0 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--ink); font: inherit; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.ts-gif:hover, .ts-b:not(:disabled):hover { border-color: var(--accent); }
+.ts-track { position: relative; height: 36px; margin-top: 2px; }
+.ts-rail { position: absolute; left: 8px; right: 8px; top: 10px; height: 4px; border-radius: 2px; background: #d9d5c9; }
+.ts-band { position: absolute; top: -1px; bottom: -1px; border-radius: 3px; background: var(--accent); opacity: .55; }
+.ts-ticks { position: absolute; left: 8px; right: 8px; top: 16px; height: 18px; pointer-events: none; }
+.ts-ticks i { position: absolute; top: 0; width: 1px; height: 4px; background: #b3afa1; }
+.ts-ticks i.y { height: 6px; background: #77736a; }
+.ts-ticks span { position: absolute; top: 6px; transform: translateX(-50%); font-size: 10px; line-height: 12px; color: var(--muted); white-space: nowrap; }
+.ts-ticks .e0 { left: 0; transform: none; }
+.ts-ticks .e1 { right: 0; transform: none; }
+.ts-track input[type=range] { position: absolute; left: 0; top: 0; width: 100%; height: 24px; margin: 0; padding: 0; background: transparent; -webkit-appearance: none; appearance: none; cursor: pointer; touch-action: none; }
+.ts-track input[type=range]:focus { outline: none; }
+.ts-track input[type=range]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 6px; }
+.ts-track input[type=range]::-webkit-slider-runnable-track { height: 24px; background: transparent; border: 0; }
+.ts-track input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; box-sizing: border-box; width: 16px; height: 16px; margin-top: 4px; border-radius: 50%; border: 2px solid #fff; background: var(--ink); box-shadow: 0 1px 3px rgba(0, 0, 0, .4); }
+.ts-track input[type=range]::-moz-range-track { height: 24px; background: transparent; border: 0; }
+.ts-track input[type=range]::-moz-range-thumb { box-sizing: border-box; width: 16px; height: 16px; border-radius: 50%; border: 2px solid #fff; background: var(--ink); box-shadow: 0 1px 3px rgba(0, 0, 0, .4); }
+.ts-tip { position: absolute; bottom: 28px; transform: translateX(-50%); padding: 3px 7px; border-radius: 6px; background: #1c2420; color: #fff; font-size: 11px; white-space: nowrap; pointer-events: none; }
+.ts-job { display: flex; align-items: center; gap: 8px; padding: 0 0 6px; font-size: 11px; color: var(--muted); }
+.ts-job .ts-jt { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 60%; }
+.ts-prog { flex: 1; min-width: 60px; height: 6px; border-radius: 3px; background: #e6e2d6; overflow: hidden; }
+.ts-prog i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+.ts-bar.busy .ts-row, .ts-bar.busy .ts-track { pointer-events: none; opacity: .55; }
+.map-pane.ts-on .hint { display: none; }
+.map-pane.ts-on .leaflet-bottom.leaflet-right .leaflet-control:not(.leaflet-control-attribution) { transform: translateY(calc(-1 * var(--ts-h, 0px) - 6px)); }
+@media (min-width: 768px) {
+  .app .map-pane.ts-on .legend { bottom: calc(var(--ts-h, 0px) + 36px); max-height: calc(100% - 156px - var(--ts-h, 0px)); }
+  .app .map-pane.ts-on:has(> .time-bar:not([hidden])) .legend { max-height: calc(100% - 308px - var(--ts-h, 0px)); }
+}
+/* a phone or a narrow map (a tablet with the results open): the options behind the ⋯ button, so the bar stays two rows */
+@media (max-width: 1023px) {
+  .ts-more { display: grid; }
+  .ts-opts { display: none; flex-basis: 100%; padding: 2px 0; }
+  .ts-bar.open .ts-opts { display: flex; }
+}
+@media (max-width: 767px) {
+  .ts-bar { left: 10px; right: 10px; bottom: max(10px, env(safe-area-inset-bottom)); padding: 4px 8px 0; }
+  .app.has-site .ts-bar { bottom: 28px; } /* the results' bar or panel is 16 px into the map */
+  .app .map-pane.ts-on .legend { top: calc(max(10px, env(safe-area-inset-top)) + 100px); bottom: auto; max-width: calc(100% - 76px); } /* under the theme bar, clear of the map tools */
+  .app .map-pane.ts-on .time-bar { bottom: calc(max(10px, env(safe-area-inset-bottom)) + var(--ts-h, 0px) + 8px); }
+  .app.has-site .map-pane.ts-on .time-bar { bottom: calc(36px + var(--ts-h, 0px)); }
+}
+
+/* reload a part that could not be read: a round icon at the top right of its message (weather.js failed() and the others) */
+.card :is(p, div, span):has(> .wx-retry), .stat .s:has(> .wx-retry) { position: relative; display: block; padding-right: 36px; min-height: 30px; }
+.wx-retry { position: absolute; top: -2px; right: 0; display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0;
+  border: 1px solid var(--line); border-radius: 50%; background: var(--surface); color: var(--ink-2); cursor: pointer; box-shadow: var(--shadow); }
+.wx-retry:hover, .wx-retry:focus-visible { color: var(--accent); border-color: var(--accent); }
+.wx-retry svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* the hint at the TOP of the map, one short line ("Tap anywhere in Texas"): under the search and theme bars, clear of the
+   map buttons on the right; gone once a point is chosen, while the area tool or a time slider is on */
+.hint { top: calc(max(12px, env(safe-area-inset-top)) + 100px); bottom: auto; left: 12px; transform: none; width: auto; max-width: calc(100% - 160px); padding: 7px 12px; }
+.hint #hintText { display: none; }
+.map-pane:has(#tsBar:not([hidden])) .hint { display: none; }
+@media (max-width: 767px) {
+  .hint { display: grid; top: calc(max(10px, env(safe-area-inset-top)) + 98px); left: 10px; max-width: calc(100% - 140px); padding: 6px 10px; border-radius: 10px; }
+  .hint strong { font-size: 13px; }
+  .app.has-site .hint, body.area-open .hint, .map-pane:has(#tsBar:not([hidden])) .hint { display: none; }
+}
