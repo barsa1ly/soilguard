@@ -419,6 +419,31 @@
     ...Object.fromEntries(Object.entries(WG.weather.layers).map(([t, list]) => [t, (list.find(x => x.def) || list[0] || {}).key || null])) };
   const groups = { refs, themes, soilLayers, live: new Proxy({}, { get: (_, k) => live[state.theme] && live[state.theme][k] }) };
   const showItem = (it, v) => { [it.layer, it.extra].filter(Boolean).forEach(l => (v ? l.addTo(map) : map.removeLayer(l))); };
+  /* Wind erosion and Soil maps open on their Overview: their other tabs (data-detail in index.html) are the details, which
+     the row's Details button brings out and puts away again, the choice kept on this device. A step to a detail tab from
+     anywhere else (an Overview tile's or card's link, Wind erosion › Soil's link to Soil maps › Soil, the land cover key)
+     brings them out first, for this visit only, so the short row stays the default. */
+  let details = false;
+  try { details = localStorage.getItem("fg.details") === "1"; } catch (e) { /* storage off: the Overview alone */ }
+  const isDetail = name => !!$(`.tabs button[data-tab="${name}"][data-detail]`);
+  function tabRow() {
+    $$(".tabs button[data-tab]").forEach(b => { b.hidden = !b.dataset.for.split(" ").includes(state.theme) || (!details && b.hasAttribute("data-detail")); });
+    const more = $("#tabMore"), names = $$(".tabs button[data-detail]").filter(b => b.dataset.for.split(" ").includes(state.theme)).map(b => (b.querySelector(".full") || b).textContent.trim());
+    more.hidden = !names.length; // Drought has no details
+    if (!names.length) return;
+    const say = details ? "Hide the detail tabs" : `Details: show the ${names.slice(0, -1).join(", ")} and ${names[names.length - 1]} tabs`;
+    more.setAttribute("aria-expanded", String(details));
+    more.setAttribute("aria-label", say);
+    more.title = say; // out, it is only an arrow
+  }
+  $("#tabMore").addEventListener("click", () => {
+    details = !details;
+    try { localStorage.setItem("fg.details", details ? "1" : "0"); } catch (e) { /* storage off: for this visit */ }
+    tabRow();
+    const on = $(".tabs button.active");
+    if (!on || on.hidden) showTab($(".tabs button[data-tab]:not([hidden])").dataset.tab); // the detail tab on show put away: the theme's Overview
+    else fitTabRow(); // the row's length changed, not its box: its end fade is measured again
+  });
   // tab: the tab to open (a link to another theme's tab), else the one on show if it belongs, else the theme's first
   function setTheme(t, tab) {
     state.theme = WG.weather.THEMES.some(x => x.key === t) ? t : "erosion";
@@ -430,8 +455,9 @@
     if (!$("#layerSheet").hidden) buildLayerSheet();
     const T = WG.weather.THEMES.find(x => x.key === state.theme);
     $("#hintText").textContent = T.hint;
-    // the panel's tabs: those of this theme; the one on show stays if it belongs, else the theme's first
-    $$(".tabs button[data-tab]").forEach(b => { b.hidden = !b.dataset.for.split(" ").includes(state.theme); });
+    // the panel's tabs: those of this theme (the details out for a link to one); the one on show stays if it belongs, else the theme's first
+    if (tab && isDetail(tab)) details = true;
+    tabRow();
     const on = $(".tabs button.active"), to = tab && $(`.tabs button[data-tab="${tab}"]:not([hidden])`);
     showTab(to ? tab : on && !on.hidden ? on.dataset.tab : $(".tabs button[data-tab]:not([hidden])").dataset.tab);
     try {
@@ -640,10 +666,12 @@
   const input = $("#searchInput"), results = $("#searchResults");
   let searchSeq = 0;
 
-  /* While typing, towns, cities and counties come from the app's own list (js/places.js), no server asked.
-     Enter asks Nominatim (OpenStreetMap), which also knows streets, addresses and landmarks: its usage policy allows at
-     most one request a second for the whole site, no search as you type, and asks for answers to be kept; so it is
-     asked on Enter only, each answer is kept for the session, and requests are spaced one second apart. */
+  /* While typing, towns, cities and counties come from the app's own list and ZIP codes from its ZIP list (js/places.js),
+     no server asked; streets and addresses come from Photon (OpenStreetMap; made for search as you type) once typing
+     pauses. Enter asks Nominatim (OpenStreetMap), which also knows landmarks and finds a house number on a US street
+     (from the Census Bureau's TIGER address ranges): its usage policy allows at most one request a second for the whole
+     site, no search as you type, and asks for answers to be kept; so it is asked on Enter, or once when a street is
+     picked to find the house number typed, each answer is kept for the session, and requests are spaced one second apart. */
   const NOMI = "https://nominatim.openstreetmap.org/";
   let nomiNext = 0;
   const nomiMemo = (() => { try { return new Map(JSON.parse(sessionStorage.getItem("fg.nominatim") || "[]")); } catch (e) { return new Map(); } })();
@@ -670,10 +698,11 @@
     return nominatim(`search?${params}`);
   }
 
-  // the list's buttons are type="button": inside the form, a plain button would submit it and search again for the name picked
-  function showResults(items, note, hint) {
-    const tail = hint ? `<button type="button" class="enter-hint" disabled>${esc(hint)}</button>` : "";
-    if (!items.length) { results.innerHTML = `<button type="button" disabled>${esc(note || "No matches in the 48 contiguous states")}</button>${tail}`; results.hidden = false; return; }
+  /* the list's buttons are type="button": inside the form, a plain button would submit it and search again for the name
+     picked. wait: the last line (the note, or the hint under the items) turns while the streets are looked up. */
+  function showResults(items, note, hint, wait) {
+    const tail = hint ? `<button type="button" class="enter-hint${wait ? " sr-wait" : ""}" disabled>${esc(hint)}</button>` : "";
+    if (!items.length) { results.innerHTML = `<button type="button"${wait ? ' class="enter-hint sr-wait"' : ""} disabled>${esc(note || "No matches in the 48 contiguous states")}</button>${tail}`; results.hidden = false; return; }
     results.innerHTML = items.map((r, i) =>
       `<button type="button" data-i="${i}" role="option"><b>${esc(r.title)}</b><small>${esc(r.sub)}${r.adds ? ` · adds ${esc(r.adds)} to the map` : ""}${r.later ? " · comes later" : ""}</small></button>`).join("") + tail;
     results.hidden = false;
@@ -685,19 +714,45 @@
     };
   }
   async function goToResult(r) {
-    clearTimeout(typeTimer);
-    searchSeq++; // a suggestion or a search still on its way no longer shows
+    clearTimeout(typeTimer); clearTimeout(streetTimer);
+    const seq = ++searchSeq; // a suggestion or a search still on its way no longer shows
     results.hidden = true;
     input.value = r.title;
     input.blur();
-    if (await ensureState(r.lat, r.lon)) selectSite(r.lat, r.lon, { zoom: r.zoom || 14, place: r.title });
+    if (r.refine && !r.later) { // a house number on a street Photon knows only as a street (not asked where the state comes later)
+      const h = await houseAt(r).catch(() => null);
+      if (seq !== searchSeq) return; // something else was typed or picked meanwhile
+      if (h) r = { ...r, ...h };
+      else U.toast(`House number ${r.refine.house} was not found on ${r.refine.street}: the map shows the street.`, 5000);
+    }
+    if (await ensureState(r.lat, r.lon)) selectSite(r.lat, r.lon, { zoom: r.zoom || 14, place: r.place || r.title });
+  }
+  /* the house's own point from Nominatim, asked once when the street is picked (US house numbers come from the Census
+     TIGER ranges there); null if it has no such number on that street near Photon's point */
+  async function houseAt(r) {
+    const f = r.refine, p = new URLSearchParams({ street: `${f.house} ${f.street}`, state: STATE_OF[r.st].n, countrycodes: "us", format: "jsonv2", limit: "1", addressdetails: "1" });
+    if (f.city) p.set("city", f.city);
+    if (f.postcode) p.set("postalcode", f.postcode);
+    const h = ((await nominatim(`search?${p}`)) || [])[0], a = (h && h.address) || {};
+    return h && a.house_number === f.house && Math.abs(h.lat - r.lat) < 0.1 && Math.abs(h.lon - r.lon) < 0.1 ? { lat: +h.lat, lon: +h.lon } : null;
   }
 
   /* suggestions while typing: "Tem" lists Temple, TX; Temple City, CA; ... (the most people first, the states on the
-     map counting more); ", ok" or " oklahoma" at the end keeps one state */
-  const ENTER_HINT = "Press Enter to search streets, addresses and other places (OpenStreetMap)";
+     map counting more); ", ok" or " oklahoma" at the end keeps one state. "765" lists the ZIP codes 76501, 76502, ...;
+     "720 E Blackland Rd" or "Main St, Temple" the streets and addresses (Photon), under any town that matches. */
+  const ENTER_HINT = "Press Enter to search OpenStreetMap for more places and landmarks";
+  const WAIT = "Looking up streets and addresses…", CREDIT = "© OpenStreetMap contributors, via Photon. Enter searches more.";
   const stateNames = Object.fromEntries(SI.list.filter(x => x.l48).map(x => [x.c, x.n]));
-  let typeTimer = 0;
+  let typeTimer = 0, streetTimer = 0;
+  const addsOf = st => (region.codes.includes(st) || !canLive(st) ? null : STATE_OF[st].n); // a state the place would add to the map
+  const zipItem = z => ({ title: `ZIP ${z.zip}`, sub: `${z.town} area, ${z.st}`, lat: z.lat, lon: z.lon, zoom: 12, place: `${z.town} area, ${z.st} ${z.zip}`, adds: addsOf(z.st), later: !canLive(z.st), exact: z.exact });
+  const streetItem = s => ({ ...s, place: s.town && s.kind !== "place" ? `${s.title}, ${s.town}` : s.title, adds: addsOf(s.st), later: !canLive(s.st) });
+  /* Photon prefers what lies near the chosen states' middle (and how far that reaches, by their size): the states
+     chosen, never the map's view or the user's whereabouts, go with the text typed */
+  function streetsFor(t) {
+    const mid = regionBounds && regionBounds.getCenter();
+    return WG.places.streets(t, { states: stateNames, near: mid && [mid.lat, mid.lng], zoom: mid ? Math.max(4, Math.min(10, map.getBoundsZoom(regionBounds))) : 4 });
+  }
   const findPlaces = (q, limit) => WG.places.find(q, { here: new Set(region.codes), states: stateNames, limit }).map(placeItem);
   function placeItem(p) {
     const x = STATE_OF[p.st], n = p.people;
@@ -707,14 +762,44 @@
   }
   async function suggest() {
     const q = input.value, t = q.trim(), seq = ++searchSeq;
+    clearTimeout(streetTimer);
     const c = U.parseCoords(q);
     if (c) { showResults([{ title: `${c.lat.toFixed(5)}, ${c.lon.toFixed(5)}`, sub: "Go to coordinates", lat: c.lat, lon: c.lon, zoom: 14 }]); return; }
     if (t.length < 2) { results.hidden = true; return; }
-    if (/^\d/.test(t)) { showResults([], ENTER_HINT); return; } // a street address
-    try { await WG.places.load(ASSET_V); } catch (e) { if (seq === searchSeq) showResults([], ENTER_HINT); return; }
-    if (seq !== searchSeq) return;
-    const items = findPlaces(q, 10);
-    showResults(items, `No town, city or county starts with "${t}". ${ENTER_HINT}.`, items.length ? ENTER_HINT : "");
+    const zip = WG.places.zipOf(t);
+    if (zip) { // ZIP codes from the first 3 digits; fewer could still be a house number
+      if (zip.length < 3) { showResults([], "Keep typing: a ZIP code, or a house number and street"); return; }
+      let zs;
+      try { zs = await WG.places.zips(zip, ASSET_V); } catch (e) { if (seq === searchSeq) showResults([], `${e.message || e}. ${ENTER_HINT}.`); return; }
+      if (seq === searchSeq) showResults(zs.map(zipItem), `No ZIP code starts with ${zip} in the 48 contiguous states. ${ENTER_HINT}.`);
+      return;
+    }
+    const addr = WG.places.looksAddress(t);
+    let items = [];
+    if (!/^\d/.test(t)) { // a house number starts no town's name
+      await WG.places.load(ASSET_V).catch(() => {}); // without the list, the streets may still be found
+      if (seq !== searchSeq) return;
+      items = WG.places.loaded() ? findPlaces(q, addr ? 3 : 10) : [];
+    }
+    // plain words that name a town stay with the towns; a street, an address or words no town matches ask Photon too
+    if (!addr && (items.length || t.length < 4)) { showResults(items, `No town, city or county starts with "${t}". ${ENTER_HINT}.`, items.length ? ENTER_HINT : ""); return; }
+    showResults(items, WAIT, items.length ? WAIT : "", true);
+    // about 350 ms after the last key (80 ms went before this): Photon is asked once typing pauses, not for every letter
+    streetTimer = setTimeout(async () => {
+      let found = [], failed = null;
+      /* those in the states on the map first, in Photon's order, and one from another state (it would add its state) only
+         when the states on the map give a single one: more pushed the match down a phone's short list; with none on the
+         map, the others; from a state that comes later, two at most and only when nothing else matches, to say so */
+      try {
+        const all = (await streetsFor(t)).map(streetItem), here = all.filter(s => region.codes.includes(s.st));
+        const can = all.filter(s => !region.codes.includes(s.st) && canLive(s.st)), later = all.filter(s => !canLive(s.st));
+        found = (here.length ? [...here, ...can.slice(0, here.length < 2 ? 1 : 0)] : can.length ? can : later.slice(0, 2)).slice(0, 5);
+      } catch (e) { failed = e; }
+      if (seq !== searchSeq) return;
+      const all = [...items, ...found];
+      if (failed) showResults(all, `The street search (Photon) did not answer: ${failed.message || failed}. ${ENTER_HINT}.`, all.length ? `The street search did not answer. ${ENTER_HINT}.` : "");
+      else showResults(all, `No town, street or address matches "${t}". ${ENTER_HINT}.`, found.length ? CREDIT : ENTER_HINT);
+    }, 270);
   }
   input.addEventListener("input", () => { clearTimeout(typeTimer); typeTimer = setTimeout(suggest, 80); });
   input.addEventListener("focus", () => {
@@ -754,12 +839,13 @@
       const own = found.length || !WG.places.loaded() ? [] : findPlaces(q, 8);
       if (own.length) { showResults(own, "", "OpenStreetMap found nothing more"); return; }
       showResults(found.map(r => {
-        const x = st(r);
+        const x = st(r), a = r.address || {}, road = a.road && (a.house_number ? `${a.house_number} ${a.road}` : a.road);
+        // an address has no name: its number and street, then its town, state and ZIP (not "720" over the rest)
+        const title = r.name || road || r.display_name.split(",")[0], town = a.city || a.town || a.village || a.hamlet || "";
         return {
-          title: r.name || r.display_name.split(",")[0],
-          sub: r.display_name.split(",").slice(1, 4).join(",").trim(),
-          lat: +r.lat, lon: +r.lon, adds: x && !region.codes.includes(x.c) && canLive(x.c) ? x.n : null, later: !!x && !canLive(x.c),
-          zoom: r.type === "county" || r.addresstype === "county" ? 10 : r.place_rank < 16 ? 11 : 14,
+          title, sub: !r.name && road ? [town, x && `${x.c}${a.postcode ? ` ${a.postcode}` : ""}`].filter(Boolean).join(", ") : r.display_name.split(",").slice(1, 4).join(",").trim(),
+          lat: +r.lat, lon: +r.lon, adds: x && !region.codes.includes(x.c) && canLive(x.c) ? x.n : null, later: !!x && !canLive(x.c), place: !r.name && road && town ? `${road}, ${town}` : title,
+          zoom: r.type === "county" || r.addresstype === "county" ? 10 : r.place_rank < 16 ? 11 : r.place_rank >= 26 ? 17 : 14,
         };
       }));
     } catch (e) {
@@ -769,9 +855,12 @@
   }
   $("#searchForm").addEventListener("submit", e => {
     e.preventDefault();
-    clearTimeout(typeTimer);
+    clearTimeout(typeTimer); clearTimeout(streetTimer);
     const c = U.parseCoords(input.value);
     if (c) { results.hidden = true; input.blur(); ensureState(c.lat, c.lon).then(ok => ok && selectSite(c.lat, c.lon, { zoom: 14 })); return; }
+    // a whole ZIP code goes there (the ZIP list, no server); one not in it asks OpenStreetMap
+    const z = WG.places.zipOf(input.value), q = input.value;
+    if (z && z.length === 5) { WG.places.zips(z, ASSET_V, 1).then(([hit]) => (hit && hit.exact ? goToResult(zipItem(hit)) : runSearch(q)), () => runSearch(q)); return; }
     // a whole name and its state ("Temple, TX", "temple texas") goes there; anything else asks OpenStreetMap
     const top = WG.places.loaded() && findPlaces(input.value, 1)[0];
     if (top && top.exact) { goToResult(top); return; }
@@ -880,6 +969,7 @@
 
   /* ---------- tabs ---------- */
   function showTab(name) {
+    if (!details && isDetail(name)) { details = true; tabRow(); } // a step to a detail tab brings the details out with it (for this visit)
     $$(".tabs button").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
     $$(".tab").forEach(t => { t.hidden = t.id !== "tab-" + name; });
     $("#panelBody").scrollTop = 0;
@@ -892,12 +982,15 @@
      The active tab is scrolled clear of it, so a link to another theme's tab lands on a tab that shows. DOWNLOAD's fade
      marks tabs hidden under it, so it goes ("at-end") once the row is scrolled to its end or fits, where it would only
      pale the tab next to it. Not measured while the panel is not laid out (no site yet); measured again as the row
-     changes size (the panel opening widens it over .35 s, a window resized). */
+     changes size (the panel opening widens it over .35 s, a window resized). The Details button keeps beside DOWNLOAD
+     (sticky at DOWNLOAD's width and the gap, --dl-w; css "detail tabs"), so the tabs scroll under both and its fade is
+     the row's. */
   function fitTabRow() {
-    const row = $(".tabs"), dl = $(".tabs .tab-dl"), b = $(".tabs button.active");
+    const row = $(".tabs"), dl = $(".tabs .tab-dl"), b = $(".tabs button.active"), more = $("#tabMore");
     if (!row.clientWidth) return;
+    row.style.setProperty("--dl-w", `${dl.offsetWidth + (parseFloat(getComputedStyle(row).columnGap) || 0)}px`);
     if (b && b !== dl && row.scrollWidth > row.clientWidth) {
-      const x = b.getBoundingClientRect(), left = row.getBoundingClientRect().left + parseFloat(getComputedStyle(row).paddingLeft), right = dl.getBoundingClientRect().left - 16;
+      const x = b.getBoundingClientRect(), left = row.getBoundingClientRect().left + parseFloat(getComputedStyle(row).paddingLeft), right = (more.hidden ? dl : more).getBoundingClientRect().left - 16;
       // its left end first: in a row still narrower than the tab (the panel opening), scrolled no further than keeps it
       if (x.left < left) row.scrollLeft -= left - x.left;
       else if (x.right > right) row.scrollLeft += Math.min(x.right - right, x.left - left);

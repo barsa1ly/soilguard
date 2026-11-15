@@ -278,7 +278,8 @@ WG.shares = (function () {
         wants.set(key, [want]);
         busy.set(key, (async () => {
           const hit = await U.stashGet(stashUrl(key));
-          if (hit && hit.rows) return hit;
+          // kept from an earlier visit: the uncoloured area named as the layer names it now (a label reworded since)
+          if (hit && hit.rows) { const n = it.shares.none && pick(it.shares.none); if (n && hit.none) hit.none.label = n; return hit; }
           const ans = await later(() => measure(it, C, A, tag), () => wants.get(key).some(f => f()));
           if (!it.refresh) U.stashPut(stashUrl(key), ans); // a live layer (radar, the latest hour) is measured anew when it changes: not kept for later visits
           return ans;

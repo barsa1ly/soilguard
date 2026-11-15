@@ -40,7 +40,9 @@ WG.weather = (function () {
      the whole box from the same service as the map */
   const DRO_REST = `${NOAA}vector/rest/services/outlooks/cpc_drought_outlk/MapServer`;
   const DRO_NAMES = { persistence: "Drought persists", improvement: "Drought remains but improves", removal: "Drought removal likely", development: "Drought development likely", "no drought": "No drought" };
-  const droShares = (name, id) => ({ id: `dro${id}`, wms: { url: DRO, layers: name }, legendJSON: { url: DRO_REST, id }, relabel: L => L.map(([c, l]) => [c, DRO_NAMES[l.toLowerCase()] || l]), none: "No drought" });
+  // the area a drought map leaves uncoloured: no drought, but also no data (a week or a place the map does not cover)
+  const DM_NONE = "Data not available / no drought";
+  const droShares = (name, id) => ({ id: `dro${id}`, wms: { url: DRO, layers: name }, legendJSON: { url: DRO_REST, id }, relabel: L => L.map(([c, l]) => [c, DRO_NAMES[l.toLowerCase()] || l]), none: DM_NONE });
   // the Drought Monitor's classes, D0 first as its own legend
   const dmClasses = () => DCLASS.slice().reverse().map(c => [c[3], `${c[0]} ${c[2]}`]);
 
@@ -91,7 +93,7 @@ WG.weather = (function () {
       legend: { title: name, img: legendImg(USDM("usdm_current_wms"), "usdm_current") },
       dateOf: () => usdmDate().then(d => Wd.dayLabel(d - (weeksBack || 0) * 7)),
       // the week's own dated map (the same as usdm_current for this week; kept in the browser as a dated week)
-      shares: { id: key, tag: () => usdmDate().then(d => d - (weeksBack || 0) * 7), url: (b, W, H, t) => usdmMapUrl(+t, b, W, H), classes: dmClasses, none: "No drought" } };
+      shares: { id: key, tag: () => usdmDate().then(d => d - (weeksBack || 0) * 7), url: (b, W, H, t) => usdmMapUrl(+t, b, W, H), classes: dmClasses, none: DM_NONE } };
   };
   // the week chosen on the bar is in the past-week layer's name (usdm20261104); this week's until one is chosen
   const usdmPast = TM.usdmLayer();
@@ -105,7 +107,7 @@ WG.weather = (function () {
       { key: "usdmPast", name: "Drought Monitor, a past week", sub: "any week since January 2000: choose the year and month", layer: usdmPast,
         note: `D0 abnormally dry, D1 moderate, D2 severe, D3 extreme, D4 exceptional drought. ${USDM_DATED} ${USDM_CREDIT}`,
         legend: { title: "Drought Monitor, a past week", img: legendImg(USDM("usdm_current_wms"), "usdm_current") }, dateOf: () => TM.label("usdm").replace(/^Week of /, "") || null, // the week chosen on the bar
-        shares: { id: "usdmPast", tag: pastWeek, url: (b, W, H, t) => usdmMapUrl(+t, b, W, H), classes: dmClasses, none: "No drought" } },
+        shares: { id: "usdmPast", tag: pastWeek, url: (b, W, H, t) => usdmMapUrl(+t, b, W, H), classes: dmClasses, none: DM_NONE } },
       { key: "dro1", name: "Drought outlook, this month", sub: "NOAA Climate Prediction Center", layer: wms(DRO, "5", { attribution: "NOAA CPC" }), dateOf: droTo(1),
         note: "Where drought is expected to persist, improve, end or develop by the end of the month: NOAA Climate Prediction Center's monthly drought outlook, issued on the month's last day.",
         legend: { title: "Monthly drought outlook", img: legendImg(DRO, "5") }, shares: droShares("5", 1) },

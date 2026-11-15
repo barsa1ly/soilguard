@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-  <link rel="stylesheet" href="css/app.css?v=86">
+  <link rel="stylesheet" href="css/app.css?v=87">
 </head>
 <body>
 <div id="app" class="app">
@@ -43,7 +43,7 @@
       </div>
       <form id="searchForm" class="search" autocomplete="off" role="search">
         <svg class="search-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-        <input id="searchInput" type="search" inputmode="search" placeholder="Place, address, or lat, lon" aria-label="Search a place or enter coordinates">
+        <input id="searchInput" type="search" inputmode="search" placeholder="Place, address, ZIP, or lat, lon" aria-label="Search a place or enter coordinates">
         <button type="button" id="coordBtn" class="icon-btn" title="Enter coordinates" aria-label="Enter coordinates">
           <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
         </button>
@@ -57,24 +57,27 @@
       </form>
     </div>
 
+    <!-- the map tools: each with a word on the dark of the brand and the theme bar, and its full text (the aria-label, which
+         holds the word) in a small tip on hover or keyboard focus, no title, so no second tip; a phone or a narrow map puts
+         the word under the icon, so the tools keep their 44 px squares and the short-screen rows (css "tool labels") -->
     <div class="map-tools">
-      <button id="layersBtn" class="tool-btn" title="Map layers" aria-label="Map layers">
+      <button id="layersBtn" class="tool-btn" aria-label="Map layers: base map, overlays, reference lines and soils"><span class="tool-w">Layers</span>
         <svg viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 13 9 5 9-5"/><path d="m3 17.5 9 5 9-5" opacity=".5"/></svg>
       </button>
-      <button id="locateBtn" class="tool-btn" title="Use my location" aria-label="Use my location">
+      <button id="locateBtn" class="tool-btn" aria-label="Locate me: go to my location (the browser asks first)"><span class="tool-w">Locate</span>
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
       </button>
-      <button id="areaBtn" class="tool-btn" title="Analyse a field or area" aria-label="Analyse a field or area">
+      <button id="areaBtn" class="tool-btn" aria-label="Area: analyse a field or area, drawn or uploaded"><span class="tool-w">Area</span>
         <svg viewBox="0 0 24 24"><path d="M5 7.5 11 4l8.5 4-1.5 10L6.5 19.5Z"/><circle cx="5" cy="7.5" r="1.6"/><circle cx="11" cy="4" r="1.6"/><circle cx="19.5" cy="8" r="1.6"/><circle cx="18" cy="18" r="1.6"/><circle cx="6.5" cy="19.5" r="1.6"/></svg>
       </button>
-      <button id="unitsBtn" class="tool-btn" title="Units (metric or US)" aria-label="Units">
+      <button id="unitsBtn" class="tool-btn" aria-label="Units: metric or US, for each quantity"><span class="tool-w">Units</span>
         <svg viewBox="0 0 24 24"><path d="M3 15.5 15.5 3 21 8.5 8.5 21Z"/><path d="m7 12 2 2M10 9l2 2M13 6l2 2M8.5 15.5l1 1M11.5 12.5l1 1"/></svg>
       </button>
-      <button id="methodsBtn" class="tool-btn" title="Methods, equations and data sources" aria-label="Methods, equations and data sources">
+      <button id="methodsBtn" class="tool-btn" aria-label="Methods, equations and data sources"><span class="tool-w">Methods</span>
         <svg viewBox="0 0 24 24"><path d="M5 4h10l4 4v12H5z"/><path d="M15 4v4h4M8.5 12h7M8.5 15.5h7M8.5 8.5h3"/></svg>
       </button>
       <!-- the map on show as a PNG, with its legend, place, date, scale and credits (js/mapimage.js, loaded on first use) -->
-      <button id="saveMapBtn" class="tool-btn" title="Save the map as an image (PNG)" aria-label="Save the map as an image (PNG)">
+      <button id="saveMapBtn" class="tool-btn" aria-label="Save the map as an image (PNG), with its legend"><span class="tool-w">Save</span>
         <svg viewBox="0 0 24 24"><path d="M9 16H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-4"/><path d="m3 12.5 4.5-4 3.5 3 2.5-2 4.5 3.5"/><path d="M12 13v8.5M9 18.5l3 3 3-3"/></svg>
       </button>
     </div>
@@ -118,19 +121,23 @@
         </button>
       </div>
     </header>
-    <!-- each tab names the map themes it belongs to: the panel shows the tabs of the theme on the map -->
+    <!-- each tab names the map themes it belongs to: the panel shows the tabs of the theme on the map. data-detail: a tab
+         that waits behind the row's Details button (js/app.js tabRow), so Wind erosion and Soil maps open on their Overview -->
     <nav class="tabs" role="tablist">
       <button role="tab" data-tab="overview" data-for="erosion" class="active">Overview</button>
-      <button role="tab" data-tab="wind" data-for="erosion">Wind</button>
-      <button role="tab" data-tab="soil" data-for="erosion">Soil</button>
-      <button role="tab" data-tab="practices" data-for="erosion">Practices</button>
+      <button role="tab" data-tab="wind" data-for="erosion" data-detail>Wind</button>
+      <button role="tab" data-tab="soil" data-for="erosion" data-detail>Soil</button>
+      <button role="tab" data-tab="practices" data-for="erosion" data-detail>Practices</button>
       <button role="tab" data-tab="drought" data-for="drought" hidden>Drought</button>
       <button role="tab" data-tab="soiloverview" data-for="soilmaps" hidden>Overview</button>
       <!-- Soil: the dominant soil, its horizons and chemistry (js/soilmaps.js with js/app.js's profile); Basin: js/basins.js's
            watershed, runoff and soil loss. Phones: the theme already says soil, so "Moisture" keeps its tabs in one row (css .tabs .short) -->
-      <button role="tab" data-tab="soilmaps" data-for="soilmaps" hidden>Soil</button>
-      <button role="tab" data-tab="soilbasin" data-for="soilmaps" hidden>Basin</button>
-      <button role="tab" data-tab="soilmoist" data-for="soilmaps" hidden><span class="full">Soil moisture</span><span class="short">Moisture</span></button>
+      <button role="tab" data-tab="soilmaps" data-for="soilmaps" data-detail hidden>Soil</button>
+      <button role="tab" data-tab="soilbasin" data-for="soilmaps" data-detail hidden>Basin</button>
+      <button role="tab" data-tab="soilmoist" data-for="soilmaps" data-detail hidden><span class="full">Soil moisture</span><span class="short">Moisture</span></button>
+      <!-- the detail tabs out or away: after them, so they come out from where it stands; once out it keeps only its arrow,
+           held beside DOWNLOAD when the row scrolls (css "detail tabs"), so the longer row still fits a phone -->
+      <button type="button" id="tabMore" class="tab-more" aria-expanded="false" hidden><span class="tm-w">Details</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></button>
       <button role="tab" data-tab="download" data-for="erosion drought soilmaps" class="tab-dl" title="Soil and weather files for crop and watershed models, tables and series" aria-label="Download data for models">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11M7.5 9.5 12 14l4.5-4.5M4 15v4.5h16V15"/></svg><span class="tab-dl-text"><b>DOWNLOAD</b><small>data for models</small></span></button>
     </nav>
@@ -304,7 +311,9 @@
           <div class="card-h"><h3>Wind Erodibility Groups: what the classes mean</h3><span class="card-tools"><span class="tag" id="wegTag"></span><button class="dl-btn" data-csv="weg" title="Download this table as CSV" aria-label="Download Wind Erodibility Group table as CSV"><svg viewBox="0 0 24 24"><path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/></svg></button></span></div>
           <p class="fine">NRCS sorts surface soils into nine Wind Erodibility Groups (WEG) by how easily they blow when bare and dry: 1, 2, 3, 4, 4L, 5, 6, 7 and 8. Group <b>1</b> is the most erodible and group <b>8</b> is not erodible. Each group has an erodibility index <b>I</b>: the tons of soil per acre per year a wide, bare, smooth field would lose in the climate of Garden City, Kansas. I runs from 0 to 310; groups 3, 4 and 4L share I = 86, and 4L holds calcareous (limy) loamy soils.</p>
           <div class="table-wrap"><table class="grid weg-table" id="wegTable"></table></div>
-          <p class="fine"><button class="link" id="wegFull">Show all definitions</button> · For a named soil, NRCS uses the group recorded in the soil survey; the texture guide is for soils that are not identified (<a href="https://efotg.sc.egov.usda.gov/references/public/TX/Wind_Erosion.pdf" target="_blank" rel="noopener">National Agronomy Manual, Part 502</a>). So a soil's group can differ from what its texture suggests: Pullman clay loam is WEG 7. Rock fragments move a soil to a less erodible group: one group at 15–35% by volume, two at 35–60%, I = 0 above 60% (sands and loamy sands move less). Texture guide: USDA-NRCS <a href="https://directives.nrcs.usda.gov/sites/default/files2/1725389517/Part%20618%20Subpart%20B%20%E2%80%93%20Exhibits.pdf" target="_blank" rel="noopener">National Soil Survey Handbook, Part 618 Subpart B</a>, §618.93 (2024). “Calcareous” means the soil fizzes strongly in dilute acid (free lime).</p>
+          <p class="fine"><button class="link" id="wegFull">Show all definitions</button></p>
+          <!-- apart from the button, so it folds with the card's other notes (js/fold.js) -->
+          <p class="fine">For a named soil, NRCS uses the group recorded in the soil survey; the texture guide is for soils that are not identified (<a href="https://efotg.sc.egov.usda.gov/references/public/TX/Wind_Erosion.pdf" target="_blank" rel="noopener">National Agronomy Manual, Part 502</a>). So a soil's group can differ from what its texture suggests: Pullman clay loam is WEG 7. Rock fragments move a soil to a less erodible group: one group at 15–35% by volume, two at 35–60%, I = 0 above 60% (sands and loamy sands move less). Texture guide: USDA-NRCS <a href="https://directives.nrcs.usda.gov/sites/default/files2/1725389517/Part%20618%20Subpart%20B%20%E2%80%93%20Exhibits.pdf" target="_blank" rel="noopener">National Soil Survey Handbook, Part 618 Subpart B</a>, §618.93 (2024). “Calcareous” means the soil fizzes strongly in dilute acid (free lime).</p>
         </div>
 
         <p class="source" id="soilSource"></p>
@@ -459,37 +468,38 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-<script src="js/config.js?v=86"></script>
-<script src="data/states.js?v=86"></script>
-<script src="js/util.js?v=86"></script>
-<script src="js/units.js?v=86"></script>
-<script src="js/export.js?v=86"></script>
-<script src="js/soil.js?v=86"></script>
-<script src="js/wind.js?v=86"></script>
-<script src="js/charts.js?v=86"></script>
-<script src="js/practices.js?v=86"></script>
-<script src="js/methods.js?v=86"></script>
-<script src="js/timemap.js?v=86"></script>
-<script src="js/h5range.js?v=86"></script>
-<script src="js/weather.js?v=86"></script>
-<script src="js/soilmaps.js?v=86"></script>
-<script src="js/basins.js?v=86"></script>
-<script src="js/soilmoisture.js?v=86"></script>
-<script src="js/landcover.js?v=86"></script>
-<script src="js/shares.js?v=86"></script>
-<script src="js/places.js?v=86"></script>
-<script src="js/app.js?v=86"></script>
-<script src="js/downloads.js?v=86"></script>
-<script src="js/models.js?v=86"></script>
-<script src="js/writers.js?v=86"></script>
-<script src="js/century.js?v=86"></script>
-<script src="js/daycent.js?v=86"></script>
-<script src="js/preview.js?v=86"></script>
-<script src="js/templates.js?v=86"></script>
-<script src="js/datasheet.js?v=86"></script>
-<script src="js/area.js?v=86"></script>
-<script src="js/gridfiles.js?v=86"></script>
-<script src="js/grid.js?v=86"></script>
-<script src="js/stats.js?v=86"></script>
+<script src="js/config.js?v=87"></script>
+<script src="data/states.js?v=87"></script>
+<script src="js/util.js?v=87"></script>
+<script src="js/units.js?v=87"></script>
+<script src="js/export.js?v=87"></script>
+<script src="js/soil.js?v=87"></script>
+<script src="js/wind.js?v=87"></script>
+<script src="js/charts.js?v=87"></script>
+<script src="js/practices.js?v=87"></script>
+<script src="js/methods.js?v=87"></script>
+<script src="js/timemap.js?v=87"></script>
+<script src="js/h5range.js?v=87"></script>
+<script src="js/weather.js?v=87"></script>
+<script src="js/soilmaps.js?v=87"></script>
+<script src="js/basins.js?v=87"></script>
+<script src="js/soilmoisture.js?v=87"></script>
+<script src="js/landcover.js?v=87"></script>
+<script src="js/shares.js?v=87"></script>
+<script src="js/places.js?v=87"></script>
+<script src="js/app.js?v=87"></script>
+<script src="js/fold.js?v=87"></script>
+<script src="js/downloads.js?v=87"></script>
+<script src="js/models.js?v=87"></script>
+<script src="js/writers.js?v=87"></script>
+<script src="js/century.js?v=87"></script>
+<script src="js/daycent.js?v=87"></script>
+<script src="js/preview.js?v=87"></script>
+<script src="js/templates.js?v=87"></script>
+<script src="js/datasheet.js?v=87"></script>
+<script src="js/area.js?v=87"></script>
+<script src="js/gridfiles.js?v=87"></script>
+<script src="js/grid.js?v=87"></script>
+<script src="js/stats.js?v=87"></script>
 </body>
 </html>
