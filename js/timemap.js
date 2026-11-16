@@ -58,6 +58,7 @@ WG.timemap = (function () {
   }
   async function renderUsdm(my) {
     if (S.usdm.d === null) return bar();
+    document.dispatchEvent(new Event("wg-mapdate")); // the drought Overview follows the week (js/weather.js mapDate)
     const st = S.usdm, l = layers.usdm, w = iso(st.d).replace(/-/g, "");
     status = "Loading the Drought Monitor's map…";
     bar();
@@ -176,5 +177,5 @@ WG.timemap = (function () {
     if (a) (WG.tsAdapters = WG.tsAdapters || []).push(a);
     WG.weather.usdmDate().then(d => { usdmLatest = d; }).catch(() => {});
   }
-  return { usdmLayer, init, showWeek, label, get active() { return active; } };
+  return { usdmLayer, init, showWeek, label, get active() { return active; }, get week() { return S.usdm.d; }, get latest() { return topWeek(); } };
 })();

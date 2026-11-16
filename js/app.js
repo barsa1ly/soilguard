@@ -628,7 +628,9 @@
     const yr = d => new Date(d * 864e5).getUTCFullYear(), jan1 = y => Date.UTC(y, 0, 1) / 864e5, A = () => WG.landcover.annual, lay = soilLayers.nlcd.layer;
     let ys = null;
     const drawn = () => new Promise(res => { if (!lay._map) { res(); return; } const fin = () => { clearTimeout(t); lay.off("load", fin); res(); }, t = setTimeout(fin, 8000); lay.on("load", fin); });
-    const put = y => { const p = drawn(); A().set(y, lay); lcKey(); return p; };
+    // a year chosen, or the layer on or off: the Wind erosion Overview's land cover line follows (renderOvPractice)
+    const put = y => { const p = drawn(); A().set(y, lay); lcKey(); document.dispatchEvent(new Event("wg-mapdate")); return p; };
+    lay.on("add remove", () => document.dispatchEvent(new Event("wg-mapdate")));
     (WG.tsAdapters = WG.tsAdapters || []).push({ key: "nlcd", item: soilLayers.nlcd, label: "Land cover (Annual NLCD)", start: jan1(1985), step: "year",
       end: () => A().years().then(l => { ys = l; return jan1(Math.max(...l)); }),
       frames: (a, b) => (ys || Array.from({ length: new Date().getUTCFullYear() - 1985 }, (_, k) => 1985 + k)).map(jan1).filter(d => d >= a && d <= b),
@@ -700,6 +702,7 @@
     if (set && set[k] && !set[k].on) setToggle("live", k, true);
   }
   WG.timemap.init(map, { setLive, renderLegend });
+  WG.app.setLive = setLive; // the Drought Overview's Back to this week (js/weather.js)
   /* the Soil maps theme's tabs: their "show on the map" links, the dominant soil drawn into the Soil tab, a phone's results
      lowered so a place shown on the map can be seen, and the land cover overlay switched from the Soil tab's tile and the
      Basin tab: the same overlay as the layer sheet's (so never a second one), with the theme's own map taken off (liveOff)
@@ -2321,12 +2324,36 @@
   /* The Overview's current practice, under the dominant soil: the land use chosen on the Practices tab with its answers
      in a few words (js/practices.js summary), else what the land cover map shows here. Drawn with the Practices tab, so
      it follows each choice and answer and each new location; while a state's practice guidance loads, it waits. */
+  /* With no land use chosen and the land cover on the map at a year chosen on its time slider (Annual NLCD), the line
+     gives that year's class here instead (js/landcover.js annual.at), read once a location and year; it follows the
+     year and the layer ("wg-mapdate") once they rest. */
+  let ovLast = null;
+  const lcYears = new Map(); // token|year -> { y, v: undefined while read, the class code or null, or an Error }
+  function lcYear() {
+    const y = WG.landcover && soilLayers.nlcd.on ? WG.landcover.annual.year() : null;
+    if (y === null || y === undefined || !state.site) return null;
+    const k = `${state.token}|${y}`;
+    if (!lcYears.has(k)) {
+      const o = { y, v: undefined };
+      lcYears.set(k, o);
+      while (lcYears.size > 40) lcYears.delete(lcYears.keys().next().value);
+      WG.landcover.annual.at(state.site.lat, state.site.lon, y).then(c => { o.v = c; }, e => { o.v = e instanceof Error ? e : new Error(String(e)); }).then(() => { if (ovLast) renderOvPractice(...ovLast); });
+    }
+    return lcYears.get(k);
+  }
+  document.addEventListener("wg-mapdate", U.rested(() => { if (state.site && ovLast) renderOvPractice(...ovLast); }));
   function renderOvPractice(pf, none) {
     if (!state.site) return;
-    const s = none ? null : WG.practices.summary(state, pf), lc = state.nlcd;
+    ovLast = [pf, none];
+    const s = none ? null : WG.practices.summary(state, pf), lc = state.nlcd, ly = s ? null : lcYear();
+    const lcName = c => (WG.landcover.CLASSES.find(z => z[0] === c) || [])[1];
     $("#ovPracGo").textContent = s ? "Change →" : "Choose land use →";
     $("#ovPrac").innerHTML = none && pf === undefined ? '<span class="skeleton"></span>'
       : s ? `<div class="nm">${esc(s.name)}</div><div class="sub">${s.answers.map(esc).join(" · ")}</div>`
+        : ly ? (ly.v === undefined ? '<span class="skeleton"></span><span class="skeleton" style="width:60%"></span>'
+          : ly.v instanceof Error ? `<div class="sub">Land cover map of ${ly.y}</div><div class="nm">Could not be read here</div>`
+          : ly.v === null ? `<div class="sub">Land cover map of ${ly.y}</div><div class="nm">No class at this point</div>`
+          : `<div class="sub">Land cover map of ${ly.y} shows</div><div class="nm" style="text-transform:uppercase">${esc(lcName(ly.v) || "")}</div>`)
         : !lc ? '<span class="skeleton"></span><span class="skeleton" style="width:60%"></span>'
         : lc.name ? `<div class="sub">Land cover map shows</div><div class="nm" style="text-transform:uppercase">${esc(lc.name)}</div>`
         : `<div class="sub">Land cover map</div><div class="nm">${lc.src ? "No class at this point" : "Could not be read here"}</div>`;

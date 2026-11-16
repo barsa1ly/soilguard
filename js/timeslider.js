@@ -456,5 +456,5 @@ WG.timeslider = (function () {
 
   return { prefetch, refresh, sync, play, stop, gif, step: stepBy, go: d => { if (F.length) { stop(); pos = F[near(d)]; paint(); return go(pos); } return null; },
     setRange(a, b) { if (!F.length || !A) return; from = F[near(Math.min(a, b))]; to = F[near(Math.max(a, b))]; ranges.set(A.key, [from, to]); paint(); },
-    get adapter() { return A; }, get frames() { return F; }, get pos() { return pos; }, get range() { return [from, to]; }, get busy() { return !!(busy || job || playing); }, MAX_FRAMES, MAX_W };
+    get adapter() { return A; }, get frames() { return F; }, get pos() { return pos; }, get range() { return [from, to]; }, get busy() { return !!(busy || job || playing); }, get playing() { return playing || !!job; }, MAX_FRAMES, MAX_W };
 })();

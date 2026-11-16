@@ -1627,3 +1627,9 @@ button:focus-visible, select:focus-visible, summary:focus-visible, [role="tab"]:
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: 0s !important; transition-delay: 0s !important; scroll-behavior: auto !important; }
 }
+/* a past date on the map (v=97): the drought card says so with its way back (js/weather.js fill), as does the Soil maps
+   Overview's soil moisture header for the SMAP map's day (js/soilmaps.js) */
+.dr-past { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 12px; margin: 0 0 10px; padding: 7px 12px; border-radius: 10px; background: var(--accent-soft); color: var(--accent-2); font-size: 13px; line-height: 1.4; }
+.dr-past .link { font-size: 13px; font-weight: 600; }
+.so-gh .so-gd { font-weight: 500; letter-spacing: 0; text-transform: none; }
+.so-gh .so-gd .link { margin-left: 8px; font-size: 11.5px; font-weight: 600; letter-spacing: 0; text-transform: none; }

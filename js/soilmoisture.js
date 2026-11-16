@@ -49,7 +49,11 @@ WG.soilmoisture = (function () {
   const smapSf = tiles(smapUrl("sf"), { maxNativeZoom: 6, crossOrigin: "anonymous", attribution: "NASA GIBS; SMAP L4 (NASA GMAO)" });
   const smapRz = tiles(smapUrl("rz"), { maxNativeZoom: 6, crossOrigin: "anonymous", attribution: "NASA GIBS; SMAP L4 (NASA GMAO)" });
   // the chosen day; the latest is GIBS's "default" time, so nothing is asked before the layer is shown
-  function smapSet() { smapSf.setUrl(smapUrl("sf", pick.date)); smapRz.setUrl(smapUrl("rz", pick.date)); redrawLegend(); }
+  function smapSet() { smapSf.setUrl(smapUrl("sf", pick.date)); smapRz.setUrl(smapUrl("rz", pick.date)); redrawLegend(); document.dispatchEvent(new Event("wg-mapdate")); }
+  /* the day the SMAP map shows when a past day is chosen (its slider, its legend's picker) and a SMAP layer is on, else
+     null: the Soil maps Overview's moisture rows follow it ("wg-mapdate", js/soilmaps.js) */
+  const mapDay = () => (pick.date && WG.map && [smapSf, smapRz].some(l => WG.map.hasLayer(l)) ? dayOf(pick.date) : null);
+  [smapSf, smapRz].forEach(l => l.on("add remove", () => document.dispatchEvent(new Event("wg-mapdate"))));
 
   /* ---------- NOAA National Water Model: near-surface saturation, the latest hour ---------- */
   const NWM_MS = "https://mapservices.weather.noaa.gov/raster/services/obs/NWM_Land_Analysis/MapServer/WMSServer";
@@ -503,6 +507,44 @@ WG.soilmoisture = (function () {
     })());
     return SUM.get(k);
   }
+  /* the same two rows on a past day d, the day the SMAP map shows (mapDay): ERA5-Land's daily means that day (ECMWF
+     IFS's for a day ERA5-Land has not reached yet, within IFS's 92 days), and the nearest station's daily mean that day
+     at its shallowest sensor. Kept per location and day; a part that failed is read again next time. */
+  const SUMD = new Map();
+  function summaryOn(lat, lon, d) {
+    const pt = ptKey(lat, lon), k = `${WG.state.token}|${pt}|${d}`;
+    if (SUMD.has(k)) return SUMD.get(k);
+    const model = (async () => {
+      const R = await era5Range(lat, lon, d, d), top = R.a === d ? R.v[0][0] : null, root = R.a === d ? R.v[2][0] : null;
+      if (ok(top) || ok(root)) return { top: ok(top) ? top : null, root: ok(root) ? root : null, date: iso(d), src: "ERA5-Land" };
+      if (today() - d > 90) return null;
+      const F = await Wx.once(`smm:ifs:92:${pt}`, () => ifsAt(lat, lon, 92)), t = at(F.series[0].pts, d), r = at(F.series[2].pts, d);
+      return ok(t) || ok(r) ? { top: ok(t) ? t : null, root: ok(r) ? r : null, date: iso(d), src: "ECMWF IFS" } : null;
+    })();
+    const station = (async () => {
+      const list = await Wx.once(`smm:near:${pt}`, () => nearest(lat, lon, 3));
+      if (!list.length) return null;
+      const got = await Wx.once(`smm:st:${d}:${d}:${pt}`, () => readStations(list, d, d));
+      for (let n = 0; n < list.length; n++) {
+        const s = list[n], r = got[n];
+        if (r instanceof Error) continue;
+        for (const x of s.depths) {
+          const v = at(r.daily.get(x.key) || [], d);
+          if (ok(v)) return { name: s.name, net: NET[s.net][0], id: s.src === "crn" ? `WBAN ${s.id}` : s.id.split(":")[0], lat: s.lat, lon: s.lon, km: s.km, dir: s.dir,
+            depth: x.label, depthCm: +x.cm.toFixed(1), depthIn: +(x.cm / 2.54).toFixed(1), value: v, time: `${iso(d)}, daily mean` };
+        }
+      }
+      return null;
+    })();
+    const p = Promise.allSettled([model, station]).then(([m, s]) => {
+      [m, s].forEach(x => { if (x.status === "rejected") { console.warn("soil moisture on a past day", x.reason); if (SUMD.get(k) === p) SUMD.delete(k); } });
+      if (m.status === "rejected" && s.status === "rejected") throw m.reason;
+      return { model: m.status === "fulfilled" ? m.value : null, station: s.status === "fulfilled" ? s.value : null };
+    });
+    SUMD.set(k, p);
+    while (SUMD.size > 60) SUMD.delete(SUMD.keys().next().value);
+    return p;
+  }
 
   function periodCard(len, s, A) {
     const t1 = iso(today()), opt = (list, cur) => list.map(([k, n]) => `<option value="${k}" ${k === cur ? "selected" : ""}>${esc(n)}</option>`).join("");
@@ -757,5 +799,5 @@ WG.soilmoisture = (function () {
     } catch (e) { console.warn("NWM", e); b.disabled = false; b.textContent = "Read the National Water Model here (try again)"; WG.util.toast(`The National Water Model could not be read: ${e.message}`, 5000); }
   }
 
-  return { layers: LAYERS, pick, stations, nearest, readStations, era5At, era5Range, ifsAt, smapAt, nwmAt, summary, soilRange, period: per };
+  return { layers: LAYERS, pick, stations, nearest, readStations, era5At, era5Range, ifsAt, smapAt, nwmAt, summary, summaryOn, mapDay, soilRange, period: per };
 })();

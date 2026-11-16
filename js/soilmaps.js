@@ -745,7 +745,7 @@ WG.soilmaps = (function () {
     // the tab a row's → opens: its own where the page has that tab button, else the tab that holds its part
     const goTo = t => (document.querySelector(`.tabs [data-tab="${t[3]}"]`) ? t[3] : t[5] && partOf(t[5]) ? partOf(t[5]).tab || "soilmaps" : "soilmaps");
     const body = GROUPS.map(([g, name, ico]) => { const list = tiles.filter(t => t[2] === g);
-      return list.length ? `<tbody><tr class="so-gh"><th colspan="3" scope="rowgroup"><svg viewBox="0 0 24 24" aria-hidden="true">${ico}</svg>${esc(name)}</th></tr>${list.map(t => `${t[0] === EL0 ? `<tr class="so-gn"><td colspan="3" id="so-elnote">${esc(EL_NOTE)}</td></tr>` : ""}<tr class="so-gr" id="so-${t[0]}"></tr>`).join("")}</tbody>` : ""; }).join("");
+      return list.length ? `<tbody><tr class="so-gh"><th colspan="3" scope="rowgroup"><svg viewBox="0 0 24 24" aria-hidden="true">${ico}</svg>${esc(name)}${g === "wet" ? '<span class="so-gd" id="so-gd"></span>' : ""}</th></tr>${list.map(t => `${t[0] === EL0 ? `<tr class="so-gn"><td colspan="3" id="so-elnote">${esc(EL_NOTE)}</td></tr>` : ""}<tr class="so-gr" id="so-${t[0]}"></tr>`).join("")}</tbody>` : ""; }).join("");
     el.innerHTML = `<div class="risk-card so-head loading" id="soHead"></div>
       <div class="card so-glcard">${head("At a glance", "", "")}<p class="fine so-glsub">Survey and model values for typical soil here, not a test of a field. Each row's → opens its card.</p>
         <table class="so-gl"><colgroup><col class="so-gc1"><col><col class="so-gc3"></colgroup>${body}</table></div>
@@ -753,13 +753,22 @@ WG.soilmaps = (function () {
       ${WG.app && WG.app.detailsCard ? WG.app.detailsCard("soilmaps") : ""}`;
     const box = id => (live() ? el.querySelector(`#${id}`) : null);
     let S, N, MS, G; // each: undefined while read, the value, or an Error (G: the USGS sites and the US sites' tenths)
+    /* the moisture rows: today's, or those of the past day the SMAP map shows (js/soilmoisture.js mapDay), read again
+       when that day changes and rests ("wg-mapdate", WG.util.rested); a newer read's answer replaces an older one's */
+    const SMD = SMM && WG.soilmoisture.mapDay ? WG.soilmoisture.mapDay : () => null;
+    let msDay = SMD(), msSeq = 0;
+    const readMS = () => {
+      const my = ++msSeq, d = msDay;
+      return Promise.resolve().then(() => (d === null ? SMM(lat, lon) : WG.soilmoisture.summaryOn(lat, lon, d)))
+        .then(v => { if (my === msSeq) MS = v || { model: null, station: null }; }, e => { if (my === msSeq) MS = e instanceof Error ? e : new Error(String(e)); }).then(draw);
+    };
     const hzLink = cls => `<button class="link ${cls}" data-goto="soilmaps" data-so-go="#smHz">Horizons →</button>`;
     /* a row: v undefined while it is read (a skeleton), an Error (a dash and a reload button), or the value with its unit;
        side: its class chip or a plain note; tip: more about it, on hover. Written again only when it changes. */
     const row = (id, v, side = "", tip = "") => {
       const x = box(`so-${id}`), t = tiles.find(q => q[0] === id);
       if (!x || !t) return;
-      const g = GROUPS.find(q => q[0] === t[2]), h = `<th scope="row">${esc(t[1])}</th><td><div class="so-gv">${v === undefined ? `<span class="skeleton"></span>`
+      const g = GROUPS.find(q => q[0] === t[2]), h = `<th scope="row">${esc(id === "smm" && msDay !== null ? "That day (model)" : t[1])}</th><td><div class="so-gv">${v === undefined ? `<span class="skeleton"></span>`
         : v instanceof Error ? `<span class="so-gval">—</span><span class="so-gerr">Could not read${RETRY}</span>` : `<span class="so-gval">${v}</span>${side}`}</div></td><td class="so-ggo">${v === undefined ? ""
         : `<button type="button" class="so-go" data-goto="${goTo(t)}" data-so-go="${t[4]}" title="Details" aria-label="${esc(`${g ? `${g[1]}, ` : ""}${t[1]}`)}: details"><span aria-hidden="true">→</span></button>`}</td>`;
       if (x.soHtml !== h) { x.soHtml = h; x.innerHTML = h; }
@@ -841,6 +850,8 @@ WG.soilmaps = (function () {
           okT ? `${fmt(a / tf, a / tf < 1 ? 2 : 1)} × T: ${a <= tf ? "within" : "above"} the tolerable soil loss (T ${UN.fmt("soilLoss", tf, 1)}); gross sheet and rill erosion, all land in the HU12` : "Gross sheet and rill erosion, all land in the HU12"] : null));
       }
       if (has("moisture") && SMM) {
+        const gd = box("so-gd"), dTxt = msDay === null ? "" : `${WG.wind.dayLabel(msDay)}, as on the map`;
+        if (gd && gd.soDay !== dTxt) { gd.soDay = dTxt; gd.innerHTML = dTxt ? ` · ${esc(dTxt)}<button type="button" class="link" data-smm-latest>Back to today</button>` : ""; }
         const m = MS && !(MS instanceof Error) ? MS.model : null, s = MS && !(MS instanceof Error) ? MS.station : null;
         if (MS === undefined) { row("smm"); row("stn"); }
         else if (MS instanceof Error) ["smm", "stn"].forEach(k => row(k, MS));
@@ -870,7 +881,16 @@ WG.soilmaps = (function () {
     draw();
     const pS = survey(lat, lon).then(v => { S = v; }, e => { S = e instanceof Error ? e : new Error(String(e)); }).then(draw);
     const pN = sgN(lat, lon).then(v => { N = v; }, e => { N = e instanceof Error ? e : new Error(String(e)); }).then(draw);
-    const pM = SMM ? Promise.resolve().then(() => SMM(lat, lon)).then(v => { MS = v || { model: null, station: null }; }, e => { MS = e instanceof Error ? e : new Error(String(e)); }).then(draw) : null;
+    const pM = SMM ? readMS() : null;
+    if (SMM) {
+      const onDay = WG.util.rested(() => {
+        if (!live()) { document.removeEventListener("wg-mapdate", onDay); return; }
+        const d = SMD();
+        if (d === msDay) return;
+        msDay = d; MS = undefined; draw(); readMS();
+      });
+      document.addEventListener("wg-mapdate", onDay);
+    }
     const pG = Promise.all([usgsNear(lat, lon), chemLegend().catch(() => null)]).then(v => { G = v; }, e => { G = e instanceof Error ? e : new Error(String(e)); }).then(draw);
     await Promise.allSettled([pS, pN, pM, pG, pTab]);
     draw();

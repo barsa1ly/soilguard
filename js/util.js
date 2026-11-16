@@ -309,6 +309,14 @@ WG.util = (function () {
     let t;
     return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
   }
+  /* a handler for "wg-mapdate" (a map's date chosen on the time slider, a legend or a tab, or its layer turned on or
+     off): fn runs once the date rests, ms after the last change and not while the time slider plays or makes a GIF, so
+     a drag or a play reads nothing for the frames passed over */
+  function rested(fn, ms = 400) {
+    let t = 0;
+    const go = () => { clearTimeout(t); t = setTimeout(() => { if (WG.timeslider && WG.timeslider.playing) go(); else fn(); }, ms); };
+    return go;
+  }
 
   /* Parse "32.7, -101.9", "32.7 N 101.9 W", or DMS "32°44'9\"N 101°57'18\"W". */
   function parseCoords(text) {
@@ -401,7 +409,7 @@ WG.util = (function () {
     return document.activeElement === h;
   }
 
-  return { MONTHS, MONTHS_LONG, COMPASS, $, $$, esc, num, fmt, clamp, msToMph, compass, fetchJSON, fetchText, fetchBlob, fetchQ, keptInfo, keepClear, stashGet, stashPut, pool, debounce,
+  return { MONTHS, MONTHS_LONG, COMPASS, $, $$, esc, num, fmt, clamp, msToMph, compass, fetchJSON, fetchText, fetchBlob, fetchQ, keptInfo, keepClear, stashGet, stashPut, pool, debounce, rested,
     parseCoords, toast, download, linreg, cache, focusHead };
 })();
 

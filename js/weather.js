@@ -40,8 +40,8 @@ WG.weather = (function () {
      the whole box from the same service as the map */
   const DRO_REST = `${NOAA}vector/rest/services/outlooks/cpc_drought_outlk/MapServer`;
   const DRO_NAMES = { persistence: "Drought persists", improvement: "Drought remains but improves", removal: "Drought removal likely", development: "Drought development likely", "no drought": "No drought" };
-  // the area a drought map leaves uncoloured: no drought, but also no data (a week or a place the map does not cover)
-  const DM_NONE = "Data not available / no drought";
+  // the area a drought map leaves uncoloured: normal or wet (no drought), but also no data (a week or a place the map does not cover)
+  const DM_NONE = "Normal or wet / no data";
   const droShares = (name, id) => ({ id: `dro${id}`, wms: { url: DRO, layers: name }, legendJSON: { url: DRO_REST, id }, relabel: L => L.map(([c, l]) => [c, DRO_NAMES[l.toLowerCase()] || l]), none: DM_NONE });
   // the Drought Monitor's classes, D0 first as its own legend
   const dmClasses = () => DCLASS.slice().reverse().map(c => [c[3], `${c[0]} ${c[2]}`]);
@@ -270,10 +270,58 @@ WG.weather = (function () {
     WG.util.stashPut(ck, r);
     return r;
   };
-  const metSeries = (key, onFiles) => once(`dri:${key}`, () => metRead(key, false, onFiles));
+  // each series once read (token:what, the last 40), so a past date's values can come from it (metOn)
+  const metGot = new Map();
+  const metKeep = (what, p) => { const k = `${WG.state.token}:${what}`; p.then(r => { metGot.delete(k); metGot.set(k, r); if (metGot.size > 40) metGot.delete(metGot.keys().next().value); }, () => {}); return p; };
+  const metSeries = (key, onFiles) => metKeep(`dri:${key}`, once(`dri:${key}`, () => metRead(key, false, onFiles)));
   /* This week needs only the latest values, read on their own so that a row does not wait for a whole series: from the
      file server their chunk is the series' last, fetched once for both (js/h5range.js) */
-  const metLatest = key => once(`driL:${key}`, () => metRead(key, true));
+  const metLatest = key => metKeep(`driL:${key}`, once(`driL:${key}`, () => metRead(key, true)));
+  /* An index on a past day d at the point (the drought map's date): the 5-day step on or before d, with its own date.
+     From a series already read when it holds that step (This week's latest steps, Between years' whole series), else
+     the step alone: one value from THREDDS, or from the file server the chunk that holds it (311 steps of a block of
+     cells: about 0.6 MB, 1.9 MB for PDSI), which js/h5range.js keeps for the visit, so the dates near it come at once.
+     A step more than two months old no longer changes: kept in this browser for 30 days (a newer one for 6 hours). */
+  const gmStepOf = d => { const y = yearOf(d), doy = d - Wd.epochDay(y, 0, 1) + 1, m = Math.floor(doy / 5) - 1; return m >= 0 ? (y - 1980) * 73 + Math.min(72, m) : (y - 1981) * 73 + 72; };
+  function inSeries(S, d) {
+    if (!S || !Array.isArray(S.days) || !S.days.length || d < S.days[0] || d > S.days[S.days.length - 1] + 10) return null;
+    let n = S.days.length - 1;
+    while (n > 0 && S.days[n] > d) n--;
+    return { day: S.days[n], val: ok(S.vals[n]) ? S.vals[n] : null, src: S.src };
+  }
+  const metAtts = (das, v) => { const k0 = das.indexOf(`${v} {`), block = das.slice(k0, das.indexOf("}", k0)); return (k, d) => { const m = block.match(new RegExp(`${k} (-?[\\d.eE+-]+);`)); return m ? +m[1] : d; }; };
+  async function stepThredds(ds, v, j, i, k) {
+    const url = `${MET}${ds}_1979_CurrentYear_CONUS.nc`, [dds, das] = await metHead(ds), N = +((dds.match(/day = (\d+)\]/) || [])[1]);
+    if (!(N > 0)) throw new Error(`no time axis in ${ds}`);
+    const kk = Math.min(k, N - 1), att = metAtts(das, v);
+    const txt = await WG.util.fetchText(`${url}.ascii?day[${kk}:1:${kk}],${v}[${kk}:1:${kk}][${j}:1:${j}][${i}:1:${i}]`, 30000);
+    const x = /^\[0\]\[0\], (-?\d+(?:\.\d+)?)/m.exec(txt), d = /^day\[1\]\s*\n\s*(-?[\d.eE+]+)/m.exec(txt);
+    if (!x || !d) throw new Error(`could not read ${ds} on that date`);
+    return { day: Math.round(+d[1]) + DAY1900, val: +x[1] === att("_FillValue", 32767) ? null : +(+x[1] * att("scale_factor", 1) + att("add_offset", 0)).toFixed(2), src: "thredds" };
+  }
+  const stepFiles = (ds, fv, j, i, k) => WG.h5range.withFile(`${MDATA}${ds}.nc`, async F => {
+    const [day, x] = await Promise.all([F.dataset("day"), F.dataset(fv)]), N = x.shape[0], A = x.attrs;
+    if (x.rank !== 3 || x.shape[1] !== 585 || x.shape[2] !== 1386 || day.shape[0] !== N) throw new Error(`${ds}.nc is not laid out as gridMET's grid`);
+    const att = (n, dflt) => (Number.isFinite(A[n]) ? A[n] : dflt), kk = Math.min(k, N - 1);
+    const [raw, d] = await Promise.all([F.read(x, [kk, j, i], [1, 1, 1]), F.read(day, [kk], [1])]);
+    return { day: Math.round(d[0]) + DAY1900, val: raw[0] === att("_FillValue", 32767) ? null : +(raw[0] * att("scale_factor", 1) + att("add_offset", 0)).toFixed(2), src: "files" };
+  }, { pri: 3, keep: true });
+  async function metStep(key, k) {
+    const [ds, , v, , fv] = DRI.find(x => x[0] === key), { lat, lon } = WG.state.site;
+    const j = Math.round((49.4 - lat) * 24), i = Math.round((lon + 124.7666666333) * 24);
+    if (j < 0 || j > 584 || i < 0 || i > 1385) throw new Error("this point is outside gridMET (contiguous US only)");
+    const ck = `${MDATA}${ds}.nc?fg-cell=${j},${i},step=${k}`, kept = await WG.util.stashGet(ck, Wd.today() - gmStep(k) > 60 ? 30 * 864e5 : CELL_MS);
+    if (kept && Number.isFinite(kept.day)) return kept;
+    const r = await Wd.gridmetRead(thredds => (thredds ? stepThredds(ds, v, j, i, k) : stepFiles(ds, fv, j, i, k)));
+    WG.util.stashPut(ck, r);
+    return r;
+  }
+  const metOn = (key, d) => {
+    const k = gmStepOf(d), t = WG.state.token;
+    if (k < 0) return Promise.resolve(null);
+    const got = inSeries(metGot.get(`${t}:driL:${key}`), d) || inSeries(metGot.get(`${t}:dri:${key}`), d);
+    return got ? Promise.resolve(got) : once(`driAt:${key}:${k}`, () => metStep(key, k));
+  };
 
   /* ---------- gridMET's drought indices as a map: any 5-day step since 1980 ----------
      The University of Idaho's THREDDS server draws each index's grid for a date (its WMS, ncWMS 1.x, TIME=; a CORS
@@ -373,6 +421,7 @@ WG.weather = (function () {
     const p = gmShown();
     gmLayer.setParams({ time: `${Wd.isoDay(day)}T00:00:00.000Z` });
     gmRedraw();
+    document.dispatchEvent(new Event("wg-mapdate")); // the drought Overview follows the date (mapDate below)
     return p;
   }
   let gmPicked = 0;
@@ -389,6 +438,7 @@ WG.weather = (function () {
       gmLayer.setParams(gmParams(k));
       gmEnd().catch(() => {});
       gmRedraw();
+      document.dispatchEvent(new Event("wg-mapdate"));
       const T = WG.timeslider;
       if (T && T.adapter && T.adapter.key === "gridmet") T.refresh();
     });
@@ -463,6 +513,16 @@ WG.weather = (function () {
     } catch (e) { /* storage full or off: the weeks are read again next visit */ }
   }
   const usdmWeekAt = (d, lat, lon) => usdmAt(lat, lon, d).then(v => (v < 0 ? "n" : String(v)));
+  /* the class at the point on the map of week d (its Tuesday), for the Overview's past week: from the weeks kept in this
+     browser for the location (the History tab's), else asked of that week's map and kept with them */
+  const usdmOn = (lat, lon, d) => once(`usdmW:${d}`, async () => {
+    const key = usdmKey(lat, lon), k = Math.round((d - USDM_DAY0) / 7), c = usdmKept(key)[k];
+    if (c && /[n0-4]/.test(c)) return c === "n" ? -1 : +c;
+    const v = await usdmAt(lat, lon, d), s = usdmKept(key).padEnd(k + 1, "?").split("");
+    s[k] = v < 0 ? "n" : String(v);
+    usdmKeep(key, s.join(""));
+    return v;
+  });
   const LA = "https://services9.arcgis.com/RHVPKKiFTONKtxq3/arcgis/rest/services/US_Drought_Intensity_v1/FeatureServer/2/query";
   const LA_CREDIT = "Esri Living Atlas, U.S. Drought Intensity (US_Drought_Intensity_v1), a copy of the weekly maps";
   // the Living Atlas's last week (a day number), once a visit; a failed read is asked again next time
@@ -569,22 +629,52 @@ WG.weather = (function () {
      one, CPC's outlooks) and between years (the chosen index's whole series, from and to the chosen years) */
   // This week's indices in three groups, the short term to the long term: [heading, [[index, its name here]]]
   const DR_GROUPS = [["Short term", [["spi30d", "SPI, 30 days"]]], ["Season", [["spei90d", "SPEI, 90 days"]]], ["Long term", [["spei1y", "SPEI, 1 year"], ["pdsi", "Palmer index (PDSI)"]]]];
+  /* ---------- the drought map's date, which the Overview's first card follows ----------
+     null for this week: the Drought Monitor's map of this week, an outlook, gridMET's latest step, or no drought map on.
+     Else { day, kind }: the week of the Monitor's map a year or five years ago, or of a past week (the time slider, a
+     click on the History charts), kind "usdm", its Tuesday; or the 5-day step of a gridMET index chosen on the slider,
+     kind "gridmet". The card follows each change once the map rests (WG.util.rested: not while the slider plays or makes
+     a GIF): "wg-mapdate" comes from js/timemap.js and the gridMET map above, and the drought layers' coming and going
+     from the map (watchMap). Back to this week puts the index at its latest step, or the Monitor's map of this week. */
+  const AGO_W = { usdm1: 52, usdm5: 261 };
+  const onMap = k => { const it = layers.drought.find(x => x.key === k); return !!(WG.map && it && WG.map.hasLayer(it.layer)); };
+  function mapDate() {
+    if (onMap("gridmet")) return gmDay !== null && (gmLast === null || gmDay < gmLast) ? { day: gmDay, kind: "gridmet" } : null;
+    const top = TM.latest, ago = Object.keys(AGO_W).find(onMap), w = TM.week;
+    if (ago) return { day: top - AGO_W[ago] * 7, kind: "usdm" };
+    return onMap("usdmPast") && Number.isFinite(w) && w < top ? { day: w, kind: "usdm" } : null;
+  }
+  let drFill = null, drWhen = null, watching = false; // the card's filler for the location on show, and the date it shows
+  const sameWhen = (a, b) => (!a && !b) || (!!a && !!b && a.day === b.day && a.kind === b.kind);
+  const mapDateSoon = WG.util.rested(() => { const w = mapDate(); if (drFill && !sameWhen(w, drWhen)) drFill(w); });
+  document.addEventListener("wg-mapdate", mapDateSoon);
+  function watchMap() {
+    if (watching || !WG.map) return;
+    watching = true;
+    WG.map.on("layeradd layerremove", e => { if (layers.drought.some(x => x.layer === e.layer)) mapDateSoon(); });
+  }
+  function gmReset() { gmDay = null; delete gmLayer.wmsParams.time; gmLayer.redraw(); gmRedraw(); document.dispatchEvent(new Event("wg-mapdate")); }
+  document.addEventListener("click", e => {
+    if (!e.target.closest || !e.target.closest("[data-dr-now]")) return;
+    const T = WG.timeslider;
+    if (onMap("gridmet")) { if (T && T.adapter && T.adapter.key === "gridmet" && gmLast !== null) T.go(gmLast); else gmReset(); }
+    else if (WG.app && WG.app.setLive) WG.app.setLive("drought", "usdm");
+  });
   RENDER.drought = async (el, live) => {
     const { lat, lon } = WG.state.site;
+    watchMap();
     // the week-by-week and between-years parts: on the theme's History tab (a detail tab, index.html) when the page has one
     const hist = document.getElementById("tab-droughthist"), HIST = `<div id="drUsdm"></div><div id="drYears">${yearsWait()}</div>`;
-    el.innerHTML = `<div class="card"><div class="card-h"><h3>This week</h3><span class="tag" id="drDate"></span></div>
-        <div class="usdm-now dr-head" id="drNow" data-nofold><span>Drought Monitor: loading…</span></div>
+    el.innerHTML = `<div class="card"><div class="card-h"><h3 id="drTitle">This week</h3><span class="tag" id="drDate"></span></div>
+        <p class="dr-past" id="drPast" data-nofold hidden></p>
+        <div class="usdm-now dr-head" id="drNow" data-nofold></div>
         <p class="dr-sum" id="drSum" data-nofold hidden></p>
-        <div class="dr-groups" id="drLatest" data-nofold>${DR_GROUPS.map(([h, ks]) => `<div class="dr-g"><h4>${esc(h)}</h4><div>${ks.map(([k, n]) => `<div class="dr-r" id="drL_${k}"><span class="dr-n">${esc(n)}</span><b>…</b><span class="dr-c">Loading…</span></div>`).join("")}</div></div>`).join("")}</div>
-        <div class="wx-kv" style="margin-top:8px" id="drOutl"><div><span>Drought outlook, this month</span><b style="font-size:14px">Loading…</b></div><div><span>Drought outlook, this season</span><b style="font-size:14px">Loading…</b></div></div>
+        <div class="dr-groups" id="drLatest" data-nofold>${DR_GROUPS.map(([h, ks]) => `<div class="dr-g"><h4>${esc(h)}</h4><div>${ks.map(([k]) => `<div class="dr-r" id="drL_${k}"></div>`).join("")}</div></div>`).join("")}</div>
+        <div class="wx-kv" style="margin-top:8px" id="drOutl"></div>
         <p class="fine">Why they can differ: the Drought Monitor's map weighs many indicators and local reports, while each index looks at one window of time: SPI at the rain, SPEI at the rain less the evaporation and the Palmer index at a running soil water balance, so a wet month can lift the short term while the season or the year stays dry. Below 0 is drier than usual for the time of year; SPI and SPEI take the Monitor's ranges for them (D0 to D4) and the Palmer index Palmer's own classes. gridMET ranks each window against the years since 1980, so near the record's driest the values come in steps and two windows can show the same value. Sources: U.S. Drought Monitor; gridMET Drought (University of Idaho, 4 km)<span id="drLSrc"></span>; NOAA CPC outlooks. ${esc(USDM_CREDIT)}</p></div>
       ${hist ? `<div class="card cta"><div><h3>History</h3><p class="fine">The Drought Monitor here week by week since 2000, and the drought indices year against year since 1980.</p></div><button class="btn" data-goto="droughthist">Show history</button></div>` : HIST}`;
     if (hist) hist.innerHTML = HIST;
     const at = id => (live() ? el.querySelector(`#${id}`) || (hist && hist.querySelector(`#${id}`)) : null);
-    // each row and part drawn as its own answer comes; This week's values asked first (js/h5range.js also puts them first)
-    const latest = ["spi30d", "spei90d", "spei1y", "pdsi"].map(k => [k, metLatest(k)]);
-    const series = metSeries(driKey, () => { const x = at("drYears"); if (x && x.querySelector(".skeleton")) x.innerHTML = yearsWait(); });
     const srcs = new Set(), srcNote = () => { const x = at("drLSrc"); if (x) x.textContent = `, ${viaText(srcs)}`; };
     // its value, its class in words (the Drought Monitor's ranges for SPI and SPEI, with their colour; Palmer's classes for PDSI) and its date; a failed read says so, with the reload icon
     const latestRow = ([k, v, d, err]) => {
@@ -593,37 +683,72 @@ WG.weather = (function () {
       return `<span class="dr-n">${esc(name)}</span><b>${ok(v) ? fmt(v, 2) : "—"}</b><span class="dr-c">${err ? `could not be read ${RETRY}` : [word, d ? Wd.dayLabel(d) : ""].filter(Boolean).join(" · ")}</span>`;
     };
     const outl = a => (a === undefined ? "could not be read" : !a ? "none issued here" : `${String(a.outlook || "—").replace(/_/g, " ")}${a.target ? ` (${a.target})` : ""}`); // CPC writes No_Drought
-    /* one plain line under the headline that puts the Monitor's class and the indices together, once the four indices
-       have answered (drawn again with the Monitor's class): the windows whose rain is normal or wetter, those drier than
-       usual, and the slower Palmer index */
-    const seen = {}, WIN = { spi30d: "the last 30 days", spei90d: "the season", spei1y: "the year" };
-    const andList = a => (a.length > 1 ? `${a.slice(0, -1).join(", ")} and ${a[a.length - 1]}` : a[0] || "");
-    const summary = () => {
-      const x = at("drSum");
-      if (!x || !["spi30d", "spei90d", "spei1y", "pdsi"].every(k => k in seen)) return;
-      const ks = Object.keys(WIN).filter(k => ok(seen[k])), pd = ok(seen.pdsi) ? seen.pdsi : null;
-      const wet = ks.filter(k => !dclass(seen[k])).map(k => WIN[k]), dry = ks.filter(k => dclass(seen[k])).map(k => WIN[k]);
-      const pdDry = pd !== null && pd <= -0.5, pw = pd === null ? "" : pclass(pd);
-      const wetPart = wet.length ? `rain over ${andList(wet)} is normal or wetter${pd !== null && !pdDry ? ", as is the Palmer index" : ""}`
-        : pd !== null && !pdDry ? "the Palmer index is normal or wetter" : "";
-      const dryPart = andList([dry.length ? `${andList(dry)} ${dry.length > 1 || dry[0] === WIN.spi30d ? "have" : "has"} been drier than usual` : "",
-        pdDry ? `the slower Palmer index ${wetPart ? "still " : ""}shows ${/^incipient/.test(pw) ? "an " : ""}${pw}` : ""].filter(Boolean));
-      const said = [wetPart, dryPart].filter(Boolean).join("; ");
-      if (!said) return;
-      const dryAny = dry.length > 0 || pdDry, dm = seen.dm;
-      const tail = dm === undefined ? "" : dm >= 0 && !dryAny ? " The Monitor's weekly map is slower to change, so it can still show dryness after rain."
-        : dm < 0 && dryAny ? " The Monitor's map does not show a drought here yet: one to watch." : "";
-      x.textContent = `In short: ${said}.${tail}`;
-      x.hidden = false;
+    const KEYS = ["spi30d", "spei90d", "spei1y", "pdsi"], andList = a => (a.length > 1 ? `${a.slice(0, -1).join(", ")} and ${a[a.length - 1]}` : a[0] || "");
+    /* The first card, for the date the drought map shows (mapDate): this week, or a past week or 5-day step. Each part is
+       drawn as its own answer comes; a new date starts the card again and the older one's answers are dropped. A past
+       date gives the Monitor's class that week (usdmOn) and each index on that date (metOn); the outlooks are issued for
+       now only. Under the headline, one plain line puts the Monitor's class and the indices together once the four
+       indices have answered (drawn again with the Monitor's class): the windows whose rain is normal or wetter, those
+       drier than usual, and the slower Palmer index. */
+    let fillSeq = 0;
+    function fill(when) {
+      const my = ++fillSeq, cur = id => (my === fillSeq ? at(id) : null), put = (id, h) => { const x = cur(id); if (x) x.innerHTML = h; };
+      const past = !!when, seen = {}, dl = Wd.dayLabel;
+      drWhen = when;
+      // the Monitor's week: the map's own, or the one that holds gridMET's date (its maps start in January 2000)
+      const w = !past ? null : when.kind === "usdm" ? when.day : when.day >= USDM_DAY0 ? USDM_DAY0 + Math.floor((when.day - USDM_DAY0) / 7) * 7 : null;
+      const tl = cur("drTitle"), dt = cur("drDate"), pb = cur("drPast"), sm = cur("drSum");
+      if (tl) tl.textContent = !past ? "This week" : when.kind === "usdm" ? `Week of ${dl(when.day)}` : `On ${dl(when.day)}`;
+      if (dt) dt.textContent = past && w !== null ? `Drought Monitor of ${dl(w)}` : "";
+      if (pb) { pb.hidden = !past; pb.innerHTML = past ? `<span>${esc(`A past ${when.kind === "usdm" ? "week" : "date"}, as on the map.`)}</span><button type="button" class="link" data-dr-now>Back to this week</button>` : ""; }
+      if (sm) { sm.hidden = true; sm.textContent = ""; }
+      put("drNow", "<span>Drought Monitor: loading…</span>");
+      DR_GROUPS.forEach(([, ks]) => ks.forEach(([k, n]) => put(`drL_${k}`, `<span class="dr-n">${esc(n)}</span><b>…</b><span class="dr-c">Loading…</span>`)));
+      put("drOutl", past ? `<div><span>Drought outlooks</span><b style="font-size:14px">Issued for now only, not for past dates</b></div>`
+        : `<div><span>Drought outlook, this month</span><b style="font-size:14px">Loading…</b></div><div><span>Drought outlook, this season</span><b style="font-size:14px">Loading…</b></div>`);
+      const WIN = past ? { spi30d: "the 30 days before", spei90d: "that season", spei1y: "that year" } : { spi30d: "the last 30 days", spei90d: "the season", spei1y: "the year" };
+      const summary = () => {
+        const x = cur("drSum");
+        if (!x || !KEYS.every(k => k in seen)) return;
+        const ks = Object.keys(WIN).filter(k => ok(seen[k])), pd = ok(seen.pdsi) ? seen.pdsi : null, is = past ? "was" : "is";
+        const wet = ks.filter(k => !dclass(seen[k])).map(k => WIN[k]), dry = ks.filter(k => dclass(seen[k])).map(k => WIN[k]);
+        const pdDry = pd !== null && pd <= -0.5, pw = pd === null ? "" : pclass(pd);
+        const wetPart = wet.length ? `rain over ${andList(wet)} ${is} normal or wetter${pd !== null && !pdDry ? `, as ${is} the Palmer index` : ""}`
+          : pd !== null && !pdDry ? `the Palmer index ${is} normal or wetter` : "";
+        const dryPart = andList([dry.length ? `${andList(dry)} ${past ? "had" : dry.length > 1 || dry[0] === WIN.spi30d ? "have" : "has"} been drier than usual` : "",
+          pdDry ? `the slower Palmer index ${wetPart ? "still " : ""}${past ? "showed" : "shows"} ${/^incipient/.test(pw) ? "an " : ""}${pw}` : ""].filter(Boolean));
+        const said = [wetPart, dryPart].filter(Boolean).join("; ");
+        if (!said) return;
+        const dryAny = dry.length > 0 || pdDry, dm = seen.dm;
+        const tail = !ok(dm) ? "" : dm >= 0 && !dryAny ? ` The Monitor's weekly map is slower to change, so it ${past ? "could" : "can"} still show dryness after rain.`
+          : dm < 0 && dryAny ? (past ? " The Monitor's map did not show a drought here that week." : " The Monitor's map does not show a drought here yet: one to watch.") : "";
+        x.textContent = `In short: ${said}.${tail}`;
+        x.hidden = false;
+      };
+      // the headline: the Monitor's class here, its colour as a chip
+      const headline = (dm, wk) => { const c = dm < 0 ? null : DCLASS.find(q => q[0] === `D${dm}`); return c ? `<i style="background:${c[3]}"></i><b>Drought Monitor: ${esc(c[2])} (${c[0]})${esc(wk)}</b>` : `<i style="background:#fff"></i><b>Drought Monitor: no drought${esc(wk)} (normal or wet)</b>`; };
+      const row = k => r => { put(`drL_${k}`, latestRow(r)); seen[k] = r[1]; summary(); };
+      const failRow = k => e => [k, null, null, e || true];
+      if (!past) return Promise.allSettled([
+        usdmDate().then(d => { const x = cur("drDate"); if (x) x.textContent = `Drought Monitor of ${dl(d)}`; }).catch(() => {}),
+        usdmHere(lat, lon).then(dm => { put("drNow", headline(dm, " this week")); seen.dm = dm; summary(); }, () => put("drNow", `<span>The Drought Monitor could not be read. ${RETRY}</span>`)),
+        once("drOutl", () => droughtOutlook(lat, lon)).then(([om, os]) => put("drOutl", `<div><span>Drought outlook, this month</span><b style="font-size:14px">${esc(outl(om))}</b></div><div><span>Drought outlook, this season</span><b style="font-size:14px">${esc(outl(os))}</b></div>`)),
+        ...KEYS.map(k => metLatest(k).then(x => { let n = x.vals.length - 1; while (n > 0 && !ok(x.vals[n])) n--; srcs.add(x.src); srcNote(); return [k, x.vals[n], x.days[n]]; }).catch(failRow(k)).then(row(k)))]);
+      return Promise.allSettled([
+        w === null ? Promise.resolve(put("drNow", "<span>Drought Monitor: its maps start in January 2000.</span>"))
+          : usdmOn(lat, lon, w).then(dm => { put("drNow", headline(dm, when.kind === "usdm" ? " that week" : `, week of ${dl(w)}`)); seen.dm = dm; summary(); }, () => put("drNow", `<span>The Drought Monitor could not be read for that week. ${RETRY}</span>`)),
+        ...KEYS.map(k => metOn(k, when.day).then(r => { if (r) { srcs.add(r.src); srcNote(); } return r ? [k, r.val, r.day] : [k, null, null]; }).catch(failRow(k)).then(row(k)))]);
+    }
+    // the map's date changed (mapDateSoon): the card follows it, and says so to a screen reader while it is on show
+    drFill = w => {
+      if (!live()) return;
+      fill(w);
+      if (!el.hidden) WG.say(w ? `Drought: ${w.kind === "usdm" ? `the week of ${Wd.dayLabel(w.day)}` : Wd.dayLabel(w.day)}, as on the map` : "Drought: this week");
     };
-    const jobs = [
-      usdmDate().then(d => { const x = at("drDate"); if (x) x.textContent = `Drought Monitor of ${Wd.dayLabel(d)}`; }).catch(() => {}),
-      // the headline: the Drought Monitor's class here this week, its colour as a chip
-      usdmHere(lat, lon).then(dm => { const x = at("drNow"), c = dm < 0 ? null : DCLASS.find(c => c[0] === `D${dm}`); if (x) x.innerHTML = c ? `<i style="background:${c[3]}"></i><b>Drought Monitor: ${esc(c[2])} (${c[0]}) this week</b>` : `<i style="background:#fff"></i><b>Drought Monitor: no drought this week (normal or wet)</b>`; seen.dm = dm; summary(); },
-        () => { const x = at("drNow"); if (x) x.innerHTML = `<span>The Drought Monitor could not be read. ${RETRY}</span>`; }),
-      droughtOutlook(lat, lon).then(([om, os]) => { const x = at("drOutl"); if (x) x.innerHTML = `<div><span>Drought outlook, this month</span><b style="font-size:14px">${esc(outl(om))}</b></div><div><span>Drought outlook, this season</span><b style="font-size:14px">${esc(outl(os))}</b></div>`; }),
-      ...latest.map(([k, p]) => p.then(x => { let n = x.vals.length - 1; while (n > 0 && !ok(x.vals[n])) n--; srcs.add(x.src); srcNote(); return [k, x.vals[n], x.days[n]]; }).catch(e => [k, null, null, e || true])
-        .then(r => { const x = at(`drL_${k}`); if (x) x.innerHTML = latestRow(r); seen[k] = r[1]; summary(); })),
+    // the first card's values asked first (js/h5range.js also puts them first), then Between years' whole series
+    const first = fill(mapDate());
+    const series = metSeries(driKey, () => { const x = at("drYears"); if (x && x.querySelector(".skeleton")) x.innerHTML = yearsWait(); });
+    const jobs = [first,
       series.then(S => { if (live()) drawYears(S); }, e => { const x = at("drYears"); if (x) x.innerHTML = failed("gridMET's drought index", e); }),
       usdmHistory(),
     ];

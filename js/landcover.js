@@ -158,6 +158,16 @@ WG.landcover = (function () {
     if (y === null) { delete layer.wmsParams.time; layer.setUrl(layer._lc21.url, true); layer.setParams({ layers: layer._lc21.layers }); }
     else { layer.setUrl(ANNUAL, true); layer.setParams({ layers: ANNUAL_LAYER, time: `${y}-01-01` }); }
   }
+  /* the class at a point in a year of Annual NLCD (the Wind erosion Overview's land cover line while a year is on the map):
+     GeoServer's GetFeatureInfo on a box of ±0.0001° (3 x 3 pixels), the pixel under the point; its PALETTE_INDEX is the
+     NLCD class code, null for none */
+  async function annualAt(lat, lon, y) {
+    const b = [lat - 1e-4, lon - 1e-4, lat + 1e-4, lon + 1e-4].map(v => v.toFixed(6)).join(",");
+    const j = await fetchJSON(`${ANNUAL}?service=WMS&version=1.3.0&request=GetFeatureInfo&layers=${ANNUAL_LAYER}&query_layers=${ANNUAL_LAYER}&styles=&crs=EPSG:4326&bbox=${b}&width=3&height=3&i=1&j=1&info_format=application/json&time=${y}-01-01`, {}, 20000);
+    const f = j && Array.isArray(j.features) ? j.features[0] : null, v = f && f.properties ? +f.properties.PALETTE_INDEX : NaN;
+    if (!f) throw new Error("Annual NLCD gave no answer for this point");
+    return CLASSES.some(c => c[0] === v) ? v : null;
+  }
   const SH21 = { id: "nlcd", exact, none: null };
   const SHY = { id: "nlcd-annual", tag: () => String(year), none: "No data",
     url: (b, W, H, t) => `${ANNUAL}?service=WMS&version=1.3.0&request=GetMap&layers=${ANNUAL_LAYER}&styles=&crs=EPSG:4326&bbox=${b[1]},${b[0]},${b[3]},${b[2]}&width=${W}&height=${H}&format=image/png&transparent=true&time=${t}-01-01` };
@@ -235,5 +245,5 @@ WG.landcover = (function () {
   }
   // a boundary drawn, uploaded or cleared (js/area.js), or other states on the map (app.js): the card counts them
   ["wg-boundary", "wg-states"].forEach(ev => document.addEventListener(ev, drawCard));
-  return { legend, card, CLASSES, albers, readTiff, count, boundaryShares, classAt, exact, ITEM, annual: { years, set: setYear, year: () => year, URL: ANNUAL } };
+  return { legend, card, CLASSES, albers, readTiff, count, boundaryShares, classAt, exact, ITEM, annual: { years, set: setYear, year: () => year, at: annualAt, URL: ANNUAL } };
 })();
