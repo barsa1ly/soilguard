@@ -691,7 +691,7 @@ WG.soilmaps = (function () {
   const rowOf = (t, re, unit) => (t && t.rows.find(r => re.test(String(r[0])) && (!unit || r[2] === unit))) || null;
   const val = r => (r && ok(num(r[1])) ? num(r[1]) : null);
   /* the table's minerals: TOTAL amounts in the top 5 cm at the nearest USGS site, as the Soil tab's card gives them, and
-     the note above them (the site is added once it is read) */
+     the note above them (each row's tip names the site and its distance) */
   const MINERALS = [["Ca", "Calcium"], ["Mg", "Magnesium"], ["K", "Potassium"], ["P", "Phosphorus"], ["Fe", "Iron"]];
   const EL0 = `el${MINERALS[0][0]}`, EL_NOTE = "Minerals: total in the soil, not what a crop can take up";
   // a depth in brackets that stays on one line: no break at its spaces or after its dash
@@ -814,7 +814,7 @@ WG.soilmaps = (function () {
       /* the minerals, from the nearest USGS site with a top 5 cm sample (the Soil tab's Site 1 as a rule), as its card
          shows them, each against the US sites; the note above them names the site */
       const sites = G && !(G instanceof Error) ? G[0] : null, site = sites ? sites.find(s => s.p && s.p.top5cm) : null, lg = sites ? G[1] : null;
-      const nt = box("so-elnote"), note = [EL_NOTE, site && `${site === sites[0] ? "nearest " : ""}USGS site, ${dist(site.km)} ${site.dir}`, site && lg && "compared with US soils"].filter(Boolean).join(" · ");
+      const nt = box("so-elnote"), note = EL_NOTE; // the site and its distance are in each row's tip
       if (nt && nt.textContent !== note) nt.textContent = note;
       MINERALS.forEach(([e, name]) => {
         const id = `el${e}`, v = site ? dsVal(site, "top5cm", e) : null, c = lg && lg.elements && lg.elements[e] ? lg.elements[e].Top5 : null, k = v === null ? null : usClass(v, c);
