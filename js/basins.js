@@ -32,6 +32,26 @@ WG.basins = (function () {
   const GS = "https://api.water.usgs.gov/geoserver/wmadata/ows";
   const FAB = "https://api.water.usgs.gov/fabric/pygeoapi/collections";
   const WBD_ESRI = "https://services.arcgis.com/P3ePLMYs2RVChkJx/arcgis/rest/services/Watershed_Boundary_Dataset_HUC_12s/FeatureServer/0";
+  /* EPA EnviroAtlas's soil loss for the HUC12 at the point: the Soil loss card's quick estimate and the Overview's soil
+     loss row. RUSLE worked out for every 30 m cell of the 48 states and summed by HUC12 (R PRISM 1971-2000, K SSURGO, LS
+     from the 3DEP 30 m DEM, C from MODIS greenness calibrated to NRCS's 2015 National Resources Inventory for crops and
+     pasture, 2011 land cover, P = 1), in Mg/ha/yr (x 0.44609 = t/ac/yr). EPA's own point lookup (layer 0) gives its HUC12,
+     as some of its codes along the Rio Grande name other watersheds than today's WBD; its table (layer 48) the value.
+     EPA's public ArcGIS Online items: no key, CORS, about 0.4 s for the two, kept in this browser (js/util.js KEEP) as the
+     values do not change. It needs neither the HU12 nor the soil survey, so it comes first and stays when Soil Data Access
+     does not answer. -> { huc, mgha, a (t/ac/yr) }, or null where EPA has no HUC12 (open water, outside the 48 states) */
+  const EA = "https://services.arcgis.com/cJ9YHowT8TU7DUyn/arcgis/rest/services/";
+  async function eaAt(lat, lon) {
+    const q = new URLSearchParams({ geometry: `${lon},${lat}`, geometryType: "esriGeometryPoint", inSR: 4326, spatialRel: "esriSpatialRelIntersects", outFields: "HUC_12", returnGeometry: false, f: "json" });
+    const j = await fetchJSON(`${EA}Soilloss_Existinglandcover_tonnes_/FeatureServer/0/query?${q}`, {}, 20000);
+    if (j && j.error) throw new Error(j.error.message || "EnviroAtlas answered with an error");
+    const huc = String(((((j && j.features) || [])[0] || {}).attributes || {}).HUC_12 || "").replace(/\D/g, "");
+    if (!huc) return null;
+    const t = await fetchJSON(`${EA}RUSLE_SoilLossSedimentLoads_CONUS/FeatureServer/48/query?${new URLSearchParams({ where: `HUC_12='${huc}'`, outFields: "HUC_12,RUSLE_Base_Mgha", returnGeometry: false, f: "json" })}`, {}, 20000);
+    if (t && t.error) throw new Error(t.error.message || "EnviroAtlas answered with an error");
+    const v = num(((((t && t.features) || [])[0] || {}).attributes || {}).RUSLE_Base_Mgha);
+    return { huc, mgha: v, a: ok(v) ? v * 0.44609 : null };
+  }
   const rgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
 
   /* ---------- the map layers: an ArcGIS MapServer drawn as 512 px tiles of export images ----------
@@ -196,7 +216,7 @@ WG.basins = (function () {
     if (off) {
       try { return await wbd(true); } catch (e) { why = e.message || String(e); busy = busy || !!e.busy; hyDown(["wbd"], e); }
     }
-    throw new Error(`The National Map's watershed server did not answer${why ? ` (${why})` : ""}, nor its copies on Esri's Living Atlas and the USGS water data server${busy ? "; try again in a minute" : ""}`);
+    throw new Error(`The National Map's watershed server did not answer${why ? ` (${why})` : ""}, nor its copies on Esri's Living Atlas and the USGS water data server${busy ? "; try again in 2 minutes" : ""}`);
   }
   const FL_FIELDS = "nhdplusid,gnis_name,streamorde,hydroseq,dnhydroseq,dnminorhyd,qincrama,qama,areasqkm,totdasqkm,ftype";
   /* the NHDPlus HR flowlines and sinks inside the HU12, then their catchments by id (500 ids a request); each answer
@@ -451,12 +471,13 @@ WG.basins = (function () {
   const P_SCALE = "P is a fraction from 0 to 1: the soil lost with the practice ÷ the soil lost when farmed up and down the slope. 1 = no saving; 0.85 = 15% less soil loss; 0.5 = half; 0.25 = a quarter. It is never above 1 (1.5 or 100 are not P values) and never 0.";
 
   /* the user's choices, kept on this device: the storm, cropland's C, the support practice and its own P */
-  const pick = { storm: "2", cropC: 0.24, P: 1, ...(WG.util.cache.get("basins") || {}) };
+  const pick = { storm: "2", cropC: 0.24, P: 1, loss: "ea", ...(WG.util.cache.get("basins") || {}) };
+  if (!["ea", "app"].includes(pick.loss)) pick.loss = "ea"; // the soil loss shown: EPA EnviroAtlas's quick estimate, or this app's RUSLE
   if (!["2", "10", "100", "own"].includes(pick.storm)) pick.storm = "2";
   if (!ok(pick.cropC) || pick.cropC <= 0 || pick.cropC > 1) pick.cropC = 0.24;
   if (!ok(pick.P) || pick.P <= 0 || pick.P > 1) pick.P = 1; // as the box: above 0 (a P of 0 kept by an older version would claim no soil loss at all)
   if (!PRACTICES.some(p => p[0] === pick.pm)) pick.pm = pick.P === 1 ? "none" : "own"; // a P typed before the practices were offered stays
-  const keep = () => WG.util.cache.set("basins", { storm: pick.storm === "own" ? "2" : pick.storm, cropC: pick.cropC, P: pick.P, pm: pick.pm });
+  const keep = () => WG.util.cache.set("basins", { storm: pick.storm === "own" ? "2" : pick.storm, cropC: pick.cropC, P: pick.P, pm: pick.pm, loss: pick.loss });
   /* a soil component's P on cropland under the practice chosen (null: no slope to choose it by); contouring and strips are
      judged by the component's USLE slope length (m, to ft), terraces by their spacing */
   const pOf = (c, pm = pick.pm) => {
@@ -624,14 +645,11 @@ WG.basins = (function () {
   const P_TABLE = `<h4 class="sm-h">P by slope (Wischmeier &amp; Smith 1978, AH 537, Tables 13 and 14)</h4>${SM.grid([SM.th("Slope", "%"), SM.th("Contour farming"), SM.th("Longest slope", "ft"), SM.th("Strip cropping"), SM.th("Longest slope", "ft")],
     [["1–2", "0.60", "400", "0.30", "800"], ["3–5", "0.50", "300", "0.25", "600"], ["6–8", "0.50", "200", "0.25", "400"], ["9–12", "0.60", "120", "0.30", "240"], ["13–16", "0.70", "80", "0.35", "160"], ["17–20", "0.80", "60", "0.40", "120"], ["21–25", "0.90", "50", "0.45", "100"], ["over 25", "1.0", "—", "1.0", "—"]])}
     <p class="fine">Strip cropping: a 4-year rotation of row crop, small grain with meadow seeding and 2 years of meadow (alternate strips of row crop and winter grain: as contour farming). Where a soil's USLE slope length (SSURGO) is longer than the limit, rows overtop in big storms and the practice is taken to fail there: P 1. <b>Terraces</b> (contour-farmed, closed outlets): the contouring P for the slope, its limit checked against the terrace spacing, times a subfactor for the soil that settles in the terrace channels, by spacing: under 110 ft 0.5, 110–140 ft 0.6, 140–180 ft 0.7, 180–225 ft 0.8, 225–300 ft 0.9, over 300 ft 1.0 (Foster &amp; Highfill 1983, as in RUSLE, AH 703, chapter 6). Terraces also shorten the slope length to their spacing, which this app does not do, so A with terraces is on the high side. RUSLE works P out from ridge height, storm erosivity and furrow grade; these are the classic values.</p>`;
-  // the soil loss by RUSLE
-  function drawRusle() {
-    const x = box("bsRusleOut");
-    if (!x) return;
-    relabel();
-    if (M.err.soils || M.err.lc) { x.innerHTML = `<p class="fine">Could not read ${esc([M.err.soils && "the soil survey (SDA)", M.err.lc && "the land cover (MRLC)"].filter(Boolean).join(" or "))}. <button type="button" class="wx-retry" data-wx-retry title="Reload this part" aria-label="Reload this part"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/></svg></button></p>${helpBox("What the letters mean", RUSLE_VARS, P_TABLE)}`; return; }
+  // this app's RUSLE: its part of the card (what could not be read, what is still read, or the result), its A and T
+  function ownRusle() {
+    if (M.err.soils || M.err.lc) return { A: null, html: `<p class="fine">Could not read ${esc([M.err.soils && "the soil survey (SDA)", M.err.lc && "the land cover (MRLC)"].filter(Boolean).join(" or "))}. <button type="button" class="wx-retry" data-wx-retry title="Reload this part" aria-label="Reload this part"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/></svg></button></p>${helpBox("What the letters mean", RUSLE_VARS, P_TABLE)}` };
     const miss = [!M.soils && "the soil survey's K, slope and slope length", !M.lc && "the land cover", M.R === undefined && "the R factor (NLDI, RF7100)"].filter(Boolean);
-    if (miss.length) { x.innerHTML = `<p class="fine">Reading ${esc(miss.join(", "))}…</p>${helpBox("What the letters mean", RUSLE_VARS, P_TABLE)}`; return; }
+    if (miss.length) return { A: null, html: `<p class="fine">Reading ${esc(miss.join(", "))}…</p>${helpBox("What the letters mean", RUSLE_VARS, P_TABLE)}` };
     const S = M.soils, K = wmean(S, c => c.K), Ls = wmean(S, c => c.LS), KLS = wmean(S, c => (ok(c.K) && ok(c.LS) ? c.K * c.LS : null)), Tf = wmean(S, c => c.T);
     // P on cropland: by each soil's slope, or one value; K × LS × P averaged as K × LS is
     const KLSP = wmean(S, c => (ok(c.K) && ok(c.LS) && ok(pOf(c)) ? c.K * c.LS * pOf(c) : null));
@@ -658,7 +676,7 @@ WG.basins = (function () {
     T().basin_soils = { title: `Soil components in HU12 ${M.hu.huc12} (SSURGO by SDA)`, header: ["Map unit", "Map unit name", "Map unit share of HU12 (%)", "Component", "Component (%)", "Kind", "Major", "Hydrologic group", "K", "K source", "Slope (%)", "USLE slope length (m)", "L", "S", "LS", "T (t/ac/yr)", "P on cropland"],
       rows: S.map(c => [c.sym, c.mu, t2(100 * c.muShare), c.name, c.pct, c.kind || "", c.major ? "yes" : "no", c.hydgrp || "", c.K, c.kSrc === "kw" ? "Kw" : c.kSrc === "kf" ? "Kf" : "", c.slope, c.lam, t2(c.L), t2(c.S), t2(c.LS), c.T, t2(pOf(c))]) };
     const noR = !ok(R) ? `<p class="fine"><b>No R factor${ok(M.comid) ? ` for NHDPlus V2 COMID ${M.comid}` : ""}</b>${M.err.R ? ` (USGS NLDI: ${esc(String(M.err.R.message || M.err.R).trim())})` : ""}: type one above (US units; the USGS RF7100 grid or NRCS AH 703's isoerodent maps).</p>` : "";
-    x.innerHTML = `${noR}${kv([
+    return { A, T: Tf.v, html: `${noR}${kv([
       ["Soil loss, all land", ta(A), th_(A)],
       crop && ["Cropland", ta(Ac), `${th_(Ac)} · C ${pick.cropC} · P ${ok(P) ? fmt(P, 2) : "—"}`],
       ["Compared with T", ok(A) && Tf.v ? `${fmt(A / Tf.v, A / Tf.v < 1 ? 2 : 1)}${small("× T")}` : "—", ok(Tf.v) ? `T ${fmt(Tf.v, 1)} t/ac/yr (survey)${crop && ok(Ac) ? ` · cropland ${fmt(Ac / Tf.v, 1)} × T` : ""}` : ""],
@@ -668,7 +686,34 @@ WG.basins = (function () {
       ${SM.grid([SM.th("Factor"), SM.th("Value", "US units"), SM.th("SI"), SM.th("Source"), SM.th("Covers")], rows.map(r => [`${esc(r[0])}${r[7] ? `<small class="bs-mean">${esc(r[7])}</small>` : ""}`, `${r[1]}${r[2] ? ` <small>${esc(r[2])}</small>` : ""}`, r[3] ? `${r[3]} <small>${esc(r[4])}</small>` : "", esc(r[5]), esc(r[6])]))}</details>
       ${helpBox("What the letters mean", RUSLE_VARS, P_TABLE)}
       <p class="fine">A = R × K × LS × C × P (RUSLE, USDA Agriculture Handbook 703) in short tons per acre per year; × 2.2417 = metric tonnes per hectare. K and LS are taken together for each soil component, and land cover as independent of the soils inside the HU12; P applies to the cropland (NLCD cultivated crops), as the practices are ways of farming it. <button class="link" data-sm-csv="basin_soils">soil components (CSV)</button> · <button class="link" data-sm-csv="basin_rusle">factors (CSV)</button></p>
-      <p class="fine"><b>Limits:</b> gross sheet and rill erosion on the slopes, a long-term yearly average; not gullies, stream banks or channels, and not the sediment that leaves the HU12 (only part of it reaches the stream). LS comes from the survey's representative slope and slope length for each soil, not from a terrain model; C from land-cover classes is coarse (crops, residue and tillage change it ten-fold, so set cropland's C from your rotation); RUSLE fits rangeland, urban land and wetlands poorly. R: USGS RF7100 (Wieczorek &amp; LaMotte 2010; the PRISM-based 1971–2000 R of Daly &amp; Taylor) for the point's NHDPlus V2 catchment (USGS NLDI), or the nearest catchment's where the point's has none (a sink's), kept to 1%.</p>`;
+      <p class="fine"><b>Limits:</b> gross sheet and rill erosion on the slopes, a long-term yearly average; not gullies, stream banks or channels, and not the sediment that leaves the HU12 (only part of it reaches the stream). LS comes from the survey's representative slope and slope length for each soil, not from a terrain model; C from land-cover classes is coarse (crops, residue and tillage change it ten-fold, so set cropland's C from your rotation); RUSLE fits rangeland, urban land and wetlands poorly. R: USGS RF7100 (Wieczorek &amp; LaMotte 2010; the PRISM-based 1971–2000 R of Daly &amp; Taylor) for the point's NHDPlus V2 catchment (USGS NLDI), or the nearest catchment's where the point's has none (a sink's), kept to 1%.</p>` };
+  }
+  /* The Soil loss card: EPA EnviroAtlas's quick estimate or this app's RUSLE, as chosen in its list (the R, C and P boxes
+     with the latter), the other's value in a line under it. EPA's shows while it is read; this app's takes its place
+     when EPA has no value here or could not be read. */
+  const LOSS = [["ea", "EPA EnviroAtlas: quick, a national model"], ["app", "This app's RUSLE: your crop and practice"]];
+  const lossControl = () => `<div class="form-grid bs-src"><label>Soil loss from<select data-bs="loss">${LOSS.map(([k, n]) => `<option value="${k}"${k === pick.loss ? " selected" : ""}>${esc(n)}</option>`).join("")}</select></label></div>`;
+  const EA_NOTE = "EPA EnviroAtlas: RUSLE for every 30 m cell, averaged over the HUC12's land, with 2011 land cover, C from satellite greenness calibrated to NRCS's National Resources Inventory, slopes from a 30 m terrain model and no support practice (P = 1). A fixed national baseline: it does not follow your crop, tillage or practice, as this app's RUSLE does. Gross sheet and rill erosion, not the sediment that reaches a stream.";
+  const ta2 = v => `${fmt(v, v < 10 ? 2 : 1)}${small("t/ac/yr")}`;
+  function eaCard(E, own) {
+    if (E === undefined) return `<p class="fine">Reading EPA EnviroAtlas's soil loss for the HUC12…</p>`;
+    const v = E.a, T = own.T;
+    return `${kv([
+      ["Soil loss, all land", ta2(v), `${ok(E.mgha) ? `${fmt(E.mgha, E.mgha < 10 ? 2 : 1)} t/ha/yr · ` : ""}EPA EnviroAtlas${E.huc === M.hu.huc12 ? `, HUC12 ${esc(E.huc)}` : ""}`],
+      E.huc !== M.hu.huc12 && ["EPA's watershed", `HUC12 ${esc(E.huc)}`, `EPA's map of this area differs from today's: the HU12 drawn is ${esc(M.hu.huc12)}`],
+      ok(T) && T > 0 && ["Compared with T", `${fmt(v / T, v / T < 1 ? 2 : 1)}${small("× T")}`, `T ${fmt(T, 1)} t/ac/yr (survey)`],
+      ok(own.A) && ["This app's RUSLE", ta2(own.A), "with your crop and practice: choose it above"],
+    ])}<p class="fine">${esc(EA_NOTE)}</p>`;
+  }
+  function drawRusle() {
+    const x = box("bsRusleOut");
+    if (!x) return;
+    relabel();
+    const own = ownRusle(), E = M.ea, eaV = E && !(E instanceof Error) && ok(E.a) ? E.a : null, epa = pick.loss === "ea" && (E === undefined || eaV !== null);
+    const c = box("bsRusleCtl");
+    if (c) c.hidden = epa;
+    x.innerHTML = epa ? eaCard(E, own)
+      : `${pick.loss === "ea" ? `<p class="fine">EPA EnviroAtlas ${E instanceof Error ? "could not be read" : "gives no soil loss here"}: this app's RUSLE is shown.</p>` : ""}${own.html}${eaV !== null ? `<p class="fine">EPA EnviroAtlas: ${fmt(eaV, eaV < 10 ? 2 : 1)} t/ac/yr for its HUC12 ${esc(E.huc)} (2011 land cover, P = 1), a quick national estimate: choose it in the list above.</p>` : ""}`;
     summary();
   }
   /* the factors' table is folded each time the tab is drawn (a new point, other units); it stays as you left it while
@@ -686,6 +731,9 @@ WG.basins = (function () {
       ["Point's drainage area", N.here && N.here.a ? t2(num(N.here.a.totdasqkm)) : null, "km2", `${netName(N)} VAA`], ["Upstream catchments in the HU12 (with the point's)", N.here ? N.upN + 1 : null, "", "hydroseq"], ["Upstream area in the HU12", N.here ? t2(N.upKm2) : null, "km2", ""]);
     if (C && ok(M.P)) rows.push(["Storm depth, 24 h", t2(M.P), "mm", storm() !== "own" ? `NOAA Atlas 14, ${storm()}-yr` : "typed"], ["Curve number (area-weighted)", t2(C.cn), "", "TR-55, NLCD 2021 x SSURGO groups"], ["Storm runoff Q", t2(C.q), "mm", "per land cover and soil group, averaged"],
       ["Storm runoff volume", t2((C.q / 1000) * C.land * 1e6), "m3", ""], ...HSG.map(g => [`Hydrologic group ${g}`, t2(100 * C.h[g]), "% of area with a group", "SSURGO"]));
+    const E = M.ea;
+    if (E && !(E instanceof Error) && ok(E.a)) rows.push(["Soil loss, EPA EnviroAtlas", t2(E.a), "t/ac/yr", `EPA EnviroAtlas RUSLE (2011 land cover, P = 1), its HUC12 ${E.huc}${E.huc !== hu.huc12 ? ", not the HU12 above" : ""}`],
+      ["Soil loss, EPA EnviroAtlas", t2(E.mgha), "t/ha/yr", ""]);
     if (R) rows.push(["NHDPlus V2 COMID", ok(M.comid) ? String(M.comid) : "", "", "USGS NLDI"], ["R", t2(R.R), "hundreds ft-tonf-in/(ac-h-yr)", M.Rsrc || "USGS RF7100"], ["K", t2(R.K.v), "US", "SSURGO"], ["LS", t2(R.Ls.v), "", "SSURGO slope, slope length"], ["C", t2(R.C), "", "NLCD 2021"], ["P", t2(R.P), "", `${pName()}, cropland only`],
       ["Soil loss A, all land", t2(R.A), "t/ac/yr", "RUSLE, gross sheet and rill"], ["Soil loss A, all land", t2(ok(R.A) ? R.A * 2.2417 : null), "t/ha/yr", ""], ["Soil loss A, cropland", t2(R.Ac), "t/ac/yr", `C = ${pick.cropC}`], ["T", t2(R.Tf.v), "t/ac/yr", "SSURGO tfact"]);
     const pt = pointCn();
@@ -726,6 +774,9 @@ WG.basins = (function () {
     return m[k];
   };
   async function render(el, live, lat, lon, say) {
+    // EPA's quick estimate asked at once, beside the watershed: it needs neither the HU12 nor the soil survey
+    const eaP = Wx.once("bs:ea", () => eaAt(lat, lon));
+    eaP.catch(() => {});
     // The National Map's watershed server slow to answer: said after 5 s, as its copy is read only after 12 s
     const slow = setTimeout(() => { if (live() && wbdAsked) el.innerHTML = Wx.wait("the watershed (HU12) at the point. The National Map's server is slow to answer: a copy of its map is read if it has not answered in 12 s"); }, 5000);
     const h0 = await Wx.once("bs:hu12", () => hu12At(lat, lon)).finally(() => clearTimeout(slow));
@@ -735,13 +786,13 @@ WG.basins = (function () {
     if (!hu) { el.innerHTML = `<div class="card">${SM.head("Basin: runoff and soil loss", "")}<p class="fine">No 12-digit hydrologic unit (WBD) holds this point.</p></div>`; return; }
     const st = (WG.state.siteState || {}).code || "";
     if (pick.storm === "own") pick.storm = "2"; // a typed depth belongs to its point
-    M = { el, live, tok: WG.state.token, hu, lat, lon, st, net: null, soils: null, lc: null, R: undefined, Rv: null, a14: undefined, own: null, err: {}, nldi: null, v2try: hyOff("hr"), say: say || (() => {}) };
+    M = { el, live, tok: WG.state.token, hu, lat, lon, st, net: null, soils: null, lc: null, R: undefined, Rv: null, a14: undefined, own: null, err: {}, nldi: null, v2try: hyOff("hr"), ea: undefined, say: say || (() => {}) };
     const me = M, mine = () => M === me && live();
     el.innerHTML = `<div class="card">${SM.head("Basin: watershed and mean annual runoff", "basin", `HU12 ${hu.huc12}`)}
         <p class="fine" style="margin-top:0"><b>${esc(hu.name)}</b>, HUC ${esc(hu.huc12)}: ${fmt(hu.km2, 1)} km² (${UN.fmt("area", hu.km2 * 1e6)}), flows to HU12 ${esc(hu.tohuc || "—")}. The small watershed (HU12) that holds the point, from the USGS Watershed Boundary Dataset${HU_WHY[hu.src] || ""}, drawn on the map with its catchments while this theme is on.</p>
         <div id="bsNet"></div></div>
       <div class="card">${SM.head("Design-storm runoff (curve number)", "basin_landcover", "TR-55")}<div id="bsCnCtl"></div><div id="bsCnOut"></div></div>
-      <div class="card">${SM.head("Soil loss (RUSLE)", "basin_rusle", "sheet and rill")}<div id="bsRusleCtl">${rusleControls()}</div><div id="bsRusleOut"></div></div>`;
+      <div class="card">${SM.head("Soil loss (RUSLE)", "basin_rusle", "sheet and rill")}${lossControl()}<div id="bsRusleCtl">${rusleControls()}</div><div id="bsRusleOut"></div></div>`;
     overlay(M);
     const n0 = WG.state.nlcd;
     M.ptLc = n0 && n0.src === "nlcd" && n0.code ? { code: n0.code, src: "MRLC" } : undefined;
@@ -750,6 +801,7 @@ WG.basins = (function () {
     const done = (k, f) => v => { if (!mine()) return; M[k] = v; f(); tell(); }, fail = (k, f) => e => { console.warn("basins", k, e); if (!mine()) return; M.err[k] = e instanceof Error ? e : new Error(String(e)); f(); tell(); };
     const both = () => { drawCn(); drawRusle(); };
     const jobs = [
+      eaP.then(v => { if (!mine()) return; M.ea = v; drawRusle(); }, e => { console.warn("basins: EnviroAtlas", e); if (mine()) { M.ea = e instanceof Error ? e : new Error(String(e)); drawRusle(); } }),
       perHu(hu.huc12, "net", () => netIn(hu, () => { if (mine()) { M.v2try = true; drawNet(); } })).then(hr => { if (!mine()) return; M.net = network(hr, hu, lat, lon); overlay(M); drawNet(); summary(); T().basin_catchments = catTable(); tell(); }, fail("net", drawNet)),
       perHu(hu.huc12, "soils", () => soilsIn(hu)).then(done("soils", both), fail("soils", both)),
       M.ptLc ? null : Wx.once("bs:lcpt", () => WG.landcover.classAt(lat, lon)).then(code => { if (mine()) { M.ptLc = { code, src: "MRLC WCS" }; drawCn(); } }, e => { console.warn("basins point land cover", e); if (mine()) { M.ptLc = e instanceof Error ? e : new Error(String(e)); drawCn(); } }),
@@ -802,6 +854,7 @@ WG.basins = (function () {
       if (good) { pick.P = v; keep(); drawRusle(); relabel(); }
     }
     else if (k === "R") { M.Rv = ok(v) && v > 0 ? v : null; M.Rsrc = M.R && ok(M.Rv) && Math.abs(M.Rv - M.R.R) < 0.06 ? M.Rsrc0 : "typed by you"; drawRusle(); }
+    else if (k === "loss") { pick.loss = t.value === "app" ? "app" : "ea"; keep(); drawRusle(); } // drawRusle's summary tells the Overview's row
   }
   // a list answers on "change", a box on "input" (each fires both, which would draw the results twice)
   ["input", "change"].forEach(ev => document.addEventListener(ev, e => { const t = e.target.closest && e.target.closest("[data-bs]"); if (t && (ev === "change") === (t.tagName === "SELECT")) onInput(t); }));
@@ -831,5 +884,6 @@ WG.basins = (function () {
   });
 
   SM.addPart({ key: "basin", wait: "the watershed (HU12) at the point", render, tab: "soilbasin" });
-  return { hu12At, hrIn, v2In, netIn, network, soilsIn, comidAt, rAt, rNear, rFile, a14At, ls, scsQ, CN, CN_AS, C_OF, RUN, A14, pContour, pStrip, P_TERR };
+  return { hu12At, hrIn, v2In, netIn, network, soilsIn, comidAt, rAt, rNear, rFile, a14At, ls, scsQ, CN, CN_AS, C_OF, RUN, A14, pContour, pStrip, P_TERR,
+    eaAt, lossSrc: () => pick.loss };
 })();

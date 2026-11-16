@@ -74,14 +74,15 @@
   const map = L.map("map", { zoomControl: false, preferCanvas: true, worldCopyJump: false, tap: true, zoomAnimation: !RM, fadeAnimation: !RM, markerZoomAnimation: !RM })
     .setView([32.2, -100.6], 6);
   WG.map = map;
-  /* reset view: a "[ ]" button under + and - (alone on phones, where + and - are hidden): the map fits the chosen states
-     again. Added before the zoom control, as Leaflet stacks later bottom controls above earlier ones. */
+  /* reset view: a "[ ]" button under + and - (alone on phones, where + and - are hidden): the whole state or the chosen
+     states again, with the point and the area put away (wholeView, below). Added before the zoom control, as Leaflet
+     stacks later bottom controls above earlier ones. */
   const ResetView = L.Control.extend({ options: { position: "bottomright" }, onAdd() {
     const b = L.DomUtil.create("button", "map-reset");
-    b.type = "button"; b.title = "Reset view: the chosen states"; b.setAttribute("aria-label", "Reset view: show the chosen states");
+    b.type = "button"; b.title = "Reset view: the chosen states, the point and area cleared"; b.setAttribute("aria-label", "Reset view: show the chosen states and clear the point or area");
     b.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>';
     L.DomEvent.disableClickPropagation(b);
-    L.DomEvent.on(b, "click", e => { L.DomEvent.preventDefault(e); if (regionBounds) map.fitBounds(regionBounds, { animate: !RM }); else map.setView([32.2, -100.6], 6); });
+    L.DomEvent.on(b, "click", e => { L.DomEvent.preventDefault(e); wholeView(); });
     return b;
   } });
   new ResetView().addTo(map);
@@ -211,6 +212,7 @@
   };
 
   let baseKey = "plain"; // Plain (no base map) under the data layers by default; Satellite and the others are in Layers
+  let autoImg = false; // USGS imagery + topo put under the outlines by wholeView while no data layer is on (below)
   bases[baseKey].layer.addTo(map);
   if (!bases[baseKey].labels) refs.labels.on = false; // the names overlay comes with the bases that carry it (setBase)
   Object.values(refs).forEach(r => r.on && r.layer.addTo(map));
@@ -492,6 +494,7 @@
     applyOpacity();
     renderLegend();
     renderThemeBar();
+    baseFollow();
     if (!$("#layerSheet").hidden) buildLayerSheet();
     const T = WG.weather.THEMES.find(x => x.key === state.theme);
     $("#hintText").textContent = T.hint;
@@ -545,11 +548,12 @@
       applyOpacity();
     }
     renderLegend();
+    baseFollow();
   }
 
   $("#layerSheet").addEventListener("click", e => {
     const b = e.target.closest("[data-base]");
-    if (b) setBase(b.dataset.base);
+    if (b) { autoImg = false; setBase(b.dataset.base); } // a base chosen here stays: the reset swaps only Plain, and only while no data layer is on
     const t = e.target.closest("[data-theme]");
     if (t) setTheme(t.dataset.theme);
   });
@@ -557,6 +561,23 @@
     const i = e.target;
     if (i.dataset.group) setToggle(i.dataset.group, i.dataset.key, i.checked);
   });
+  /* The whole state or the chosen states again (the map's reset button): the point and the area are put away (the
+     panel's close, the area's Clear and its sheet, a USGS site's or pedon's pin; the Basin tab's watershed goes with the
+     point), and the map fits the states. With no data layer on (no erosion overlay, no live layer of the theme, no land
+     cover), USGS imagery + topo comes under the outlines instead of the blank Plain base; the next data layer turned on
+     brings Plain back (baseFollow), unless a base was chosen in Layers meanwhile. */
+  const dataOn = () => Object.values(themes).some(t => t.on) || Object.values(live[state.theme] || {}).some(t => t.on) || soilLayers.nlcd.on;
+  function baseFollow() { if (autoImg && baseKey === "usgsimg" && dataOn()) { autoImg = false; setBase("plain"); } }
+  function wholeView() {
+    pickSeq++; map.getContainer().classList.remove("checking"); // a tap still being checked (buildings, roads, water) is dropped
+    const open = !!state.site, resizes = open && (!app.classList.contains("map-big") || phone());
+    if (open) $("#closePanelBtn").click();
+    if (WG.soilmaps && WG.soilmaps.clearPin) WG.soilmaps.clearPin();
+    if (WG.area && WG.area.reset) WG.area.reset();
+    if (!dataOn() && bases[baseKey].blank) { setBase("usgsimg"); autoImg = true; }
+    // at once, and again once the map has its new size after the panel closed (settleMap)
+    if (regionBounds) { map.fitBounds(regionBounds, { animate: !RM }); if (resizes) pendingFit = regionBounds; } else map.setView([32.2, -100.6], 6);
+  }
   /* Statewide overlays are 1 km grids: fade them as you zoom in so imagery, roads and soil lines read through. */
   let userOpacity = 0.6;
   function applyOpacity() {
@@ -1013,12 +1034,13 @@
     g.setAttribute("aria-label", mode === "split" ? "Lower the results to a bar and show the map" : "Show the results");
     // follow the grid transition, then settle (timers rather than rAF so background tabs still settle)
     // the map container animates; a ResizeObserver settles it once the size stops changing
-    setTimeout(() => { if (pendingView) settleMap(); }, 1200); // fallback if the size never changed
+    setTimeout(() => { if (pendingView || pendingFit) settleMap(); }, 1200); // fallback if the size never changed
   }
-  let pendingView = null;
+  let pendingView = null, pendingFit = null; // pendingFit: the chosen states, fitted again once the panel has closed (wholeView)
   function settleMap() {
     map.invalidateSize({ pan: false });
     if (pendingView) { map.setView(pendingView.ll, pendingView.z, { animate: false }); pendingView = null; }
+    else if (pendingFit) { map.fitBounds(pendingFit, { animate: false }); pendingFit = null; }
     else if (state.site) keepPinVisible();
     Ch.resizeAll();
   }

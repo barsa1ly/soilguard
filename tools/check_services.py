@@ -184,6 +184,10 @@ def checks():
           has_keys("features"), flaky="known flaky: slow at times (25 s to over 60 s on 12 Nov 2026, no answer on 16 Nov); the app then reads NHDPlus V2 (below)"),
         C("Esri Living Atlas (WBD copy)", "the HU12 at a point", arcgis_point("https://services.arcgis.com/P3ePLMYs2RVChkJx/arcgis/rest/services/Watershed_Boundary_Dataset_HUC_12s/FeatureServer/0", "huc12,name"),
           has_keys("features")),
+        C("EPA EnviroAtlas (soil loss)", "its HUC12 at a point", arcgis_point("https://services.arcgis.com/cJ9YHowT8TU7DUyn/arcgis/rest/services/Soilloss_Existinglandcover_tonnes_/FeatureServer/0", "HUC_12"),
+          has_keys("features")),
+        C("EPA EnviroAtlas (soil loss)", "a HUC12's RUSLE soil loss", "https://services.arcgis.com/cJ9YHowT8TU7DUyn/arcgis/rest/services/RUSLE_SoilLossSedimentLoads_CONUS/FeatureServer/48/query?" + urlencode(
+            {"where": "HUC_12='120702040101'", "outFields": "HUC_12,RUSLE_Base_Mgha", "returnGeometry": "false", "f": "json"}), has_keys("features")),
         C("USGS water data server, OGC API (WBD copy)", "the HU12 at a point (WBD of January 2025)", "https://api.water.usgs.gov/fabric/pygeoapi/collections/wbd12_20250107/items?" + urlencode(
             {"f": "json", "bbox": f"{LON - 1e-6:.6f},{LAT - 1e-6:.6f},{LON + 1e-6:.6f},{LAT + 1e-6:.6f}", "properties": "huc12", "skipGeometry": "true"}), has_keys("features"),
           flaky="slow at times (3 to 13 s on 16 Nov 2026)"),

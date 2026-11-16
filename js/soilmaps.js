@@ -757,6 +757,11 @@ WG.soilmaps = (function () {
        when that day changes and rests ("wg-mapdate", WG.util.rested); a newer read's answer replaces an older one's */
     const SMD = SMM && WG.soilmoisture.mapDay ? WG.soilmoisture.mapDay : () => null;
     let msDay = SMD(), msSeq = 0;
+    /* EPA EnviroAtlas's soil loss for the HUC12 (js/basins.js eaAt; one request, shared with the Basin tab), asked at
+       once: the soil loss row gives it, marked "(EnviroAtlas)", when it is chosen in the Basin tab's Soil loss list (the
+       default), and while this app's RUSLE is still worked out or could not be */
+    let EA; // undefined while read, the answer ({ huc, mgha, a } or null), or an Error
+    const pE = WG.basins && WG.basins.eaAt && has("basin") ? Wx.once("bs:ea", () => WG.basins.eaAt(lat, lon)).then(v => { EA = v; }, e => { EA = e instanceof Error ? e : new Error(String(e)); }).then(() => draw()) : null;
     const readMS = () => {
       const my = ++msSeq, d = msDay;
       return Promise.resolve().then(() => (d === null ? SMM(lat, lon) : WG.soilmoisture.summaryOn(lat, lon, d)))
@@ -846,8 +851,12 @@ WG.soilmaps = (function () {
         // the whole HU12's average, as the Basin card's "The whole HU12" line; the card gives the point's own first
         later("basin", "storm", () => (ok(q) && ok(p) ? [UN.html("precip", q), aside(`${fmt((100 * q) / p, 0)}% of the rain`), `${fmt((100 * q) / p, 0)}% of the rain of the ${yr ? `${yr[1]}-year` : "chosen"}, 24-hour storm (${UN.fmt("precip", p)}) runs off, on average over the whole HU12${ok(qp) ? `; at the point itself ${UN.fmt("precip", qp)} (${fmt((100 * qp) / p, 0)}%)` : ""}`] : null));
         const R = T.basin_rusle, a = val(rowOf(B, /^Soil loss A, all land/, "t/ac/yr")) ?? val(rowOf(R, /^A, all land/)), tf = val(rowOf(B, /^T$/, "t/ac/yr")) ?? val(rowOf(R, /^T, tolerable/)), okT = ok(tf) && tf > 0;
-        later("basin", "loss", () => (ok(a) ? [UN.html("soilLoss", a, a < 10 ? 1 : 0), okT ? chip(a <= tf ? "Tolerable" : "Above tolerable", a <= tf ? "#2f8f5b" : a <= 2 * tf ? "#e0742c" : "#b3261e") : "",
-          okT ? `${fmt(a / tf, a / tf < 1 ? 2 : 1)} × T: ${a <= tf ? "within" : "above"} the tolerable soil loss (T ${UN.fmt("soilLoss", tf, 1)}); gross sheet and rill erosion, all land in the HU12` : "Gross sheet and rill erosion, all land in the HU12"] : null));
+        const eaV = EA && !(EA instanceof Error) && ok(EA.a) ? EA.a : null, byEpa = (WG.basins && WG.basins.lossSrc ? WG.basins.lossSrc() : "app") === "ea";
+        const eaRow = () => [UN.html("soilLoss", eaV, eaV < 10 ? 1 : 0), aside("(EnviroAtlas)"), `EPA EnviroAtlas: RUSLE soil loss for the HUC12 ${EA.huc}, a national model with 2011 land cover and P = 1; quick, and there while the soil survey cannot be read. The Basin tab's Soil loss list has this app's own RUSLE, with your crop and practice.`];
+        if (byEpa && EA === undefined && pE) row("loss");
+        else if (byEpa && eaV !== null) row("loss", ...eaRow());
+        else later("basin", "loss", () => (ok(a) ? [UN.html("soilLoss", a, a < 10 ? 1 : 0), okT ? chip(a <= tf ? "Tolerable" : "Above tolerable", a <= tf ? "#2f8f5b" : a <= 2 * tf ? "#e0742c" : "#b3261e") : "",
+          okT ? `${fmt(a / tf, a / tf < 1 ? 2 : 1)} × T: ${a <= tf ? "within" : "above"} the tolerable soil loss (T ${UN.fmt("soilLoss", tf, 1)}); gross sheet and rill erosion, all land in the HU12` : "Gross sheet and rill erosion, all land in the HU12"] : eaV !== null ? eaRow() : null));
       }
       if (has("moisture") && SMM) {
         const gd = box("so-gd"), dTxt = msDay === null ? "" : `${WG.wind.dayLabel(msDay)}, as on the map`;
@@ -859,7 +868,9 @@ WG.soilmaps = (function () {
           const top0 = m ? num(m.top) : null, w = wetClass(top0), sv = s ? num(s.value) : null;
           row("smm", ok(top0) ? u(fmt(top0, 2), "m³/m³") : "—", ok(top0) ? (w ? chip(w.name, w.color) : "") : aside("No value here"),
             m ? `${ok(top0) ? `${fmt(100 * top0, 0)}% water by volume, top layer; ` : ""}root zone ${ok(num(m.root)) ? fmt(num(m.root), 2) : "—"} m³/m³${m.src ? ` · ${m.src}` : ""}${m.date ? `, ${m.date}` : ""}${w ? `. ${w.tip}` : ""}` : "");
-          row("stn", ok(sv) ? u(fmt(sv, 2), "m³/m³") : "—", s ? aside(ok(num(s.km)) ? `${dist(num(s.km))}${s.dir ? ` ${s.dir}` : ""}` : s.net || "") : aside("None within 400 km"),
+          if (s instanceof Error) row("stn", s);
+          else if (s && s.none) row("stn", "—", aside("No reading that day"), "The nearest stations have no daily mean for that day");
+          else row("stn", ok(sv) ? u(fmt(sv, 2), "m³/m³") : "—", s ? aside(ok(num(s.km)) ? `${dist(num(s.km))}${s.dir ? ` ${s.dir}` : ""}` : s.net || "") : aside("None within 400 km"),
             s ? `${s.name || ""}${s.net ? `, ${s.net}` : ""}${ok(num(s.depthIn)) ? ` · ${UN.fmt("depth", num(s.depthIn) * 2.54)}` : ""}${s.time ? ` · ${s.time}` : ""}` : "");
         }
       } else if (has("moisture")) {
@@ -885,6 +896,7 @@ WG.soilmaps = (function () {
     if (SMM) {
       const onDay = WG.util.rested(() => {
         if (!live()) { document.removeEventListener("wg-mapdate", onDay); return; }
+        if (!WG.state.site) return;
         const d = SMD();
         if (d === msDay) return;
         msDay = d; MS = undefined; draw(); readMS();
@@ -892,7 +904,7 @@ WG.soilmaps = (function () {
       document.addEventListener("wg-mapdate", onDay);
     }
     const pG = Promise.all([usgsNear(lat, lon), chemLegend().catch(() => null)]).then(v => { G = v; }, e => { G = e instanceof Error ? e : new Error(String(e)); }).then(draw);
-    await Promise.allSettled([pS, pN, pM, pG, pTab]);
+    await Promise.allSettled([pS, pN, pM, pG, pTab, pE]);
     draw();
   };
   // a row's →, or a link of the headline: the tab it names (app.js shows it on data-goto), scrolled to the card

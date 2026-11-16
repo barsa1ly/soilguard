@@ -45,7 +45,8 @@ WG.util = (function () {
     /^https:\/\/thredds\.northwestknowledge\.net\/.*\.ascii\?/, /^https:\/\/nominatim\.openstreetmap\.org\//,
     /^https:\/\/imagery\.geoplatform\.gov\/iipp\/rest\/services\/Soil_Geology\/.*\/ImageServer\/getSamples\?/,
     /^https:\/\/mrdata\.usgs\.gov\/(services\/wfs\/ds801\?|ds-801\/json\/)/, /^https:\/\/rest\.isric\.org\/soilgrids\/v2\.0\/properties\/query\?/,
-    /^https:\/\/ndmcgeodata\.unl\.edu\/cgi-bin\/mapserv\.exe\?map=\/ms4w\/apps\/usdm\/map\/usdm_\d{8}_wms\.map&.*REQUEST=GetMap&/];
+    /^https:\/\/ndmcgeodata\.unl\.edu\/cgi-bin\/mapserv\.exe\?map=\/ms4w\/apps\/usdm\/map\/usdm_\d{8}_wms\.map&.*REQUEST=GetMap&/,
+    /^https:\/\/services\.arcgis\.com\/cJ9YHowT8TU7DUyn\/arcgis\/rest\/services\/(Soilloss_Existinglandcover_tonnes_|RUSLE_SoilLossSedimentLoads_CONUS)\//];
   const keepOn = (() => { try { return typeof caches !== "undefined" && window.isSecureContext; } catch (e) { return false; } })();
   let keepBox = null;
   const keepOpen = () => (keepBox = keepBox || caches.open(KEEP_BOX));
@@ -128,14 +129,15 @@ WG.util = (function () {
   function free(host) { const L = lines.get(host), w = L.wait.shift(); if (w) w.go(); else L.open--; }
 
   /* A server that keeps failing is left alone for a while, in this browser: after 3 failures in a row (no connection,
-     an answer without a CORS header, HTTP 5xx or 429), its requests fail at once for 2 minutes with "<host> is busy;
-     try again in a minute", which the cards show with their reload icon; then one request goes as a trial, the others
+     an answer without a CORS header, HTTP 5xx or 429), its requests fail at once for 2 minutes with "<host> is not
+     answering; to avoid crowding the server, the app waits 2 minutes before asking again", which the cards show with
+     their reload icon; then one request goes as a trial, the others
      waiting for it, and its success lets them all through again (its failure: 2 minutes more). With 100 visitors at
      once, a server that is down then gets one request every 2 minutes from each page, not dozens, and is not met by
      every page at once when it comes back. Any other answer (a 404 too) is an answer and ends the count, as does any
      success; a caller's stop and this module's own time limits count neither way. */
   const BRK_N = 3, BRK_MS = 120000, brk = new Map(); // host -> { fails, until, trial, end }
-  const busy = host => Object.assign(new Error(`${host} is busy; try again in a minute`), { busy: true });
+  const busy = host => Object.assign(new Error(`${host} is not answering; to avoid crowding the server, the app waits 2 minutes before asking again`), { busy: true });
   // null: let through; the host's state: let through as its trial; throws when the host is left alone
   async function pass(host) {
     for (;;) {
@@ -216,7 +218,10 @@ WG.util = (function () {
           await nap(ms, ctrl.signal);
           continue;
         }
-        if (err) throw err;
+        /* the browser's own words for a request that did not get through ("Failed to fetch", "NetworkError when
+           attempting to fetch resource", "Load failed"), said plainly with the server's name; still a TypeError, which
+           callers test for */
+        if (err) throw err instanceof TypeError ? Object.assign(new TypeError(`${host} did not answer: the server may be down, or the connection dropped`), { cause: err }) : err;
         if (!o.read) { lent = true; return r; }
         return await o.read(r);
       }

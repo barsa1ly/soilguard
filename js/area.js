@@ -835,12 +835,15 @@ WG.area = (function () {
     }
     throw new Error("use a .zip shapefile, .shp (+ .dbf, .prj), .kml, .kmz or .geojson file");
   }
+  let upSeq = 0; // the file being read; the reset button (reset) drops it
   async function upload(fileList) {
     const files = [...fileList];
     if (!files.length) return;
+    const my = ++upSeq;
     status("Reading the boundary file…");
     try {
       const { gj, name, noPrj } = await parseFiles(files);
+      if (my !== upSeq) return;
       const polys = geojsonPolys(gj);
       if (!polys.length) throw new Error("no polygons found in the file (lines and points can't bound an area)");
       const bb = bboxOf(polys.flat());
@@ -849,7 +852,7 @@ WG.area = (function () {
       }
       analyse(polys, name);
     } catch (e) {
-      fail(`Could not read the boundary: ${e.message || e}`);
+      if (my === upSeq) fail(`Could not read the boundary: ${e.message || e}`);
     }
   }
 
@@ -875,5 +878,8 @@ WG.area = (function () {
   // the units table changed: draw the results and the map's tooltips again in the new units
   const rerender = () => { if (current && current.result) { render(); drawLayers(); } };
   UN.on(rerender);
-  return { boundary: () => (current ? { polys: current.polys, name: current.name } : null), excludedAt, drawing: () => drawing, open, analyse, rerender, sda, parseFiles, geojsonPolys, bboxOf, inRings, roadHalf: mtfcc => ROAD_HALF[mtfcc] || 4 };
+  /* the whole-state view (app.js wholeView, the map's reset button): a drawing stops, the area and its results are
+     cleared, and the area sheet closes */
+  function reset() { upSeq++; if (drawing) endDraw(); if (current) clear(); show(false); }
+  return { boundary: () => (current ? { polys: current.polys, name: current.name } : null), excludedAt, drawing: () => drawing, open, analyse, rerender, reset, sda, parseFiles, geojsonPolys, bboxOf, inRings, roadHalf: mtfcc => ROAD_HALF[mtfcc] || 4 };
 })();

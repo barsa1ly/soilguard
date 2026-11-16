@@ -525,21 +525,24 @@ WG.soilmoisture = (function () {
       const list = await Wx.once(`smm:near:${pt}`, () => nearest(lat, lon, 3));
       if (!list.length) return null;
       const got = await Wx.once(`smm:st:${d}:${d}:${pt}`, () => readStations(list, d, d));
+      let read = false;
       for (let n = 0; n < list.length; n++) {
         const s = list[n], r = got[n];
         if (r instanceof Error) continue;
+        read = true;
         for (const x of s.depths) {
           const v = at(r.daily.get(x.key) || [], d);
           if (ok(v)) return { name: s.name, net: NET[s.net][0], id: s.src === "crn" ? `WBAN ${s.id}` : s.id.split(":")[0], lat: s.lat, lon: s.lon, km: s.km, dir: s.dir,
             depth: x.label, depthCm: +x.cm.toFixed(1), depthIn: +(x.cm / 2.54).toFixed(1), value: v, time: `${iso(d)}, daily mean` };
         }
       }
-      return null;
+      if (!read) throw got.find(r => r instanceof Error) || new Error("the stations could not be read");
+      return { none: "day" }; // stations near, none with a reading that day
     })();
     const p = Promise.allSettled([model, station]).then(([m, s]) => {
       [m, s].forEach(x => { if (x.status === "rejected") { console.warn("soil moisture on a past day", x.reason); if (SUMD.get(k) === p) SUMD.delete(k); } });
       if (m.status === "rejected" && s.status === "rejected") throw m.reason;
-      return { model: m.status === "fulfilled" ? m.value : null, station: s.status === "fulfilled" ? s.value : null };
+      return { model: m.status === "fulfilled" ? m.value : null, station: s.status === "fulfilled" ? s.value : s.reason instanceof Error ? s.reason : new Error(String(s.reason)) };
     });
     SUMD.set(k, p);
     while (SUMD.size > 60) SUMD.delete(SUMD.keys().next().value);

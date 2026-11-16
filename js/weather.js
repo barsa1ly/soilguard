@@ -281,7 +281,7 @@ WG.weather = (function () {
      From a series already read when it holds that step (This week's latest steps, Between years' whole series), else
      the step alone: one value from THREDDS, or from the file server the chunk that holds it (311 steps of a block of
      cells: about 0.6 MB, 1.9 MB for PDSI), which js/h5range.js keeps for the visit, so the dates near it come at once.
-     A step more than two months old no longer changes: kept in this browser for 30 days (a newer one for 6 hours). */
+     A step more than two months old no longer changes: kept in this browser for 15 days, the keep box's limit (a newer one for 6 hours). */
   const gmStepOf = d => { const y = yearOf(d), doy = d - Wd.epochDay(y, 0, 1) + 1, m = Math.floor(doy / 5) - 1; return m >= 0 ? (y - 1980) * 73 + Math.min(72, m) : (y - 1981) * 73 + 72; };
   function inSeries(S, d) {
     if (!S || !Array.isArray(S.days) || !S.days.length || d < S.days[0] || d > S.days[S.days.length - 1] + 10) return null;
@@ -306,21 +306,21 @@ WG.weather = (function () {
     const [raw, d] = await Promise.all([F.read(x, [kk, j, i], [1, 1, 1]), F.read(day, [kk], [1])]);
     return { day: Math.round(d[0]) + DAY1900, val: raw[0] === att("_FillValue", 32767) ? null : +(raw[0] * att("scale_factor", 1) + att("add_offset", 0)).toFixed(2), src: "files" };
   }, { pri: 3, keep: true });
-  async function metStep(key, k) {
-    const [ds, , v, , fv] = DRI.find(x => x[0] === key), { lat, lon } = WG.state.site;
+  async function metStep(key, k, lat, lon) {
+    const [ds, , v, , fv] = DRI.find(x => x[0] === key);
     const j = Math.round((49.4 - lat) * 24), i = Math.round((lon + 124.7666666333) * 24);
     if (j < 0 || j > 584 || i < 0 || i > 1385) throw new Error("this point is outside gridMET (contiguous US only)");
-    const ck = `${MDATA}${ds}.nc?fg-cell=${j},${i},step=${k}`, kept = await WG.util.stashGet(ck, Wd.today() - gmStep(k) > 60 ? 30 * 864e5 : CELL_MS);
+    const ck = `${MDATA}${ds}.nc?fg-cell=${j},${i},step=${k}`, kept = await WG.util.stashGet(ck, Wd.today() - gmStep(k) > 60 ? 15 * 864e5 : CELL_MS);
     if (kept && Number.isFinite(kept.day)) return kept;
     const r = await Wd.gridmetRead(thredds => (thredds ? stepThredds(ds, v, j, i, k) : stepFiles(ds, fv, j, i, k)));
     WG.util.stashPut(ck, r);
     return r;
   }
-  const metOn = (key, d) => {
+  const metOn = (key, d, lat, lon) => {
     const k = gmStepOf(d), t = WG.state.token;
     if (k < 0) return Promise.resolve(null);
     const got = inSeries(metGot.get(`${t}:driL:${key}`), d) || inSeries(metGot.get(`${t}:dri:${key}`), d);
-    return got ? Promise.resolve(got) : once(`driAt:${key}:${k}`, () => metStep(key, k));
+    return got ? Promise.resolve(got) : once(`driAt:${key}:${k}`, () => metStep(key, k, lat, lon));
   };
 
   /* ---------- gridMET's drought indices as a map: any 5-day step since 1980 ----------
@@ -657,7 +657,12 @@ WG.weather = (function () {
   document.addEventListener("click", e => {
     if (!e.target.closest || !e.target.closest("[data-dr-now]")) return;
     const T = WG.timeslider;
-    if (onMap("gridmet")) { if (T && T.adapter && T.adapter.key === "gridmet" && gmLast !== null) T.go(gmLast); else gmReset(); }
+    if (T && T.stop) T.stop(); // a play would put the past week back at its next frame
+    if (onMap("gridmet")) {
+      const F = T && T.adapter && T.adapter.key === "gridmet" ? T.frames : null;
+      if (F && F.length && gmLast !== null && F[F.length - 1] >= gmLast) T.go(gmLast);
+      else { gmReset(); if (F) T.refresh(); } // gridMET has a newer step than the slider read: its frames read again
+    }
     else if (WG.app && WG.app.setLive) WG.app.setLive("drought", "usdm");
   });
   RENDER.drought = async (el, live) => {
@@ -737,11 +742,11 @@ WG.weather = (function () {
       return Promise.allSettled([
         w === null ? Promise.resolve(put("drNow", "<span>Drought Monitor: its maps start in January 2000.</span>"))
           : usdmOn(lat, lon, w).then(dm => { put("drNow", headline(dm, when.kind === "usdm" ? " that week" : `, week of ${dl(w)}`)); seen.dm = dm; summary(); }, () => put("drNow", `<span>The Drought Monitor could not be read for that week. ${RETRY}</span>`)),
-        ...KEYS.map(k => metOn(k, when.day).then(r => { if (r) { srcs.add(r.src); srcNote(); } return r ? [k, r.val, r.day] : [k, null, null]; }).catch(failRow(k)).then(row(k)))]);
+        ...KEYS.map(k => metOn(k, when.day, lat, lon).then(r => { if (r) { srcs.add(r.src); srcNote(); } return r ? [k, r.val, r.day] : [k, null, null]; }).catch(failRow(k)).then(row(k)))]);
     }
     // the map's date changed (mapDateSoon): the card follows it, and says so to a screen reader while it is on show
     drFill = w => {
-      if (!live()) return;
+      if (!live() || !WG.state.site) return;
       fill(w);
       if (!el.hidden) WG.say(w ? `Drought: ${w.kind === "usdm" ? `the week of ${Wd.dayLabel(w.day)}` : Wd.dayLabel(w.day)}, as on the map` : "Drought: this week");
     };
@@ -855,9 +860,11 @@ WG.weather = (function () {
     const tok = WG.state.token, key = `${tok}|${UN.query()}|${tab === "drought" ? driVer : ""}`;
     if (el.dataset.key === key) { setTimeout(() => WG.charts.resizeAll(), 0); return; } // drawn for this location, units and period
     el.dataset.key = key;
-    try { await RENDER[tab](el, () => tok === WG.state.token && el.dataset.key === key); }
-    catch (e) { console.warn(tab, e); if (tok === WG.state.token && el.dataset.key === key) el.innerHTML = failed(`the ${tab} data`, e); }
-    if (tok === WG.state.token && el.dataset.key === key) sayDone(tab, el);
+    // each render its own number: one that a Reload replaced (the same key again) stays dead, its late answers dropped
+    const g = (el.wgGen = (el.wgGen || 0) + 1), live = () => tok === WG.state.token && el.dataset.key === key && el.wgGen === g;
+    try { await RENDER[tab](el, live); }
+    catch (e) { console.warn(tab, e); if (live()) el.innerHTML = failed(`the ${tab} data`, e); }
+    if (live()) sayDone(tab, el);
   }
 
   return { THEMES, layers, legend, fresh, timeLabel, show, RENDER, card, once, siteLine, wait, failed, ok, usdmDate, usdmLast, usdmAt, usdmHere, usdmRange, usdmTable, usdmSrc, usdmMapUrl, DCLASS, USDM_CREDIT, USDM_DAY0, LA_CREDIT };
