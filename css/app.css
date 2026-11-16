@@ -101,6 +101,9 @@ svg { display: block; }
   backdrop-filter: blur(6px);
 }
 .brand svg { width: 28px; height: 28px; color: var(--accent); }
+/* the logo is a button: the soft reset of the view (js/app.js softReset) */
+button.brand { border: 0; font: inherit; font-weight: 600; cursor: pointer; }
+button.brand:hover { background: rgba(28, 36, 32, .96); }
 .brand b { color: #f3b38f; font-weight: 700; }
 
 .search {

@@ -702,7 +702,7 @@ WG.soilmaps = (function () {
     ["smm", "Today (model)", "wet", "soilmoist", "#smmToday", "moisture"], ["stn", "Nearest station", "wet", "soilmoist", "#smmSt|#smmToday", "moisture"],
     ["cec", `CEC ${dep("0–15 cm")}`, "soil", "soilmaps", "#smSurvey"], ...MINERALS.map(([e, n]) => [`el${e}`, `${n} ${dep("top 5 cm")}`, "soil", "soilmaps", "#smUsgs"]),
     ["n", `Total nitrogen ${dep("0–5 cm")}`, "soil", "soilmaps", "#smN"], ["basin", "Yearly runoff", "basin", "soilbasin", "#smPart-basin", "basin"], ["storm", "Design-storm runoff", "basin", "soilbasin", "#bsCnOut", "basin"],
-    ["loss", "Soil loss (RUSLE)", "basin", "soilbasin", "#bsEaOut", "basin"]];
+    ["loss", "Soil loss", "basin", "soilbasin", "#bsEaOut", "basin"]];
   // the groups, each under a header row with a small icon: a drop, the soil's layers, waves
   const GROUPS = [["wet", "Soil moisture", `<path d="M12 3.5c3 3.9 5.5 7.1 5.5 10a5.5 5.5 0 0 1-11 0c0-2.9 2.5-6.1 5.5-10z"/>`],
     ["soil", "Soil chemistry", `<path d="M3 8c2.2-1.5 4.3-1.5 6.5 0s4.3 1.5 6.5 0 3.6-1.2 5-.5M3 13h18M3 18h18"/>`],

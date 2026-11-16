@@ -578,6 +578,24 @@
     // at once, and again once the map has its new size after the panel closed (settleMap)
     if (regionBounds) { map.fitBounds(regionBounds, { animate: !RM }); if (resizes) pendingFit = regionBounds; } else map.setView([32.2, -100.6], 6);
   }
+  /* The logo: a soft reset of the view. The whole state or the chosen states with the point and the area put away
+     (wholeView), every data layer off (the theme's own, the erosion overlays, the land cover, the soil map units) and USGS
+     imagery + topo under the outlines; the reference layers (names, roads, rivers, county lines) stay as they were. The
+     theme stays, its layers off until one is chosen in Layers; the next data layer brings the Plain base back, as after
+     the reset button. */
+  function softReset() {
+    const refsOn = Object.fromEntries(Object.entries(refs).map(([k, r]) => [k, r.on]));
+    Object.entries(themes).forEach(([k, t]) => { if (t.on) setToggle("themes", k, false); });
+    Object.entries(live[state.theme] || {}).forEach(([k, t]) => { if (t.on) setToggle("live", k, false); });
+    Object.entries(soilLayers).forEach(([k, t]) => { if (t.on) setToggle("soilLayers", k, false); });
+    if (baseKey !== "usgsimg") setBase("usgsimg");
+    autoImg = true;
+    // the names overlay, which setBase takes off with a base that has names of its own, kept as it was
+    Object.entries(refsOn).forEach(([k, on]) => { if (refs[k].on !== on) setToggle("refs", k, on); });
+    wholeView();
+    U.toast("Start view: no data layers, USGS imagery + topo. Choose layers in Layers.", 3500);
+  }
+  $("#brandBtn").addEventListener("click", softReset);
   /* Statewide overlays are 1 km grids: fade them as you zoom in so imagery, roads and soil lines read through. */
   let userOpacity = 0.6;
   function applyOpacity() {
