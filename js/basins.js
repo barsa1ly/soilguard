@@ -471,13 +471,12 @@ WG.basins = (function () {
   const P_SCALE = "P is a fraction from 0 to 1: the soil lost with the practice ÷ the soil lost when farmed up and down the slope. 1 = no saving; 0.85 = 15% less soil loss; 0.5 = half; 0.25 = a quarter. It is never above 1 (1.5 or 100 are not P values) and never 0.";
 
   /* the user's choices, kept on this device: the storm, cropland's C, the support practice and its own P */
-  const pick = { storm: "2", cropC: 0.24, P: 1, loss: "ea", ...(WG.util.cache.get("basins") || {}) };
-  if (!["ea", "app"].includes(pick.loss)) pick.loss = "ea"; // the soil loss shown: EPA EnviroAtlas's quick estimate, or this app's RUSLE
+  const pick = { storm: "2", cropC: 0.24, P: 1, ...(WG.util.cache.get("basins") || {}) };
   if (!["2", "10", "100", "own"].includes(pick.storm)) pick.storm = "2";
   if (!ok(pick.cropC) || pick.cropC <= 0 || pick.cropC > 1) pick.cropC = 0.24;
   if (!ok(pick.P) || pick.P <= 0 || pick.P > 1) pick.P = 1; // as the box: above 0 (a P of 0 kept by an older version would claim no soil loss at all)
   if (!PRACTICES.some(p => p[0] === pick.pm)) pick.pm = pick.P === 1 ? "none" : "own"; // a P typed before the practices were offered stays
-  const keep = () => WG.util.cache.set("basins", { storm: pick.storm === "own" ? "2" : pick.storm, cropC: pick.cropC, P: pick.P, pm: pick.pm, loss: pick.loss });
+  const keep = () => WG.util.cache.set("basins", { storm: pick.storm === "own" ? "2" : pick.storm, cropC: pick.cropC, P: pick.P, pm: pick.pm });
   /* a soil component's P on cropland under the practice chosen (null: no slope to choose it by); contouring and strips are
      judged by the component's USLE slope length (m, to ft), terraces by their spacing */
   const pOf = (c, pm = pick.pm) => {
@@ -688,32 +687,31 @@ WG.basins = (function () {
       <p class="fine">A = R × K × LS × C × P (RUSLE, USDA Agriculture Handbook 703) in short tons per acre per year; × 2.2417 = metric tonnes per hectare. K and LS are taken together for each soil component, and land cover as independent of the soils inside the HU12; P applies to the cropland (NLCD cultivated crops), as the practices are ways of farming it. <button class="link" data-sm-csv="basin_soils">soil components (CSV)</button> · <button class="link" data-sm-csv="basin_rusle">factors (CSV)</button></p>
       <p class="fine"><b>Limits:</b> gross sheet and rill erosion on the slopes, a long-term yearly average; not gullies, stream banks or channels, and not the sediment that leaves the HU12 (only part of it reaches the stream). LS comes from the survey's representative slope and slope length for each soil, not from a terrain model; C from land-cover classes is coarse (crops, residue and tillage change it ten-fold, so set cropland's C from your rotation); RUSLE fits rangeland, urban land and wetlands poorly. R: USGS RF7100 (Wieczorek &amp; LaMotte 2010; the PRISM-based 1971–2000 R of Daly &amp; Taylor) for the point's NHDPlus V2 catchment (USGS NLDI), or the nearest catchment's where the point's has none (a sink's), kept to 1%.</p>` };
   }
-  /* The Soil loss card: EPA EnviroAtlas's quick estimate or this app's RUSLE, as chosen in its list (the R, C and P boxes
-     with the latter), the other's value in a line under it. EPA's shows while it is read; this app's takes its place
-     when EPA has no value here or could not be read. */
-  const LOSS = [["ea", "EPA EnviroAtlas: quick, a national model"], ["app", "This app's RUSLE: your crop and practice"]];
-  const lossControl = () => `<div class="form-grid bs-src"><label>Soil loss from<select data-bs="loss">${LOSS.map(([k, n]) => `<option value="${k}"${k === pick.loss ? " selected" : ""}>${esc(n)}</option>`).join("")}</select></label></div>`;
-  const EA_NOTE = "EPA EnviroAtlas: RUSLE for every 30 m cell, averaged over the HUC12's land, with 2011 land cover, C from satellite greenness calibrated to NRCS's National Resources Inventory, slopes from a 30 m terrain model and no support practice (P = 1). A fixed national baseline: it does not follow your crop, tillage or practice, as this app's RUSLE does. Gross sheet and rill erosion, not the sediment that reaches a stream.";
+  /* The Basin tab's soil loss: the Soil loss card gives EPA EnviroAtlas's for the HUC12 (eaAt; the Overview's row too),
+     against the survey's T once the soils are read; the card below it, Soil loss estimation (RUSLE method), is this
+     app's own calculation for the user's crop and practice (ownRusle) */
+  const EA_NOTE = "EPA EnviroAtlas: RUSLE for every 30 m cell, averaged over the HUC12's land, with 2011 land cover, C from satellite greenness calibrated to NRCS's National Resources Inventory, slopes from a 30 m terrain model and no support practice (P = 1). A fixed national baseline that does not follow your crop, tillage or practice: Soil loss estimation (RUSLE method), below, does. Gross sheet and rill erosion, not the sediment that reaches a stream.";
+  const RETRY_BTN = `<button type="button" class="wx-retry" data-wx-retry title="Reload this part" aria-label="Reload this part"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/></svg></button>`;
   const ta2 = v => `${fmt(v, v < 10 ? 2 : 1)}${small("t/ac/yr")}`;
-  function eaCard(E, own) {
-    if (E === undefined) return `<p class="fine">Reading EPA EnviroAtlas's soil loss for the HUC12…</p>`;
-    const v = E.a, T = own.T;
-    return `${kv([
-      ["Soil loss, all land", ta2(v), `${ok(E.mgha) ? `${fmt(E.mgha, E.mgha < 10 ? 2 : 1)} t/ha/yr · ` : ""}EPA EnviroAtlas${E.huc === M.hu.huc12 ? `, HUC12 ${esc(E.huc)}` : ""}`],
-      E.huc !== M.hu.huc12 && ["EPA's watershed", `HUC12 ${esc(E.huc)}`, `EPA's map of this area differs from today's: the HU12 drawn is ${esc(M.hu.huc12)}`],
-      ok(T) && T > 0 && ["Compared with T", `${fmt(v / T, v / T < 1 ? 2 : 1)}${small("× T")}`, `T ${fmt(T, 1)} t/ac/yr (survey)`],
-      ok(own.A) && ["This app's RUSLE", ta2(own.A), "with your crop and practice: choose it above"],
-    ])}<p class="fine">${esc(EA_NOTE)}</p>`;
+  function drawEa(T) {
+    const x = box("bsEaOut"), E = M.ea;
+    if (!x) return;
+    x.innerHTML = E === undefined ? `<p class="fine">Reading EPA EnviroAtlas's soil loss for the HUC12…</p>`
+      : E instanceof Error ? `<p class="fine">Could not read EPA EnviroAtlas's soil loss: ${esc(E.message || String(E))}. ${RETRY_BTN}</p>`
+      : !E || !ok(E.a) ? `<p class="fine">EPA EnviroAtlas gives no soil loss for this point (open water, or outside its map).</p>`
+      : `${kv([
+        ["Soil loss, all land", ta2(E.a), `${ok(E.mgha) ? `${fmt(E.mgha, E.mgha < 10 ? 2 : 1)} t/ha/yr · ` : ""}EPA EnviroAtlas`],
+        E.huc !== M.hu.huc12 && ["EPA's watershed", `HUC12 ${esc(E.huc)}`, `EPA's map of this area differs from today's: the HU12 drawn is ${esc(M.hu.huc12)}`],
+        ok(T) && T > 0 && ["Compared with T", `${fmt(E.a / T, E.a / T < 1 ? 2 : 1)}${small("× T")}`, `T ${fmt(T, 1)} t/ac/yr (survey)`],
+      ])}<p class="fine">${esc(EA_NOTE)}</p>`;
   }
   function drawRusle() {
     const x = box("bsRusleOut");
     if (!x) return;
     relabel();
-    const own = ownRusle(), E = M.ea, eaV = E && !(E instanceof Error) && ok(E.a) ? E.a : null, epa = pick.loss === "ea" && (E === undefined || eaV !== null);
-    const c = box("bsRusleCtl");
-    if (c) c.hidden = epa;
-    x.innerHTML = epa ? eaCard(E, own)
-      : `${pick.loss === "ea" ? `<p class="fine">EPA EnviroAtlas ${E instanceof Error ? "could not be read" : "gives no soil loss here"}: this app's RUSLE is shown.</p>` : ""}${own.html}${eaV !== null ? `<p class="fine">EPA EnviroAtlas: ${fmt(eaV, eaV < 10 ? 2 : 1)} t/ac/yr for its HUC12 ${esc(E.huc)} (2011 land cover, P = 1), a quick national estimate: choose it in the list above.</p>` : ""}`;
+    const own = ownRusle();
+    x.innerHTML = own.html;
+    drawEa(own.T);
     summary();
   }
   /* the factors' table is folded each time the tab is drawn (a new point, other units); it stays as you left it while
@@ -792,7 +790,8 @@ WG.basins = (function () {
         <p class="fine" style="margin-top:0"><b>${esc(hu.name)}</b>, HUC ${esc(hu.huc12)}: ${fmt(hu.km2, 1)} km² (${UN.fmt("area", hu.km2 * 1e6)}), flows to HU12 ${esc(hu.tohuc || "—")}. The small watershed (HU12) that holds the point, from the USGS Watershed Boundary Dataset${HU_WHY[hu.src] || ""}, drawn on the map with its catchments while this theme is on.</p>
         <div id="bsNet"></div></div>
       <div class="card">${SM.head("Design-storm runoff (curve number)", "basin_landcover", "TR-55")}<div id="bsCnCtl"></div><div id="bsCnOut"></div></div>
-      <div class="card">${SM.head("Soil loss (RUSLE)", "basin_rusle", "sheet and rill")}${lossControl()}<div id="bsRusleCtl">${rusleControls()}</div><div id="bsRusleOut"></div></div>`;
+      <div class="card">${SM.head("Soil loss", "", "EPA EnviroAtlas")}<div id="bsEaOut"></div></div>
+      <div class="card">${SM.head("Soil loss estimation (RUSLE method)", "basin_rusle", "sheet and rill")}<div id="bsRusleCtl">${rusleControls()}</div><div id="bsRusleOut"></div></div>`;
     overlay(M);
     const n0 = WG.state.nlcd;
     M.ptLc = n0 && n0.src === "nlcd" && n0.code ? { code: n0.code, src: "MRLC" } : undefined;
@@ -854,7 +853,6 @@ WG.basins = (function () {
       if (good) { pick.P = v; keep(); drawRusle(); relabel(); }
     }
     else if (k === "R") { M.Rv = ok(v) && v > 0 ? v : null; M.Rsrc = M.R && ok(M.Rv) && Math.abs(M.Rv - M.R.R) < 0.06 ? M.Rsrc0 : "typed by you"; drawRusle(); }
-    else if (k === "loss") { pick.loss = t.value === "app" ? "app" : "ea"; keep(); drawRusle(); } // drawRusle's summary tells the Overview's row
   }
   // a list answers on "change", a box on "input" (each fires both, which would draw the results twice)
   ["input", "change"].forEach(ev => document.addEventListener(ev, e => { const t = e.target.closest && e.target.closest("[data-bs]"); if (t && (ev === "change") === (t.tagName === "SELECT")) onInput(t); }));
@@ -885,5 +883,5 @@ WG.basins = (function () {
 
   SM.addPart({ key: "basin", wait: "the watershed (HU12) at the point", render, tab: "soilbasin" });
   return { hu12At, hrIn, v2In, netIn, network, soilsIn, comidAt, rAt, rNear, rFile, a14At, ls, scsQ, CN, CN_AS, C_OF, RUN, A14, pContour, pStrip, P_TERR,
-    eaAt, lossSrc: () => pick.loss };
+    eaAt };
 })();
