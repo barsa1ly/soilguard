@@ -742,6 +742,7 @@
   }
   WG.timemap.init(map, { setLive, renderLegend });
   WG.app.setLive = setLive; // the Drought Overview's Back to this week (js/weather.js)
+  WG.app.stateAt = stateAt; // js/soil.js: the state whose backup copy of the soil survey to read
   /* the Soil maps theme's tabs: their "show on the map" links, the dominant soil drawn into the Soil tab, a phone's results
      lowered so a place shown on the map can be seen, and the land cover overlay switched from the Soil tab's tile and the
      Basin tab: the same overlay as the layer sheet's (so never a second one), with the theme's own map taken off (liveOff)
@@ -2157,7 +2158,7 @@
     $("#ovSoil").innerHTML = `<div class="nm">${esc(d.compname)} ${tex ? "· " + esc(tex) : ""}</div><div class="sub">${esc(s.mapunit.muname || "")}</div><div class="chips">${chips}</div>`;
     $("#soilSrcTag").textContent = `SSURGO · ${s.mapunit.areasymbol || ""}`;
     renderWegTable(surf);
-    $("#soilSource").innerHTML = `Source: USDA-NRCS Soil Survey Geographic Database (SSURGO) via <a href="https://sdmdataaccess.nrcs.usda.gov/" target="_blank" rel="noopener">Soil Data Access</a>, map unit key ${s.mukey}, ${esc(s.mapunit.areaname || "")}${s.mapunit.saverest ? `, survey dated ${esc(String(s.mapunit.saverest).split(/[ T]/)[0])}` : ""}. Groups for edited values: NRCS National Soil Survey Handbook §618.93; RWEQ factors: Fryrear et al. (1994, 1998). <button class="link" data-methods="m-erod">Equations →</button>`;
+    $("#soilSource").innerHTML = `Source: USDA-NRCS Soil Survey Geographic Database (SSURGO) via ${s.backup ? "this app's backup copy of it (FY2027, as Soil Data Access did not answer)" : '<a href="https://sdmdataaccess.nrcs.usda.gov/" target="_blank" rel="noopener">Soil Data Access</a>'}, map unit key ${s.mukey}, ${esc(s.mapunit.areaname || "")}${s.mapunit.saverest ? `, survey dated ${esc(String(s.mapunit.saverest).split(/[ T]/)[0])}` : ""}. Groups for edited values: NRCS National Soil Survey Handbook §618.93; RWEQ factors: Fryrear et al. (1994, 1998). <button class="link" data-methods="m-erod">Equations →</button>`;
     renderDerived();
   }
 
@@ -2331,7 +2332,7 @@
       try { U.download("WG.SOL", WG.models.writers.dssatSol(WG.models.surveySoil(state))); }
       catch (e) { console.warn(e); U.toast(`No DSSAT soil file for ${d.compname}: ${e.message || e}.`, 6000); }
     };
-    if ($("#profSource")) $("#profSource").innerHTML = `Source: USDA-NRCS Soil Survey Geographic Database (SSURGO) via <a href="https://sdmdataaccess.nrcs.usda.gov/" target="_blank" rel="noopener">Soil Data Access</a>, map unit key ${s.mukey}, ${esc(s.mapunit.areaname || "")}${s.mapunit.saverest ? `, survey dated ${esc(String(s.mapunit.saverest).split(/[ T]/)[0])}` : ""}. Elevation/slope: ${e ? esc(e.src) + (e.src.startsWith("USGS") ? " (3DEP elevation image service)" : " via Open-Meteo") : "loading"}. Water retention of a layer with edited sand, silt, clay or organic matter: Saxton &amp; Rawls (2006). <button class="link" data-methods="m-soil">Equations →</button>`;
+    if ($("#profSource")) $("#profSource").innerHTML = `Source: USDA-NRCS Soil Survey Geographic Database (SSURGO) via ${s.backup ? "this app's backup copy of it (FY2027, as Soil Data Access did not answer)" : '<a href="https://sdmdataaccess.nrcs.usda.gov/" target="_blank" rel="noopener">Soil Data Access</a>'}, map unit key ${s.mukey}, ${esc(s.mapunit.areaname || "")}${s.mapunit.saverest ? `, survey dated ${esc(String(s.mapunit.saverest).split(/[ T]/)[0])}` : ""}. Elevation/slope: ${e ? esc(e.src) + (e.src.startsWith("USGS") ? " (3DEP elevation image service)" : " via Open-Meteo") : "loading"}. Water retention of a layer with edited sand, silt, clay or organic matter: Saxton &amp; Rawls (2006). <button class="link" data-methods="m-soil">Equations →</button>`;
   }
 
   /* ============ PRACTICES TAB ============ */

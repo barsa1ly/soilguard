@@ -97,8 +97,40 @@ WG.soil = (function () {
   }
   /* The survey's tables at a point as fresh rows ({ mukey, mu, comps, hz, areas, eco, ylds, plants, restr }); null where
      no map unit is found */
+  /* The backup copy of the survey, read only when Soil Data Access does not answer: USDA-NRCS SSURGO (FY2027) by state on
+     GitHub Pages (barsa1ly.github.io/soildata*, tools/build_ssurgo.py there): a 30 m map-unit raster in EPSG:5070 tiles
+     (512 x 512 uint16 indices, zlib) and each map unit's rows as tablesAt gives them (gzipped JSON, by mukey % 1024).
+     The point's state picks the copy (app.js stateAt). -> the record (with backup: true), null for no map unit there, or
+     undefined where no copy covers the state. Each file is kept for the visit. */
+  const BACKUP = "https://barsa1ly.github.io/", BACKUP_REPO = { TX: "soildata" }; // more states as their copies are published
+  const bkFiles = new Map();
+  const bkGet = (u, f) => { if (!bkFiles.has(u)) { const p = f(u); bkFiles.set(u, p); p.catch(() => bkFiles.delete(u)); while (bkFiles.size > 80) bkFiles.delete(bkFiles.keys().next().value); } return bkFiles.get(u); };
+  const bkBin = async (u, kind) => { const r = await WG.util.fetchQ(u, {}, 20000); if (!r.ok) throw new Error(`the backup copy answered ${r.status}`); return new Response(r.body.pipeThrough(new DecompressionStream(kind))).arrayBuffer(); };
+  async function backupAt(lat, lon, st) {
+    const repo = BACKUP_REPO[st];
+    if (!repo || typeof DecompressionStream === "undefined" || !WG.landcover || !WG.landcover.albers) return undefined;
+    const base = `${BACKUP}${repo}/${st}/`, ix = await bkGet(`${base}r30/index.json`, u => fetchJSON(u, {}, 20000));
+    const [x, y] = WG.landcover.albers(lon, lat), size = ix.res * ix.tile, col = Math.floor((x - ix.x0) / size), row = Math.floor((ix.y0 - y) / size);
+    if (!ix.have.includes(`${row}/${col}`)) return null;
+    const tile = await bkGet(`${base}r30/${row}/${col}.bin`, async u => new Uint16Array(await bkBin(u, "deflate")));
+    const i = tile[Math.floor((ix.y0 - y - row * size) / ix.res) * ix.tile + Math.floor((x - ix.x0 - col * size) / ix.res)];
+    const mk = i ? (await bkGet(`${base}mukeys.json`, u => fetchJSON(u, {}, 20000)))[i] : null;
+    if (!mk) return null;
+    const shard = await bkGet(`${base}mu/${mk % 1024}.json.gz`, async u => JSON.parse(new TextDecoder().decode(await bkBin(u, "gzip"))));
+    const rec = shard[String(mk)];
+    return rec ? { ...rec, backup: true } : null;
+  }
   async function tablesAt(lat, lon) {
-    const j = await answerAt(lat, lon), mk = rowsOf(j.Table);
+    let j;
+    try { j = await answerAt(lat, lon); }
+    catch (e) {
+      // Soil Data Access did not answer: the backup copy of the point's state, where there is one
+      const st = WG.app && WG.app.stateAt ? (WG.app.stateAt(lat, lon) || {}).code : null;
+      const b = st ? await backupAt(lat, lon, st).catch(err => { console.warn("soil backup", err); return undefined; }) : undefined;
+      if (b !== undefined) return b;
+      throw e;
+    }
+    const mk = rowsOf(j.Table);
     if (!mk.length || mk[0].mukey === null) return null;
     if (!j.Table8) throw new Error("Soil Data Access sent only part of the survey; try again");
     const [mu, comps, hz, areas, eco, ylds, plants, restr] = [1, 2, 3, 4, 5, 6, 7, 8].map(k => hits(j[`Table${k}`]));
@@ -163,6 +195,7 @@ WG.soil = (function () {
       source: "SSURGO",
       lat: raw.lat, lon: raw.lon,
       mukey: raw.mukey,
+      backup: !!raw.backup, // read from the backup copy (Soil Data Access did not answer)
       mapunit: raw.mu,
       county: county ? county.areaname : null,
       countySym, // e.g. "KS055": the state's county C table (js/app.js tableC)
