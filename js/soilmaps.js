@@ -2,11 +2,11 @@
    (the USDA Forest Service's image services built from gNATSGO, 30 m, drawn for each view), salinity and sodicity (UC Davis
    SoilWeb 800 m grids from SSURGO, pre-built per state by tools/build_soilmaps.py), total elements (the USGS soil
    geochemistry WMS from Data Series 801, one element at a time) and total nitrogen (the ISRIC SoilGrids WMS, a model).
-   The panel's tabs: Overview (the soil at a glance, a tile per source), Soil (the dominant soil and its horizons, drawn
+   The panel's tabs: Overview (the soil at a glance, a table row per value), Soil (the dominant soil and its horizons, drawn
    with js/app.js's profile from the survey read for the wind erosion, then the survey's chemistry by depth through Soil
    Data Access, the land cover of the states on the map or of your boundary (js/landcover.js's card, whose tile joins the
    soil maps' row), the Forest Service values, SoilGrids' total N, the nearest USGS sites and NRCS lab pedons (KSSL), each
-   labelled for what it measures) and Basin (js/basins.js's parts); Moisture is js/soilmoisture.js's. No map covers the
+   labelled for what it measures), Soil moisture (js/soilmoisture.js's) and Basin (js/basins.js's parts). No map covers the
    US for soil-test (plant-available) N, P, K, Ca, Mg or S, nor for boron: the Soil tab says so. Loaded after weather.js,
    whose THEMES, layers and RENDER it joins, and before app.js, which builds the theme bar, the layer sheet and the
    legend from them. */
@@ -206,7 +206,7 @@ WG.soilmaps = (function () {
   Wx.THEMES.splice(Wx.THEMES.findIndex(t => t.key === "erosion") + 1, 0, { key: "soilmaps", name: "Soil maps", short: "Soil", icon: ICON, layersTitle: "Soil maps",
     title: "Soil maps: pH, salinity, sodicity, CEC, organic matter, total nutrients and nitrogen, and land cover",
     hint: "to see the soil's chemistry by depth: pH, salinity, sodicity, CEC and organic matter from the soil survey, total nutrients from USGS sites, and nutrients measured at nearby NRCS lab pedons.",
-    note: "Soil survey maps (pH, CEC and organic matter at 30 m; salinity and sodicity at 800 m), USGS total elements and SoilGrids total nitrogen. The panel shows Overview (the soil, its water and its moisture at a glance), Soil (the dominant soil, its horizons and chemistry by depth, classification and site, the land cover of the states or of your boundary with its curve numbers, the 30 m values, nearby USGS sites and NRCS lab pedons), Basin (the watershed, design-storm runoff and soil loss) and Moisture (soil moisture by depth).",
+    note: "Soil survey maps (pH, CEC and organic matter at 30 m; salinity and sodicity at 800 m), USGS total elements and SoilGrids total nitrogen. The panel shows Overview (the soil, its moisture and its water at a glance), Soil (the dominant soil, its horizons and chemistry by depth, classification and site, the land cover of the states or of your boundary with its curve numbers, the 30 m values, nearby USGS sites and NRCS lab pedons), Soil moisture (soil moisture by depth) and Basin (the watershed, design-storm runoff and soil loss).",
     layersNote: "Survey and model values describe typical soil, not a soil test. Total elements are not plant-available. No map covers the US for soil-test (plant-available) N, P, K, Ca, Mg or S, or for boron.",
     controls: sheetControls });
   Wx.layers.soilmaps = LAYERS;
@@ -313,15 +313,16 @@ WG.soilmaps = (function () {
 
   /* the tabs' tables, kept for the CSV downloads: id -> { title, header, rows }, one set per location, which the Soil and
      Basin tabs and the Overview share. Setting one (the parts in other files write tables().basin = …) tells the
-     listeners, so the Overview's tiles fill as each source answers. */
+     listeners, so the Overview's rows fill as each source answers. */
   const subs = new Set(), emit = id => subs.forEach(f => { try { f(id); } catch (e) { console.warn("soil maps listener", e); } });
   const newTables = () => new Proxy({}, { set(o, k, v) { o[k] = v; emit(k); return true; } });
-  const on = f => { subs.add(f); return () => subs.delete(f); }; // f(id): a table set, or "part:<key>" when a part has ended
+  const on = f => { subs.add(f); return () => subs.delete(f); }; // f(id): a table set, "part:<key>" when a part has ended, or "row:<id>"
   let tables = newTables();
-  // the location the tables are for, and how each added part ended there ("wait", "done", or the Error), for the Overview's tiles
-  let run = { tok: null, parts: {}, who: {} };
+  /* the location the tables are for, how each added part ended there ("wait", "done", or the Error), and what a part has
+     told of single Overview rows before that (rows: part -> row id -> "done" or the Error), for the Overview's rows */
+  let run = { tok: null, parts: {}, who: {}, rows: {} };
   const pins = new Map(); // the "show on the map" buttons of the tables: id -> { lat, lon, label, sub }
-  function fresh() { if (run.tok !== WG.state.token) { tables = newTables(); run = { tok: WG.state.token, parts: {}, who: {} }; pins.clear(); } }
+  function fresh() { if (run.tok !== WG.state.token) { tables = newTables(); run = { tok: WG.state.token, parts: {}, who: {}, rows: {} }; pins.clear(); } }
   // the tab a table belongs to, by its id: the Basin tab's begin with "basin", the Moisture tab's with "moisture"
   const tabOf = id => (/^basin/.test(id) ? "soilbasin" : /^moisture/.test(id) ? "soilmoist" : "soilmaps");
   const DL = `<svg viewBox="0 0 24 24"><path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/></svg>`;
@@ -393,11 +394,11 @@ WG.soilmaps = (function () {
   // the land cover's tile, at the end of the soil row: it switches app.js's overlay (pressed while that is on), never a layer of its own
   const LC_ABOUT = "Land cover, NLCD 2021 (MRLC), 30 m: Soil › Land cover gives each class's share and curve numbers.";
   const lcTile = () => `<button type="button" data-sm-lc class="${lcOn() ? "on" : ""}" aria-pressed="${lcOn()}" title="Land cover (NLCD 2021): MRLC, 30 m"><b>Land cover</b><small>NLCD 2021 · 30 m</small></button>`;
-  // which: the groups to give, of "chem", "water" and "wet" (the Overview gives all; each tab its own)
+  // which: the groups to give, of "chem", "wet" and "water" (the Overview gives all three, the basins last; each tab its own)
   function chips(which) {
     const wet = new Set(WG.soilmoisture ? WG.soilmoisture.layers.map(x => x.key) : []), lc = !!(hooks && hooks.lcLayer);
     const G = { chem: [lc ? "Soil and land" : "Soil chemistry", x => OWN.has(x.key)], water: ["Water: basins", x => !OWN.has(x.key) && !wet.has(x.key)], wet: ["Soil moisture", x => wet.has(x.key)] };
-    return (which || ["chem", "water", "wet"]).filter(k => G[k]).map(k => [k, ...G[k]]).map(([k, g, f]) => { const list = LAYERS.filter(f), withLc = lc && k === "chem"; return list.length ? `<div class="sm-chips"><span class="sm-chips-k">${esc(g)}</span><div class="sm-maptabs" role="group" aria-label="${esc(g)} maps">${list.map(x =>
+    return (which || ["chem", "wet", "water"]).filter(k => G[k]).map(k => [k, ...G[k]]).map(([k, g, f]) => { const list = LAYERS.filter(f), withLc = lc && k === "chem"; return list.length ? `<div class="sm-chips"><span class="sm-chips-k">${esc(g)}</span><div class="sm-maptabs" role="group" aria-label="${esc(g)} maps">${list.map(x =>
       `<button type="button" data-sm-show="${x.key}" data-sm-chip class="${onMap(x) ? "on" : ""}" aria-pressed="${onMap(x)}" title="${esc(x.name)}${x.sub ? `: ${esc(x.sub)}` : ""}"><b>${esc(SHORT[x.key] || x.name.split(/[:,(]/)[0].trim())}</b>${TILE[x.key] ? `<small>${esc(TILE[x.key])}</small>` : ""}</button>`).join("")}${withLc ? lcTile() : ""}</div><p class="sm-chip-note" data-sm-note="${k}">${esc(chipNote(list, withLc))}</p></div>` : ""; }).join("");
   }
   // the one line under a row: what the map on show is (its name and source), or how to get one
@@ -476,16 +477,19 @@ WG.soilmaps = (function () {
   const SOURCES = `Each part comes from its own source and says what it measures: <b>survey</b> values describe the soil mapped here (not a test of a field); <b>model</b> values are predictions; <b>total</b> elements include what is locked in minerals (not plant-available); <b>lab</b> values were measured on samples at a pedon, often decades ago.`;
   const NO_MAP = `<div class="card">${head("What data is missing", "")}<p class="fine" style="margin-top:0">No map covers the US for the nutrients a plant can take up, as a <b>soil test</b> measures them: nitrate, phosphorus (Bray, Olsen or Mehlich-3), potassium, calcium, magnesium and sulfur, or zinc, iron, manganese and copper (DTPA). Boron and phosphorus survey data is also limited for the US. For a field's fertility, take a soil test: the total elements and lab pedons here are background, not a recommendation.</p></div>`;
 
-  /* more parts from other files: {key, wait, render(el, live, lat, lon), tab}, each in its own box of its tab, the Soil
-     tab's ("soilmaps", the default) or the Basin tab's ("soilbasin": js/basins.js) */
+  /* more parts from other files: {key, wait, render(el, live, lat, lon, say), tab}, each in its own box of its tab, the
+     Soil tab's ("soilmaps", the default) or the Basin tab's ("soilbasin": js/basins.js). say(row, v): how the reads
+     behind one Overview row ended ("done" or the Error), told as soon as they end, before the whole part has */
   const PARTS = [];
   const partsOf = tab => PARTS.filter(p => (p.tab || "soilmaps") === tab);
-  // a tab's parts drawn into their boxes; how each ends is kept for the Overview's tiles (when a part is drawn again for
+  // a tab's parts drawn into their boxes; how each ends is kept for the Overview's rows (when a part is drawn again for
   // the same location, as after a change of units, the last drawing is the one that counts)
   const runParts = (list, at, live, lat, lon) => list.map(p => {
-    const me = {}, tok = WG.state.token, end = v => { if (run.tok === tok && run.who[p.key] === me) { run.parts[p.key] = v; emit(`part:${p.key}`); } };
-    run.parts[p.key] = "wait"; run.who[p.key] = me;
-    return Promise.resolve().then(() => { const x = at(`smPart-${p.key}`); return x && p.render(x, live, lat, lon); })
+    const me = {}, tok = WG.state.token, mine = () => run.tok === tok && run.who[p.key] === me;
+    const end = v => { if (mine()) { run.parts[p.key] = v; emit(`part:${p.key}`); } };
+    const say = (row, v) => { if (mine() && run.rows[p.key][row] !== v) { run.rows[p.key][row] = v; emit(`row:${row}`); } };
+    run.parts[p.key] = "wait"; run.who[p.key] = me; run.rows[p.key] = {};
+    return Promise.resolve().then(() => { const x = at(`smPart-${p.key}`); return x && p.render(x, live, lat, lon, say); })
       .then(() => end("done"), e => { const err = e instanceof Error ? e : new Error(String(e)); console.warn(p.key, e); end(err); const x = at(`smPart-${p.key}`); if (x) x.innerHTML = Wx.failed(p.wait, err); });
   });
   const allBtn = (tab, what) => `<div class="card sm-all"><button class="btn" data-sm-csv="all:${tab}">${DL}<span>Download ${esc(what)} (CSV)</span></button>
@@ -669,10 +673,10 @@ WG.soilmaps = (function () {
     await Promise.allSettled(runParts(list, at, live, lat, lon));
   };
 
-  /* ---------- the Overview tab: the soil here at a glance, one tile per source with a link to its card ----------
+  /* ---------- the Overview tab: the soil here at a glance, a table row per value with a link to its card ----------
      It asks nothing itself: it draws the Soil and Basin tabs once per location into their hidden boxes (Wx.show keeps
      them, so opening a tab afterwards reads nothing again), fills from the same reads (Wx.once) and the tabs' tables as
-     each one answers, and takes soil moisture from js/soilmoisture.js's summary (kept per location there); each tile
+     each one answers, and takes soil moisture from js/soilmoisture.js's summary (kept per location there); each row
      waits or fails on its own. */
   // the pH reaction classes in five groups: the headline's colour and its scale
   const PH5 = [[5.55, "Strongly acid", "≤ 5.5", "#e34a33"], [6.55, "Acid", "5.6–6.5", "#fdbb84"], [7.35, "Neutral", "6.6–7.3", "#a6d96a"], [8.45, "Alkaline", "7.4–8.4", "#3288bd"], [99, "Strongly alkaline", "> 8.4", "#5e4fa2"]];
@@ -682,35 +686,70 @@ WG.soilmaps = (function () {
   const facts = rows => rows.filter(Boolean).map(([k, v, n]) => `<span class="k">${esc(k)}</span><span class="v">${esc(v)}</span><span class="n">${esc(n || "")}</span>`).join("");
   const rowOf = (t, re, unit) => (t && t.rows.find(r => re.test(String(r[0])) && (!unit || r[2] === unit))) || null;
   const val = r => (r && ok(num(r[1])) ? num(r[1]) : null);
-  // id, title, tag, the tab and card its Details open (a | between choices: the first the tab has), and the part it needs;
-  // in the order a grower acts on: soil moisture, then pH and salinity, then the rest
+  // id, name, group, the tab and card its → opens (a | between choices: the first the tab has), and the part it needs;
+  // in the order a grower acts on: soil moisture, then the soil's chemistry, and the basin last
   const TILES = [
-    ["smm", "Soil moisture today", "model", "soilmoist", "#smmToday", "moisture"], ["stn", "Nearest station", "station", "soilmoist", "#smmSt|#smmToday", "moisture"],
-    ["ph", "Soil pH, 0–15 cm", "survey", "soilmaps", "#smSurvey"], ["salt", "Salinity · sodicity", "survey", "soilmaps", "#smSurvey"], ["cec", "CEC · organic matter", "survey", "soilmaps", "#smSurvey"],
-    ["n", "Total nitrogen, 0–5 cm", "model", "soilmaps", "#smN"], ["basin", "Watershed (HU12)", "model", "soilbasin", "#smPart-basin", "basin"], ["storm", "Design-storm runoff", "TR-55", "soilbasin", "#bsCnOut", "basin"],
-    ["loss", "Soil loss (RUSLE)", "model", "soilbasin", "#bsRusleOut", "basin"]];
+    ["smm", "Today (model)", "wet", "soilmoist", "#smmToday", "moisture"], ["stn", "Nearest station", "wet", "soilmoist", "#smmSt|#smmToday", "moisture"],
+    ["ph", "pH, 0–15 cm", "soil", "soilmaps", "#smSurvey"], ["salt", "Salinity · sodicity", "soil", "soilmaps", "#smSurvey"], ["cec", "CEC · organic matter", "soil", "soilmaps", "#smSurvey"],
+    ["n", "Total nitrogen", "soil", "soilmaps", "#smN"], ["basin", "Yearly runoff", "basin", "soilbasin", "#smPart-basin", "basin"], ["storm", "Design-storm runoff", "basin", "soilbasin", "#bsCnOut", "basin"],
+    ["loss", "Soil loss (RUSLE)", "basin", "soilbasin", "#bsRusleOut", "basin"]];
+  // the groups, each under a header row with a small icon: a drop, the soil's layers, waves
+  const GROUPS = [["wet", "Soil moisture", `<path d="M12 3.5c3 3.9 5.5 7.1 5.5 10a5.5 5.5 0 0 1-11 0c0-2.9 2.5-6.1 5.5-10z"/>`],
+    ["soil", "Soil chemistry", `<path d="M3 8c2.2-1.5 4.3-1.5 6.5 0s4.3 1.5 6.5 0 3.6-1.2 5-.5M3 13h18M3 18h18"/>`],
+    ["basin", "Basin", `<path d="M3 10c2-1.6 4-1.6 6 0s4 1.6 6 0 4-1.6 6 0M3 16c2-1.6 4-1.6 6 0s4 1.6 6 0 4-1.6 6 0"/>`]];
+  /* each row's class as a small chip in a calm colour: pH as the headline's groups; salinity and soil loss from green
+     (fine) through yellow and orange to red, as the risk colours; sodic in the SAR map's purples; total N green, darker
+     the more there is; soil moisture from amber (dry) through green to blue (wet) */
+  const SAL_C = ["#2f8f5b", "#8fb34f", "#e2b13c", "#e0742c", "#b3261e"], SODIC_C = { Sodic: "#8a64bd", "Saline-sodic": "#47237f" };
+  const N_C = ["#c9a63f", "#9dbb4e", "#5aa469", "#2e8b57", "#1c6b3d"];
+  const WET = [["Dry", "#c47d2c"], ["Fairly dry", "#d9b13b"], ["Moist", "#4f9d69"], ["Wet", "#2f6f9f"]];
+  /* soil moisture against this soil's surface wilting point and field capacity (the survey read for the wind erosion, as
+     js/soilmoisture.js soilRange): dry below the wilting point, fairly dry with less than half of the water a crop can
+     use left, moist up to field capacity, wet above it; null while that soil is not known */
+  function wetClass(v) {
+    let r = null;
+    try { const d = WG.state.soil && !WG.state.soil.error ? WG.state.soil.dominant : null, l = d ? WG.soil.profileLayers(d)[0] : null; r = l && ok(l.ll) && ok(l.dul) && l.dul > l.ll ? l : null; } catch (e) { r = null; }
+    if (!ok(v) || !r) return null;
+    const i = v < r.ll ? 0 : v < (r.ll + r.dul) / 2 ? 1 : v <= r.dul ? 2 : 3;
+    return { name: WET[i][0], color: WET[i][1], tip: `${WET[i][0]} for this soil: wilting point about ${fmt(r.ll, 2)}, field capacity about ${fmt(r.dul, 2)} (soil survey)` };
+  }
+  const chip = (text, hex) => { const [r, g, b] = rgb(hex); return `<span class="so-c" style="--c:${hex};--cb:rgba(${r},${g},${b},.16);--cl:rgba(${r},${g},${b},.45)">${esc(text)}</span>`; };
+  // a plain note in place of a class: a distance, the organic matter, the rain's share, a value not given here
+  const aside = text => `<span class="so-gm">${esc(text)}</span>`;
+  const cap = s => (s ? s.charAt(0).toUpperCase() + s.slice(1) : "");
+  const RETRY = `<button type="button" class="wx-retry" data-wx-retry title="Reload this part" aria-label="Reload this part"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/></svg></button>`;
 
   Wx.RENDER.soiloverview = async (el, live) => {
     const { lat, lon } = WG.state.site, tabEl = k => document.getElementById(`tab-${k}`);
     const pTab = Promise.all(["soilmaps", "soilbasin"].map(k => (tabEl(k) && (k === "soilmaps" || partsOf(k).length) ? Wx.show(k, tabEl(k)) : null)));
     // soil moisture: js/soilmoisture.js's summary, or (a page where it is still a part of the Soil tab) its tables
-    const SMM = WG.soilmoisture && WG.soilmoisture.summary, wet = () => (WG.soilmoisture && WG.soilmoisture.soilRange ? `<br>${esc(WG.soilmoisture.soilRange())}` : ""), vol = v => (ok(v) ? ` <small>= ${fmt(100 * v, 0)}% water by volume</small>` : ""), volS = v => (ok(v) ? `= ${fmt(100 * v, 0)}% water by volume · ` : ""), partOf = k => PARTS.find(p => p.key === k);
+    const SMM = WG.soilmoisture && WG.soilmoisture.summary, partOf = k => PARTS.find(p => p.key === k);
     const has = k => (!k ? true : k === "moisture" ? !!(SMM || partOf(k)) : !!partOf(k)), tiles = TILES.filter(t => has(t[5]));
-    // the tab a tile's Details open: its own where the page has that tab button, else the tab that holds its part
+    // the tab a row's → opens: its own where the page has that tab button, else the tab that holds its part
     const goTo = t => (document.querySelector(`.tabs [data-tab="${t[3]}"]`) ? t[3] : t[5] && partOf(t[5]) ? partOf(t[5]).tab || "soilmaps" : "soilmaps");
+    const body = GROUPS.map(([g, name, ico]) => { const list = tiles.filter(t => t[2] === g);
+      return list.length ? `<tbody><tr class="so-gh"><th colspan="3" scope="rowgroup"><svg viewBox="0 0 24 24" aria-hidden="true">${ico}</svg>${esc(name)}</th></tr>${list.map(t => `<tr class="so-gr" id="so-${t[0]}"></tr>`).join("")}</tbody>` : ""; }).join("");
     el.innerHTML = `<div class="risk-card so-head loading" id="soHead"></div>
-      <div class="card">${head("At a glance", "", "")}<div class="stat-grid so-tiles">${tiles.map(t => `<div class="stat so-tile" id="so-${t[0]}"></div>`).join("")}</div>
-        <p class="fine">Survey and model values describe typical soil here, not a test of a field; each tile's source is named on its card.</p></div>
-      <div class="card">${head("On the map", "", "")}${chips()}</div>
-      <div class="card cta"><div><h3>The soil in depth</h3><p class="fine">Soil: the dominant soil's horizons, its chemistry by depth, the land cover's shares and curve numbers, the 30 m maps, total nitrogen, USGS sites and NRCS lab pedons. Basin: the watershed, design-storm runoff and soil loss. Moisture: soil moisture by depth. Each with its tables (CSV).</p></div>
-        <button class="btn primary" data-goto="soilmaps">Open Soil</button></div>`;
+      <div class="card so-glcard">${head("At a glance", "", "")}<p class="fine so-glsub">Survey and model values for typical soil here, not a test of a field. Each row's → opens its card.</p>
+        <table class="so-gl"><colgroup><col class="so-gc1"><col><col class="so-gc3"></colgroup>${body}</table></div>
+      <div class="card">${head("Select map layers", "", "")}${chips()}</div>
+      ${WG.app && WG.app.detailsCard ? WG.app.detailsCard("soilmaps") : ""}`;
     const box = id => (live() ? el.querySelector(`#${id}`) : null);
     let S, N, MS; // each: undefined while read, the value, or an Error
     const hzLink = cls => `<button class="link ${cls}" data-goto="soilmaps" data-so-go="#smHz">Horizons →</button>`;
-    const tile = (id, v, s) => { const x = box(`so-${id}`), t = tiles.find(q => q[0] === id); if (!x || !t) return;
-      x.innerHTML = `<span class="k"><span>${esc(t[1])}</span><span class="tag">${esc(t[2])}</span></span>${v === undefined ? `<span class="v"><span class="skeleton" style="width:55%"></span></span><span class="s">${s}</span>`
-        : `<span class="v">${v}</span><span class="s">${s}</span>`}${v === undefined ? "" : `<span class="so-links"><button class="link so-go" data-goto="${goTo(t)}" data-so-go="${t[4]}">Details →</button>${id === "ph" ? hzLink("so-go") : ""}</span>`}`; };
-    const bad = e => `Could not read: ${esc(e.message || String(e))} <button type="button" class="wx-retry" data-wx-retry title="Reload this part" aria-label="Reload this part"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/></svg></button>`, u = (v, unit) => `${v}${unit ? ` <small>${esc(unit)}</small>` : ""}`;
+    /* a row: v undefined while it is read (a skeleton), an Error (a dash and a reload button), or the value with its unit;
+       side: its class chip or a plain note; tip: more about it, on hover. Written again only when it changes. */
+    const row = (id, v, side = "", tip = "") => {
+      const x = box(`so-${id}`), t = tiles.find(q => q[0] === id);
+      if (!x || !t) return;
+      const g = GROUPS.find(q => q[0] === t[2]), h = `<th scope="row">${esc(t[1])}</th><td><div class="so-gv">${v === undefined ? `<span class="skeleton"></span>`
+        : v instanceof Error ? `<span class="so-gval">—</span><span class="so-gerr">Could not read${RETRY}</span>` : `<span class="so-gval">${v}</span>${side}`}</div></td><td class="so-ggo">${v === undefined ? ""
+        : `<button type="button" class="so-go" data-goto="${goTo(t)}" data-so-go="${t[4]}" title="Details" aria-label="${esc(`${g ? `${g[1]}, ` : ""}${t[1]}`)}: details"><span aria-hidden="true">→</span></button>`}</td>`;
+      if (x.soHtml !== h) { x.soHtml = h; x.innerHTML = h; }
+      const tt = v instanceof Error ? `Could not read: ${v.message || String(v)}` : tip;
+      if (x.title !== tt) x.title = tt;
+    };
+    const u = (v, unit) => `${v}${unit ? ` <small>${esc(unit)}</small>` : ""}`;
     function draw() {
       if (!live()) return;
       /* the survey: the headline, pH, salinity and sodicity, CEC and organic matter of the dominant component, 0-15 cm */
@@ -729,60 +768,76 @@ WG.soilmaps = (function () {
           <p class="risk-text">${why ? esc(why) : `${esc(S.mu.name)} (${esc(S.mu.sym)} · ${esc(S.mu.area)}). ${esc(SURVEY_NOTE)}`}</p>
           <div class="risk-links"><button class="link risk-how" data-goto="soilmaps" data-so-go="#smSurvey">pH and chemistry by depth →</button>${hzLink("risk-how")}<button class="link risk-how" data-methods="m-sources">Sources →</button></div>`;
       }
-      // the pH tile only while the headline gives no pH: then its Details are the headline's links
+      // the pH row only while the headline gives no pH
       const phT = box("so-ph");
       if (phT) phT.hidden = !!(l && ok(l.ph));
-      const sw = "Reading the soil survey…";
-      if (S === undefined) ["ph", "salt", "cec"].forEach(k => tile(k, undefined, sw));
-      else if (S instanceof Error) ["ph", "salt", "cec"].forEach(k => tile(k, "—", bad(S)));
-      else if (!l) ["ph", "salt", "cec"].forEach(k => tile(k, "—", S.mu ? "No horizon data" : "No survey map unit here"));
+      if (S === undefined) ["ph", "salt", "cec"].forEach(k => row(k));
+      else if (S instanceof Error) ["ph", "salt", "cec"].forEach(k => row(k, S));
+      else if (!l) ["ph", "salt", "cec"].forEach(k => row(k, "—", aside(S.mu ? "No horizon data" : "Not surveyed")));
       else {
-        tile("ph", ok(l.ph) ? `${fmt(l.ph, 1)}${l.cacl2 ? " <small>CaCl₂</small>" : ""}` : "—", `<b>${esc(l.cacl2 ? "in CaCl₂, about 0.5 below water pH" : reaction(l.ph))}</b> · ${esc(top.name)}`);
-        const sod = sodicity(l.ec, l.sar, l.esp);
-        tile("salt", ok(l.ec) ? u(fmt(l.ec, 1), "dS/m") : "—", `<b>${esc(salinity(l.ec) || "No EC")}</b>${sod ? ` · <b>${esc(sod)}</b>` : ""} · <span title="${SAR_TIP}">SAR ${fmt(l.sar, 1)}, ESP ${ok(l.esp) ? `${fmt(l.esp, 0)}%` : "—"}</span>`);
-        tile("cec", ok(l.cec) ? `<span title="${CEC_TIP}">${u(fmt(l.cec, 1), `cmol(+)/kg${l.ecec ? " ECEC" : ""}`)}</span>` : "—", `<span title="${OM_TIP}">Organic matter</span> <b>${ok(l.om) ? `${fmt(l.om, 1)}%` : "—"}</b>${ok(l.bs) ? ` · <span title="${BS_TIP}">base saturation ${fmt(Math.min(100, l.bs), 0)}%</span>` : ""}`);
+        const g = ph5(l.ph), sod = sodicity(l.ec, l.sar, l.esp), sodic = sod === "Sodic" || sod === "Saline-sodic";
+        row("ph", ok(l.ph) ? `${fmt(l.ph, 1)}${l.cacl2 ? " <small>CaCl₂</small>" : ""}` : "—", ok(l.ph) ? (l.cacl2 ? "" : chip(reaction(l.ph), PH5[g - 1][3])) : aside("Not given here"),
+          `${top.name}${l.cacl2 ? ": pH in CaCl₂, about 0.5 below water pH" : ""}`);
+        row("salt", ok(l.ec) ? u(fmt(l.ec, 1), "dS/m") : "—", sodic ? chip(sod, SODIC_C[sod]) : ok(l.ec) ? chip(salinity(l.ec), SAL_C[[2, 4, 8, 16].filter(x => l.ec >= x).length]) : aside("Not given here"),
+          `${ok(l.ec) ? salinity(l.ec) : "No EC"}${sod ? `, ${sod.toLowerCase()}` : ""}: SAR ${fmt(l.sar, 1)}, ESP ${ok(l.esp) ? `${fmt(l.esp, 0)}%` : "—"}. ${SAR_TIP}`);
+        row("cec", ok(l.cec) ? u(fmt(l.cec, 1), `cmol(+)/kg${l.ecec ? " ECEC" : ""}`) : "—", ok(l.om) ? aside(`OM ${fmt(l.om, 1)}%`) : ok(l.cec) ? "" : aside("Not given here"),
+          `${ok(l.om) ? `Organic matter ${fmt(l.om, 1)}%. ` : ""}${ok(l.bs) ? `Base saturation ${fmt(Math.min(100, l.bs), 0)}%. ` : ""}${CEC_TIP}`);
       }
       /* SoilGrids' total N, 0-5 cm */
-      const n0 = N && !(N instanceof Error) ? N.find(r => r.t === 0) : null;
-      if (N === undefined) tile("n", undefined, "Reading SoilGrids…");
-      else if (N instanceof Error) tile("n", "—", bad(N));
-      else tile("n", n0 && ok(n0.mean) ? u(fmt(n0.mean, 2), "g/kg") : "—", n0 && ok(n0.mean) ? `<b>${esc(nClass(n0.mean))}</b> (Landon 1991) · ${fmt(n0.mean / 10, 3)}% (1 g/kg = 0.1%) · total N, not what the crop can use · SoilGrids` : "SoilGrids gives no value at this point");
-      /* the parts of other files: their tables, or how the part ended */
-      const T = tables, st = k => (run.tok === WG.state.token ? run.parts[k] : undefined);
-      const later = (k, id, what, f) => { const s = st(k); if (s instanceof Error) return tile(id, "—", bad(s)); const r = f(); if (r) return tile(id, ...r); tile(id, s === "done" ? "—" : undefined, s === "done" ? "Not given here: its card says why" : `Reading ${esc(what)}…`); };
+      const n0 = N && !(N instanceof Error) ? N.find(r => r.t === 0) : null, ng = n0 && ok(n0.mean) ? n0.mean : null;
+      if (N === undefined) row("n");
+      else if (N instanceof Error) row("n", N);
+      else if (ok(ng)) row("n", u(fmt(ng, 2), "g/kg"), chip(cap(nClass(ng)), N_C[[1, 2, 5, 10].filter(x => ng >= x).length]),
+        `0–5 cm: ${fmt(ng / 10, 3)}% (1 g/kg = 0.1%), ${nClass(ng)} (Landon 1991). Total N, not what the crop can use; SoilGrids model`);
+      else row("n", "—", aside("No value here"));
+      /* the parts of other files: their tables, or how the reads behind the row ended (as the part told, else as the
+         whole part ended): still read, failed (a reload button), or done without this value */
+      const T = tables, cur = run.tok === WG.state.token, st = k => (cur ? run.parts[k] : undefined), told = (k, id) => (cur && run.rows[k] ? run.rows[k][id] : undefined);
+      const later = (k, id, f) => {
+        const s = st(k), said = told(k, id);
+        if (s instanceof Error) return row(id, s);
+        const r = f();
+        if (r) return row(id, ...r);
+        if (said instanceof Error) return row(id, said);
+        const end = s === "done" || said === "done";
+        row(id, end ? "—" : undefined, end ? aside("Not given here") : "");
+      };
       if (has("basin")) {
         const B = T.basin, name = rowOf(B, /^HU12 name$/), huc = rowOf(B, /^HU12$/), mm = val(rowOf(B, /mean annual runoff/i));
-        const hn = name ? `<b>${esc(name[1])}</b>${huc ? ` · HUC ${esc(huc[1])}` : ""}` : "";
-        // the HU12's name as soon as it is known, its runoff when the NHDPlus HR network has been read
-        later("basin", "basin", "the watershed", () => (ok(mm) ? [`${UN.fmt("precip", mm)} <small>/yr</small>`, `Mean annual runoff of ${hn || "the HU12"}`]
-          : !hn ? null : st("basin") === "done" ? ["—", `${hn}: no mean annual runoff; its card says why`] : [undefined, `${hn}: reading its mean annual runoff…`]));
-        const q = val(rowOf(B, /^Storm runoff Q/)), pr = rowOf(B, /^Storm depth/), p = val(pr), yr = pr && /(\d+)-yr/.exec(pr[3] || "");
-        later("basin", "storm", "design-storm runoff", () => (ok(q) && ok(p) ? [UN.fmt("precip", q), `<b>${fmt((100 * q) / p, 0)}% of the rain</b> of the ${yr ? `${yr[1]}-year` : "chosen"}, 24-hour storm (${UN.fmt("precip", p)})`] : null));
-        const R = T.basin_rusle, a = val(rowOf(B, /^Soil loss A, all land/, "t/ac/yr")) ?? val(rowOf(R, /^A, all land/)), tf = val(rowOf(B, /^T$/, "t/ac/yr")) ?? val(rowOf(R, /^T, tolerable/));
-        later("basin", "loss", "soil loss", () => (ok(a) ? [UN.fmt("soilLoss", a, a < 10 ? 1 : 0), ok(tf) && tf > 0 ? `<b>${fmt(a / tf, a / tf < 1 ? 2 : 1)} × T</b>: ${a <= tf ? "within" : "above"} the tolerable loss · all land in the HU12` : "gross sheet and rill erosion · all land in the HU12"] : null));
+        // the HU12's mean annual runoff, once the NHDPlus HR network has been read
+        later("basin", "basin", () => (ok(mm) ? [`${UN.html("precip", mm)}<small>/yr</small>`, "", `Mean annual runoff of ${name ? name[1] : "the HU12"}${huc ? `, HUC ${huc[1]}` : ""} (a model)`] : null));
+        const q = val(rowOf(B, /^Storm runoff Q/)), pr = rowOf(B, /^Storm depth/), p = val(pr), yr = pr && /(\d+)-yr/.exec(pr[3] || ""), qp = val(rowOf(B, /^Point: storm runoff Q/));
+        // the whole HU12's average, as the Basin card's "The whole HU12" line; the card gives the point's own first
+        later("basin", "storm", () => (ok(q) && ok(p) ? [UN.html("precip", q), aside(`${fmt((100 * q) / p, 0)}% of the rain`), `${fmt((100 * q) / p, 0)}% of the rain of the ${yr ? `${yr[1]}-year` : "chosen"}, 24-hour storm (${UN.fmt("precip", p)}) runs off, on average over the whole HU12${ok(qp) ? `; at the point itself ${UN.fmt("precip", qp)} (${fmt((100 * qp) / p, 0)}%)` : ""}`] : null));
+        const R = T.basin_rusle, a = val(rowOf(B, /^Soil loss A, all land/, "t/ac/yr")) ?? val(rowOf(R, /^A, all land/)), tf = val(rowOf(B, /^T$/, "t/ac/yr")) ?? val(rowOf(R, /^T, tolerable/)), okT = ok(tf) && tf > 0;
+        later("basin", "loss", () => (ok(a) ? [UN.html("soilLoss", a, a < 10 ? 1 : 0), okT ? chip(a <= tf ? "Tolerable" : "Above tolerable", a <= tf ? "#2f8f5b" : a <= 2 * tf ? "#e0742c" : "#b3261e") : "",
+          okT ? `${fmt(a / tf, a / tf < 1 ? 2 : 1)} × T: ${a <= tf ? "within" : "above"} the tolerable soil loss (T ${UN.fmt("soilLoss", tf, 1)}); gross sheet and rill erosion, all land in the HU12` : "Gross sheet and rill erosion, all land in the HU12"] : null));
       }
       if (has("moisture") && SMM) {
         const m = MS && !(MS instanceof Error) ? MS.model : null, s = MS && !(MS instanceof Error) ? MS.station : null;
-        if (MS === undefined) { tile("smm", undefined, "Reading soil moisture models…"); tile("stn", undefined, "Looking for a station within 400 km…"); }
-        else if (MS instanceof Error) ["smm", "stn"].forEach(k => tile(k, "—", bad(MS)));
+        if (MS === undefined) { row("smm"); row("stn"); }
+        else if (MS instanceof Error) ["smm", "stn"].forEach(k => row(k, MS));
         else {
-          tile("smm", m && ok(num(m.top)) ? `${u(fmt(num(m.top), 2), "m³/m³")}` : "—", m ? `${volS(num(m.top))}top layer · root zone <b>${ok(num(m.root)) ? fmt(num(m.root), 2) : "—"}</b>${m.src ? ` · ${esc(m.src)}` : ""}${m.date ? `, ${esc(String(m.date))}` : ""}${wet()}` : "No model value here");
-          tile("stn", s && ok(num(s.value)) ? u(fmt(num(s.value), 2), "m³/m³") : "—", s ? `${ok(num(s.depthIn)) ? `${esc(UN.fmt("depth", num(s.depthIn) * 2.54))} · ` : ""}${s.time ? `${esc(String(s.time))} · ` : ""}<b>${esc(s.name || "")}</b>${s.net ? `, ${esc(s.net)}` : ""}${ok(num(s.km)) ? `, ${dist(num(s.km))}${s.dir ? ` ${esc(s.dir)}` : ""}` : ""}` : "No station within 400 km");
+          const top0 = m ? num(m.top) : null, w = wetClass(top0), sv = s ? num(s.value) : null;
+          row("smm", ok(top0) ? u(fmt(top0, 2), "m³/m³") : "—", ok(top0) ? (w ? chip(w.name, w.color) : "") : aside("No value here"),
+            m ? `${ok(top0) ? `${fmt(100 * top0, 0)}% water by volume, top layer; ` : ""}root zone ${ok(num(m.root)) ? fmt(num(m.root), 2) : "—"} m³/m³${m.src ? ` · ${m.src}` : ""}${m.date ? `, ${m.date}` : ""}${w ? `. ${w.tip}` : ""}` : "");
+          row("stn", ok(sv) ? u(fmt(sv, 2), "m³/m³") : "—", s ? aside(ok(num(s.km)) ? `${dist(num(s.km))}${s.dir ? ` ${s.dir}` : ""}` : s.net || "") : aside("None within 400 km"),
+            s ? `${s.name || ""}${s.net ? `, ${s.net}` : ""}${ok(num(s.depthIn)) ? ` · ${UN.fmt("depth", num(s.depthIn) * 2.54)}` : ""}${s.time ? ` · ${s.time}` : ""}` : "");
         }
       } else if (has("moisture")) {
         const M = T.moisture_models, ifs = M ? M.rows.filter(r => /^ECMWF IFS/.test(r[0])) : [], era = M ? M.rows.filter(r => /^ERA5/.test(r[0])) : [], use = ifs.length ? ifs : era;
         const day = use.reduce((m, r) => (r[4] > m ? r[4] : m), ""), at = (a, b) => { const r = use.find(x => x[2] === a && x[3] === b && x[4] === day); return r && ok(r[5]) ? r[5] : null; };
-        const v0 = at(0, 7), v28 = at(28, 100);
-        later("moisture", "smm", "soil moisture models", () => (ok(v0) ? [`${u(fmt(v0, 2), "m³/m³")}`, `${volS(v0)}0–7 cm · 28–100 cm <b>${ok(v28) ? fmt(v28, 2) : "—"}</b> · ${ifs.length ? "ECMWF IFS, today" : `ERA5-Land, ${esc(day)}`}${wet()}`] : null));
+        const v0 = at(0, 7), v28 = at(28, 100), w0 = wetClass(v0);
+        later("moisture", "smm", () => (ok(v0) ? [u(fmt(v0, 2), "m³/m³"), w0 ? chip(w0.name, w0.color) : "", `0–7 cm; 28–100 cm ${ok(v28) ? fmt(v28, 2) : "—"} m³/m³ · ${ifs.length ? "ECMWF IFS, today" : `ERA5-Land, ${day}`}${w0 ? `. ${w0.tip}` : ""}`] : null));
         const Sx = T.moisture_stations, rows = Sx && Sx.rows.length ? Sx.rows.filter(r => r[0] === Sx.rows[0][0] && ok(r[7])) : [], cm = rows.length ? Math.min(...rows.map(r => r[5])) : null;
         const atD = rows.filter(r => r[5] === cm), last = atD.find(r => /latest/.test(r[9])) || atD.reduce((m, r) => (!m || r[6] > m[6] ? r : m), null);
-        later("moisture", "stn", "soil moisture station within 400 km", () => (last ? [u(fmt(last[7], 2), "m³/m³"), `${esc(last[4])} · ${esc(String(last[6]))} · <b>${esc(last[0])}</b>, ${esc(last[1])}, ${dist(last[3])}`] : null));
+        later("moisture", "stn", () => (last ? [u(fmt(last[7], 2), "m³/m³"), aside(dist(last[3])), `${last[0]}, ${last[1]} · ${last[4]} · ${last[6]}`] : null));
       }
     }
     let t = 0;
     const off = on(() => { if (!live()) return off(); clearTimeout(t); t = setTimeout(draw, 30); });
-    // the moisture tiles' wilting point and field capacity are the survey read for the wind erosion (app.js state.soil),
-    // which may come in after the tiles are drawn: drawn again when app.js says so
+    // the moisture row's class is against this soil's wilting point and field capacity, from the survey read for the
+    // wind erosion (app.js state.soil), which may come in after the rows are drawn: drawn again when app.js says so
     const soilIn = () => { if (!live()) return document.removeEventListener("wg-soil", soilIn); clearTimeout(t); t = setTimeout(draw, 30); };
     document.addEventListener("wg-soil", soilIn);
     draw();
@@ -792,7 +847,7 @@ WG.soilmaps = (function () {
     await Promise.allSettled([pS, pN, pM, pTab]);
     draw();
   };
-  // a tile's, a link's or the headline's Details: the tab it names (app.js shows it on data-goto), scrolled to the card
+  // a row's →, or a link of the headline: the tab it names (app.js shows it on data-goto), scrolled to the card
   document.addEventListener("click", e => {
     const b = e.target.closest && e.target.closest("[data-so-go]"), tab = b && document.getElementById(`tab-${b.dataset.goto || "soilmaps"}`), pb = document.getElementById("panelBody");
     if (!b || !tab || !pb) return;
@@ -804,9 +859,9 @@ WG.soilmaps = (function () {
       WG.util.focusHead(card); // keyboard focus to the card's heading, not left on the link in the tab just hidden
     }, 0);
   });
-  // an Overview tile tapped anywhere but on its buttons (or to select text): its Details link, which stays for the keyboard
+  // an Overview row tapped anywhere but on its buttons (or to select text): its → link, which stays for the keyboard
   document.addEventListener("click", e => {
-    const t = e.target.closest && e.target.closest(".so-tile"), d = t && !e.target.closest("button, a, input, select, summary") && t.querySelector(".so-go[data-so-go]");
+    const t = e.target.closest && e.target.closest(".so-gr"), d = t && !e.target.closest("button, a, input, select, summary") && t.querySelector(".so-go[data-so-go]");
     if (d && !String(window.getSelection ? window.getSelection() : "").trim()) d.click();
   });
 

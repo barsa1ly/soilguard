@@ -10,7 +10,7 @@
    AWS with js/h5range.js) and the three nearest stations' daily means; the chosen years against each other and the
    average of the years before; and a table of what is shown. Its period controls follow the Rain and Temperature tabs'
    (js/weather.js) but are written here: the public SoilGuard copy has neither tab. summary() gives the Overview's
-   moisture tiles from the same reads. Each value says what it is: a model, a satellite analysis or a station's
+   moisture rows from the same reads. Each value says what it is: a model, a satellite analysis or a station's
    measurement, in m³/m³ (volume of water per volume of soil; stations that report % are divided by 100). Every source
    here is free and answers a browser (CORS); none needs a key. */
 WG.soilmoisture = (function () {
@@ -463,7 +463,7 @@ WG.soilmoisture = (function () {
     scales: { x: xAx, y: { title: { display: true, text: "m³/m³" }, ticks: { callback: v => (+v).toFixed(2) } } } });
   const line = (label, data, color, o = {}) => ({ type: "line", label, data: data.map(r3), borderColor: color, backgroundColor: color, pointRadius: o.points ? 2.5 : 0, pointHoverRadius: 3.5, borderWidth: o.w || 2, spanGaps: false, ...(o.dash ? { borderDash: o.dash } : {}) });
 
-  /* today at the point, for the Overview's two tiles: the models' 0-7 and 28-100 cm today (ECMWF IFS; ERA5-Land's latest
+  /* today at the point, for the Overview's two rows: the models' 0-7 and 28-100 cm today (ECMWF IFS; ERA5-Land's latest
      day when IFS gives none) and the nearest station's latest reading at its shallowest sensor. The same reads as the
      tab's default view (IFS's last 31 days, ERA5-Land's year, the stations' last 30 days): either one reads them once.
      lat, lon: the picked point. -> {model: {top, root, date, src} | null, station: {...} | null} */

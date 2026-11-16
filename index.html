@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-  <link rel="stylesheet" href="css/app.css?v=94">
+  <link rel="stylesheet" href="css/app.css?v=95">
 </head>
 <body>
 <div id="app" class="app">
@@ -126,7 +126,8 @@
       </div>
     </header>
     <!-- each tab names the map themes it belongs to: the panel shows the tabs of the theme on the map. data-detail: a tab
-         that waits behind the row's Details button (js/app.js tabRow), so Wind erosion, Drought and Soil maps open on their Overview -->
+         that waits until the details are out (the Details card last on the Overview: js/app.js detailsCard; Drought's History
+         card), so Wind erosion, Drought and Soil maps open on their Overview -->
     <nav class="tabs" role="tablist">
       <button role="tab" data-tab="overview" data-for="erosion" class="active">Overview</button>
       <button role="tab" data-tab="wind" data-for="erosion" data-detail>Wind</button>
@@ -135,14 +136,12 @@
       <button role="tab" data-tab="drought" data-for="drought" hidden>Overview</button>
       <button role="tab" data-tab="droughthist" data-for="drought" data-detail hidden>History</button>
       <button role="tab" data-tab="soiloverview" data-for="soilmaps" hidden>Overview</button>
-      <!-- Soil: the dominant soil, its horizons and chemistry (js/soilmaps.js with js/app.js's profile); Basin: js/basins.js's
-           watershed, runoff and soil loss. Phones: the theme already says soil, so "Moisture" keeps its tabs in one row (css .tabs .short) -->
+      <!-- Soil: the dominant soil, its horizons and chemistry (js/soilmaps.js with js/app.js's profile); Soil moisture:
+           js/soilmoisture.js; Basin, last: js/basins.js's watershed, runoff and soil loss. Phones: the theme already says
+           soil, so "Moisture" keeps its tabs in one row (css .tabs .short) -->
       <button role="tab" data-tab="soilmaps" data-for="soilmaps" data-detail hidden>Soil</button>
-      <button role="tab" data-tab="soilbasin" data-for="soilmaps" data-detail hidden>Basin</button>
       <button role="tab" data-tab="soilmoist" data-for="soilmaps" data-detail hidden><span class="full">Soil moisture</span><span class="short">Moisture</span></button>
-      <!-- the detail tabs out or away: after them, so they come out from where it stands; once out it keeps only its arrow,
-           held beside DOWNLOAD when the row scrolls (css "detail tabs"), so the longer row still fits a phone -->
-      <button type="button" id="tabMore" class="tab-more" aria-expanded="false" hidden><span class="tm-w">Details</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></button>
+      <button role="tab" data-tab="soilbasin" data-for="soilmaps" data-detail hidden>Basin</button>
       <button role="tab" data-tab="download" data-for="erosion drought soilmaps" class="tab-dl" title="Soil and weather files for crop and watershed models, tables and series" aria-label="Download data for models">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11M7.5 9.5 12 14l4.5-4.5M4 15v4.5h16V15"/></svg><span class="tab-dl-text"><b>DOWNLOAD</b><small>data for models</small></span></button>
     </nav>
@@ -168,9 +167,20 @@
           <div class="risk-links"><button class="link risk-how" data-methods="m-erod">How this is calculated →</button><button class="link risk-how" data-methods="m-scales">What the numbers mean →</button></div>
         </div>
 
+        <!-- the months, as on the Wind tab (js/app.js renderStats draws both) -->
         <div class="card">
-          <div class="card-h"><h3>Dominant soil</h3><button class="link" data-goto="soil">Soil details →</button></div>
+          <div class="card-h"><h3>When is this location most wind-prone?</h3></div>
+          <div class="month-strip" id="ovMonthStrip"></div>
+          <p class="fine" id="ovMonthStripNote">Red: 10% or more of the year's erosive wind energy, in dry conditions.</p>
+        </div>
+
+        <!-- this land: the dominant soil (js/app.js renderSoilSummary) and the land use chosen on the Practices tab (renderOvPractice) -->
+        <div class="card ov-land">
+          <div class="card-h"><h3>This land: soil and current practice</h3></div>
+          <div class="card-h ov-sub"><h4>Dominant soil</h4><button class="link" data-goto="soil">Soil details →</button></div>
           <div id="ovSoil" class="ov-soil"><span class="skeleton"></span></div>
+          <div class="card-h ov-sub"><h4>Current practice</h4><button class="link" data-goto="practices" id="ovPracGo">Choose land use →</button></div>
+          <div id="ovPrac" class="ov-soil"><span class="skeleton"></span></div>
         </div>
 
         <div class="card cta">
@@ -180,6 +190,7 @@
           </div>
           <button class="btn primary" data-goto="practices">Choose land use</button>
         </div>
+        <!-- last: the Details card (js/app.js detailsCard) -->
       </section>
 
       <!-- WIND -->
@@ -225,7 +236,7 @@
           <span class="fine" id="periodLimits"></span>
         </div>
 
-        <!-- the wind here at a glance and its months (js/app.js renderStats): on this tab, so the Overview stays short on a phone -->
+        <!-- the wind here at a glance and its months (js/app.js renderStats; the months are on the Overview too) -->
         <div class="card">
           <div class="card-h"><h3>At a glance</h3></div>
           <div class="facts" id="glance"></div>
@@ -478,39 +489,39 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-<script src="js/config.js?v=94"></script>
-<script src="data/states.js?v=94"></script>
-<script src="js/util.js?v=94"></script>
-<script src="js/units.js?v=94"></script>
-<script src="js/export.js?v=94"></script>
-<script src="js/soil.js?v=94"></script>
-<script src="js/wind.js?v=94"></script>
-<script src="js/charts.js?v=94"></script>
-<script src="js/practices.js?v=94"></script>
-<script src="js/methods.js?v=94"></script>
-<script src="js/timemap.js?v=94"></script>
-<script src="js/h5range.js?v=94"></script>
-<script src="js/weather.js?v=94"></script>
-<script src="js/soilmaps.js?v=94"></script>
-<script src="js/basins.js?v=94"></script>
-<script src="js/soilmoisture.js?v=94"></script>
-<script src="js/landcover.js?v=94"></script>
-<script src="js/shares.js?v=94"></script>
-<script src="js/timeslider.js?v=94"></script>
-<script src="js/places.js?v=94"></script>
-<script src="js/app.js?v=94"></script>
-<script src="js/fold.js?v=94"></script>
-<script src="js/downloads.js?v=94"></script>
-<script src="js/models.js?v=94"></script>
-<script src="js/writers.js?v=94"></script>
-<script src="js/century.js?v=94"></script>
-<script src="js/daycent.js?v=94"></script>
-<script src="js/preview.js?v=94"></script>
-<script src="js/templates.js?v=94"></script>
-<script src="js/datasheet.js?v=94"></script>
-<script src="js/area.js?v=94"></script>
-<script src="js/gridfiles.js?v=94"></script>
-<script src="js/grid.js?v=94"></script>
-<script src="js/stats.js?v=94"></script>
+<script src="js/config.js?v=95"></script>
+<script src="data/states.js?v=95"></script>
+<script src="js/util.js?v=95"></script>
+<script src="js/units.js?v=95"></script>
+<script src="js/export.js?v=95"></script>
+<script src="js/soil.js?v=95"></script>
+<script src="js/wind.js?v=95"></script>
+<script src="js/charts.js?v=95"></script>
+<script src="js/practices.js?v=95"></script>
+<script src="js/methods.js?v=95"></script>
+<script src="js/timemap.js?v=95"></script>
+<script src="js/h5range.js?v=95"></script>
+<script src="js/weather.js?v=95"></script>
+<script src="js/soilmaps.js?v=95"></script>
+<script src="js/soilmoisture.js?v=95"></script>
+<script src="js/basins.js?v=95"></script>
+<script src="js/landcover.js?v=95"></script>
+<script src="js/shares.js?v=95"></script>
+<script src="js/timeslider.js?v=95"></script>
+<script src="js/places.js?v=95"></script>
+<script src="js/app.js?v=95"></script>
+<script src="js/fold.js?v=95"></script>
+<script src="js/downloads.js?v=95"></script>
+<script src="js/models.js?v=95"></script>
+<script src="js/writers.js?v=95"></script>
+<script src="js/century.js?v=95"></script>
+<script src="js/daycent.js?v=95"></script>
+<script src="js/preview.js?v=95"></script>
+<script src="js/templates.js?v=95"></script>
+<script src="js/datasheet.js?v=95"></script>
+<script src="js/area.js?v=95"></script>
+<script src="js/gridfiles.js?v=95"></script>
+<script src="js/grid.js?v=95"></script>
+<script src="js/stats.js?v=95"></script>
 </body>
 </html>

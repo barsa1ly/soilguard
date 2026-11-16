@@ -490,13 +490,16 @@ WG.basins = (function () {
       ["Compared with T", ok(A) && Tf.v ? `${fmt(A / Tf.v, A / Tf.v < 1 ? 2 : 1)}${small("× T")}` : "—", ok(Tf.v) ? `T ${fmt(Tf.v, 1)} t/ac/yr (survey)${crop && ok(Ac) ? ` · cropland ${fmt(Ac / Tf.v, 1)} × T` : ""}` : ""],
       ["Soil moved each year", ok(tons) ? `${fmt(tons / 1000, tons < 1e4 ? 1 : 0)}${small("thousand short tons")}` : "—", ok(tons) ? `short tons from ${fmt(land * 247.105, 0)} ac of land` : ""],
     ])}
-      <h4 class="sm-h">The factors</h4>
-      ${SM.grid([SM.th("Factor"), SM.th("Value", "US units"), SM.th("SI"), SM.th("Source"), SM.th("Covers")], rows.map(r => [`${esc(r[0])}${r[7] ? `<small class="bs-mean">${esc(r[7])}</small>` : ""}`, `${r[1]}${r[2] ? ` <small>${esc(r[2])}</small>` : ""}`, r[3] ? `${r[3]} <small>${esc(r[4])}</small>` : "", esc(r[5]), esc(r[6])]))}
+      <details class="bs-fac"${M.facOpen ? " open" : ""}><summary>The factors (R, K, LS, C, P)</summary>
+      ${SM.grid([SM.th("Factor"), SM.th("Value", "US units"), SM.th("SI"), SM.th("Source"), SM.th("Covers")], rows.map(r => [`${esc(r[0])}${r[7] ? `<small class="bs-mean">${esc(r[7])}</small>` : ""}`, `${r[1]}${r[2] ? ` <small>${esc(r[2])}</small>` : ""}`, r[3] ? `${r[3]} <small>${esc(r[4])}</small>` : "", esc(r[5]), esc(r[6])]))}</details>
       ${helpBox("What the letters mean", RUSLE_VARS, P_TABLE)}
       <p class="fine">A = R × K × LS × C × P (RUSLE, USDA Agriculture Handbook 703) in short tons per acre per year; × 2.2417 = metric tonnes per hectare. K and LS are taken together for each soil component, and land cover as independent of the soils inside the HU12; P applies to the cropland (NLCD cultivated crops), as the practices are ways of farming it. <button class="link" data-sm-csv="basin_soils">soil components (CSV)</button> · <button class="link" data-sm-csv="basin_rusle">factors (CSV)</button></p>
       <p class="fine"><b>Limits:</b> gross sheet and rill erosion on the slopes, a long-term yearly average; not gullies, stream banks or channels, and not the sediment that leaves the HU12 (only part of it reaches the stream). LS comes from the survey's representative slope and slope length for each soil, not from a terrain model; C from land-cover classes is coarse (crops, residue and tillage change it ten-fold, so set cropland's C from your rotation); RUSLE fits rangeland, urban land and wetlands poorly. R: USGS RF7100 (Wieczorek &amp; LaMotte 2010; the PRISM-based 1971–2000 R of Daly &amp; Taylor) for the point's NHDPlus V2 catchment (USGS NLDI), kept to 1%.</p>`;
     summary();
   }
+  /* the factors' table is folded each time the tab is drawn (a new point, other units); it stays as you left it while
+     the card is drawn again for a new C, P or R */
+  document.addEventListener("toggle", e => { if (M && e.target.classList && e.target.classList.contains("bs-fac")) M.facOpen = e.target.open; }, true);
   // the part's summary table: every result so far, with its unit and source
   function summary() {
     if (!M || !M.live()) return;
@@ -515,6 +518,16 @@ WG.basins = (function () {
       ["Point: curve number", pt.cn, "", `TR-55 Table 2-2, ${CN_AS[pt.cls[0]]}`], ["Point: storm runoff Q", t2(pt.q), "mm", ok(M.P) ? `for the ${t2(M.P)} mm storm` : ""]);
     if (ok(M.nldiKm2)) rows.push(["Whole upstream basin (NHDPlus V2)", t2(M.nldiKm2), "km2", `USGS NLDI basin of COMID ${M.nldiComid}, not split at the point`]);
     T().basin = { title: `Basin: runoff and soil loss, HU12 ${hu.huc12} ${hu.name}`, header: ["Quantity", "Value", "Unit", "Source"], rows };
+  }
+  /* how the reads behind the Overview's three basin rows ended, told to js/soilmaps.js (say) as each read ends: yearly
+     runoff needs the network; design-storm runoff the soils, the land cover and the Atlas 14 depths; soil loss the
+     soils, the land cover and the R factor. A row whose read failed shows it, with a reload button, as its card does. */
+  function tell() {
+    if (!M || !M.live()) return;
+    const e = M.err.soils || M.err.lc, both = !!(M.soils && M.lc);
+    M.say("basin", M.err.net || (M.net ? "done" : undefined));
+    M.say("storm", e || (both && M.a14 !== undefined ? "done" : undefined));
+    M.say("loss", e || (both && M.R !== undefined ? "done" : undefined));
   }
   const r0 = v => (ok(v) ? Math.round(v) : "");
   const pfds = () => `<a href="https://hdsc.nws.noaa.gov/pfds/pfds_printpage.html?lat=${M.lat.toFixed(4)}&lon=${M.lon.toFixed(4)}&data=depth&units=english&series=pds" target="_blank" rel="noopener">NOAA PFDS at this point</a>`;
@@ -537,7 +550,7 @@ WG.basins = (function () {
     if (!m[k]) m[k] = f().catch(e => { delete m[k]; throw e; });
     return m[k];
   };
-  async function render(el, live, lat, lon) {
+  async function render(el, live, lat, lon, say) {
     const h0 = await Wx.once("bs:hu12", () => hu12At(lat, lon));
     if (!live()) return;
     if (h0 && !huSeen.has(h0.huc12)) { huSeen.set(h0.huc12, { hu: h0 }); if (huSeen.size > 6) huSeen.delete(huSeen.keys().next().value); }
@@ -545,7 +558,7 @@ WG.basins = (function () {
     if (!hu) { el.innerHTML = `<div class="card">${SM.head("Basin: runoff and soil loss", "")}<p class="fine">No 12-digit hydrologic unit (WBD) holds this point.</p></div>`; return; }
     const st = (WG.state.siteState || {}).code || "";
     if (pick.storm === "own") pick.storm = "2"; // a typed depth belongs to its point
-    M = { el, live, tok: WG.state.token, hu, lat, lon, st, net: null, soils: null, lc: null, R: undefined, Rv: null, a14: undefined, own: null, err: {}, nldi: null };
+    M = { el, live, tok: WG.state.token, hu, lat, lon, st, net: null, soils: null, lc: null, R: undefined, Rv: null, a14: undefined, own: null, err: {}, nldi: null, say: say || (() => {}) };
     const me = M, mine = () => M === me && live();
     el.innerHTML = `<div class="card">${SM.head("Basin: watershed and mean annual runoff", "basin", `HU12 ${hu.huc12}`)}
         <p class="fine" style="margin-top:0"><b>${esc(hu.name)}</b>, HUC ${esc(hu.huc12)}: ${fmt(hu.km2, 1)} km² (${UN.fmt("area", hu.km2 * 1e6)}), flows to HU12 ${esc(hu.tohuc || "—")}. The small watershed (HU12) that holds the point, from the USGS Watershed Boundary Dataset, drawn on the map with its NHDPlus HR catchments while this theme is on.</p>
@@ -557,16 +570,16 @@ WG.basins = (function () {
     M.ptLc = n0 && n0.src === "nlcd" && n0.code ? { code: n0.code, src: "MRLC" } : undefined;
     summary();
     drawNet(); drawCn(); drawRusle();
-    const done = (k, f) => v => { if (!mine()) return; M[k] = v; f(); }, fail = (k, f) => e => { console.warn("basins", k, e); if (!mine()) return; M.err[k] = e instanceof Error ? e : new Error(String(e)); f(); };
+    const done = (k, f) => v => { if (!mine()) return; M[k] = v; f(); tell(); }, fail = (k, f) => e => { console.warn("basins", k, e); if (!mine()) return; M.err[k] = e instanceof Error ? e : new Error(String(e)); f(); tell(); };
     const both = () => { drawCn(); drawRusle(); };
     const jobs = [
-      perHu(hu.huc12, "hr", () => hrIn(hu)).then(hr => { if (!mine()) return; M.net = network(hr, hu, lat, lon); overlay(M); drawNet(); summary(); T().basin_catchments = catTable(); }, fail("net", drawNet)),
+      perHu(hu.huc12, "hr", () => hrIn(hu)).then(hr => { if (!mine()) return; M.net = network(hr, hu, lat, lon); overlay(M); drawNet(); summary(); T().basin_catchments = catTable(); tell(); }, fail("net", drawNet)),
       perHu(hu.huc12, "soils", () => soilsIn(hu)).then(done("soils", both), fail("soils", both)),
       M.ptLc ? null : Wx.once("bs:lcpt", () => WG.landcover.classAt(lat, lon)).then(code => { if (mine()) { M.ptLc = { code, src: "MRLC WCS" }; drawCn(); } }, e => { console.warn("basins point land cover", e); if (mine()) { M.ptLc = e instanceof Error ? e : new Error(String(e)); drawCn(); } }),
       WG.landcover.boundaryShares(hu.polys).then(done("lc", both), fail("lc", both)),
-      (A14.has(st) ? a14File(st) : Promise.resolve(null)).then(j => { if (!mine()) return; M.a14 = j ? a14At(j, lat, lon) : null; const c = box("bsCnCtl"); if (c) c.innerHTML = stormControls(); drawCn(); }),
+      (A14.has(st) ? a14File(st) : Promise.resolve(null)).then(j => { if (!mine()) return; M.a14 = j ? a14At(j, lat, lon) : null; const c = box("bsCnCtl"); if (c) c.innerHTML = stormControls(); drawCn(); tell(); }),
       Wx.once("bs:comid", () => comidAt(lat, lon)).then(async c => { const r = await rAt(st, c); if (!mine()) return; M.comid = c; M.R = r; M.Rv = r ? r.R : null; M.Rsrc = M.Rsrc0 = r ? `USGS RF7100, NHDPlus V2 COMID ${c} (NLDI)${r.st !== st ? `, ${r.st} file` : ""}` : ""; },
-        e => { if (!mine()) return; M.err.R = e; M.R = null; }).then(() => { if (!mine()) return; const c = box("bsRusleCtl"); if (c) c.innerHTML = rusleControls(); drawRusle(); }),
+        e => { if (!mine()) return; M.err.R = e; M.R = null; }).then(() => { if (!mine()) return; const c = box("bsRusleCtl"); if (c) c.innerHTML = rusleControls(); drawRusle(); tell(); }),
     ];
     await Promise.allSettled(jobs);
   }

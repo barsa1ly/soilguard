@@ -1116,6 +1116,11 @@ table.grid.sm-table td small { color: var(--muted); }
 .bs-help[open] summary { margin-bottom: 6px; }
 .bs-help table.grid.sm-table td { white-space: normal; vertical-align: top; }
 .bs-help table.grid.sm-table td:nth-child(3) { min-width: 220px; }
+/* the RUSLE card's factors table, folded until opened, as its "What the letters mean" below (js/basins.js drawRusle) */
+.bs-fac { margin: 12px 0 6px; font-size: 12.5px; color: var(--ink-2); }
+.bs-fac summary { cursor: pointer; color: var(--accent-2); font-weight: 600; font-size: 12.5px; }
+.bs-fac[open] summary { margin-bottom: 6px; }
+@media (max-width: 767px) { .bs-fac summary, .bs-help summary { padding: 10px 0; } } /* phones: a bigger tap target */
 .bs-ctl label small { font-weight: 400; color: var(--muted); font-size: 11px; line-height: 1.3; }
 .bs-ctl label[hidden] { display: none; }
 .bs-ctl label small.bs-warn { color: #b3261e; font-weight: 600; }
@@ -1167,13 +1172,46 @@ table.grid.sm-table small.bs-mean { display: block; font-weight: 400; white-spac
 /* the Overview draws the Soil tab while it is hidden: laid out at the panel's width but with no height and unseen, so
    what is drawn to its box's width comes out as it would in the open tab */
 #tab-soilmaps[hidden] { display: grid !important; height: 0; overflow: hidden; visibility: hidden; contain: layout paint; }
-.so-tile { display: flex; flex-direction: column; }
-.so-tile .k { display: flex; justify-content: space-between; align-items: flex-start; gap: 6px; line-height: 1.3; }
-.so-tile .k > span:first-child { min-width: 0; }
-.so-tile .k .tag { flex: none; font-size: 10px; padding: 1px 6px; }
-.so-tile .s b { color: var(--ink-2); font-weight: 600; }
-.so-tile .so-links { margin-top: auto; padding-top: 6px; display: flex; flex-wrap: wrap; gap: 2px 12px; } /* Details, and on the pH tile Horizons */
-.so-tile .so-go { font-size: 12px; }
+/* the Overview's At a glance table: a row per value in three groups under a light band (soil moisture, soil chemistry,
+   then the basin), each with its name, its value and unit, its class as a small chip in the class's colour (or a plain
+   note) and a → to its card. The table ends the card, so its last row follows the card's rounded corners. */
+.card.so-glcard { padding: 0; overflow: hidden; }
+.so-glcard .card-h { padding: 14px 16px 0; margin-bottom: 2px; }
+.so-glcard .so-glsub { margin: 0; padding: 0 16px 10px; }
+table.so-gl { width: 100%; border-collapse: collapse; table-layout: fixed; font-variant-numeric: tabular-nums; }
+.so-gl col.so-gc1 { width: 36%; }
+.so-gl col.so-gc3 { width: 48px; }
+.so-gh th { padding: 6px 16px 5px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: var(--surface-2); text-align: left;
+  font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.so-gh svg { display: inline-block; width: 14px; height: 14px; margin-right: 7px; vertical-align: -2px; fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.so-gr > th, .so-gr > td { padding: 5px 0; border-top: 1px solid rgba(28, 36, 32, .07); vertical-align: middle; }
+.so-gh + .so-gr > th, .so-gh + .so-gr > td { border-top: 0; }
+.so-gr > th { padding: 5px 10px 5px 16px; text-align: left; font-size: 12.5px; font-weight: 500; line-height: 1.3; color: var(--muted); }
+.so-gr > td.so-ggo { padding-right: 10px; text-align: right; }
+.so-gv { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-height: 30px; }
+.so-gv .skeleton { width: min(160px, 70%); }
+.so-gval { min-width: 7.4em; font-size: 15px; font-weight: 650; letter-spacing: -.005em; color: var(--ink); white-space: nowrap; } /* the chips start in line */
+.so-gval small { font-size: 11.5px; font-weight: 500; color: var(--muted); }
+.so-c { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px 2px 7px; border: 1px solid var(--cl, var(--line)); border-radius: 999px;
+  background: var(--cb, var(--surface-2)); color: var(--ink); font-size: 11.5px; font-weight: 600; line-height: 1.4; white-space: nowrap; }
+.so-c::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--c, var(--muted)); box-shadow: inset 0 0 0 1px rgba(28, 36, 32, .22); }
+.so-gm { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.so-gl .so-gerr:has(> .wx-retry) { display: inline-flex; align-items: center; gap: 8px; min-height: 0; padding-right: 0; font-size: 12px; color: var(--muted); }
+.so-gl .wx-retry { position: static; width: 28px; height: 28px; box-shadow: none; }
+.so-go { display: inline-grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 50%; background: var(--accent-soft); color: var(--accent-2);
+  font-size: 15px; font-weight: 700; line-height: 1; transition: background-color .15s, color .15s; }
+/* a row with a → opens its card on a tap anywhere (js/soilmaps.js); the → stays for the keyboard */
+.so-gr:has(.so-go) { cursor: pointer; transition: background-color .15s; }
+.so-gr:has(.so-go):hover, .so-gr:focus-within { background: rgba(180, 83, 42, .05); }
+.so-gr:has(.so-go):hover .so-go, .so-go:focus-visible { background: var(--accent); color: #fff; }
+/* phones: a chip that does not fit goes under its value, and each row is a 44 px tap target */
+@media (max-width: 767px) {
+  .so-gl col.so-gc1 { width: 38%; }
+  .so-gl col.so-gc3 { width: 46px; }
+  .so-gr > th, .so-gr > td { padding-top: 7px; padding-bottom: 7px; }
+  .so-gval { min-width: 0; }
+  .so-go { width: 34px; height: 34px; }
+}
 .sm-chips { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; margin-top: 8px; }
 .sm-chips-k { font-size: 11.5px; color: var(--muted); font-weight: 600; }
 .sm-chips .seg button { padding: 5px 11px; }
@@ -1389,28 +1427,6 @@ table.grid.sm-table small.bs-mean { display: block; font-weight: 400; white-spac
   .app.has-site:not(.map-big) .tool-w { order: 1; flex: 1; justify-content: center; padding: 0 1px; border-radius: 0 0 12px 12px; font-size: 9.5px; letter-spacing: 0; }
 }
 
-/* the tab row's Details button (js/app.js tabRow): outlined, apart from the tabs, with its arrow; once the details are
-   out, the arrow alone, pointing back */
-.tabs button.tab-more { flex: none; display: flex; align-items: center; gap: 2px; padding: 6px 7px 6px 10px; border: 1px solid var(--line); background: var(--surface); color: var(--ink-2); }
-.tabs button.tab-more svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; transition: transform .2s; }
-.tabs button.tab-more[aria-expanded="true"] { padding-left: 6px; padding-right: 6px; }
-.tabs button.tab-more[aria-expanded="true"] .tm-w { display: none; }
-.tabs button.tab-more[aria-expanded="true"] svg { transform: rotate(180deg); }
-.tabs button.tab-more:hover { border-color: var(--muted); background: var(--surface); color: var(--ink); }
-/* a row wider than the panel scrolls its tabs under DOWNLOAD and this button, held beside it (--dl-w: js/app.js fitTabRow),
-   which takes over DOWNLOAD's fade */
-.tabs button.tab-more { position: sticky; right: var(--dl-w, 0px); }
-.tabs > .tab-more:not([hidden]) ~ .tab-dl { box-shadow: none; }
-.tabs:not(.at-end) > .tab-more:not([hidden]) { box-shadow: -10px 0 8px -2px var(--surface); }
-/* a phone with the details out: a pixel less on each side of the tabs and a narrower arrow keep the row on one screen width */
-@media (max-width: 400px) {
-  .tabs:has(> .tab-more[aria-expanded="true"]:not([hidden])) > button[data-tab]:not(.tab-dl) { padding-left: 5px; padding-right: 5px; }
-  .tabs button.tab-more[aria-expanded="true"] { padding-left: 3px; padding-right: 3px; }
-}
-@media (max-width: 374px) {
-  .tabs:has(> .tab-more[aria-expanded="true"]:not([hidden])) > button[data-tab]:not(.tab-dl) { padding-left: 4px; padding-right: 4px; font-size: 12px; }
-}
-
 /* a card's or tile's folded text (js/fold.js): shut under one small "More" button at its lower right; all open in print */
 #panelBody :is(.fold-p, .tf-more, .tf-nh, small.tf-hint):not(.fold-show) { display: none; }
 #panelBody .tf-more.fold-show { display: block; margin-top: 2px; }
@@ -1528,7 +1544,6 @@ table.grid th small { font-size: 11px; }
 table.weg-table .here { font-size: 11px; }
 .lu .sugg { font-size: 11px; }
 .badge { font-size: 11px; }
-.so-tile .k .tag { font-size: 11px; }
 .mi-fine, .mi-scale { font-size: 11px; }
 @media (max-width: 767px) {
   .mtable td::before { font-size: 11px; }
@@ -1567,9 +1582,6 @@ table.weg-table .here { font-size: 11px; }
 .risk-more-tg { grid-column: 1 / -1; justify-self: end; min-height: 32px; margin-top: 2px; padding: 0 11px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--muted); font-size: 12px; line-height: 1; white-space: nowrap; cursor: pointer; }
 .risk-more-tg:hover, .risk-more-tg[aria-expanded="true"] { color: var(--ink); border-color: var(--muted); }
 @media print { #riskMore[hidden] { display: grid !important; } .risk-more-tg { display: none !important; } }
-/* the Soil maps Overview's tiles open their card on a tap anywhere (js/soilmaps.js); the Details link stays for the keyboard */
-.so-tile:has(.so-go) { cursor: pointer; transition: box-shadow .15s; }
-.so-tile:has(.so-go):hover { box-shadow: 0 0 0 1.5px var(--accent), var(--shadow); }
 /* phones: a point opens with its results on about half of the screen (46 % of the rows, the panel's top 16 px into the
    map row), the map strip above larger than before (38 / 62); the grip, the bar and the swipes as before */
 @media (max-width: 767px) and (min-height: 561px) {
@@ -1581,7 +1593,7 @@ table.weg-table .here { font-size: 11px; }
 /* the save dialog's map hint: one line, its More opening the rest (js/downloads.js) */
 .sv-bar .sv-tips-tg { font-size: inherit; vertical-align: baseline; }
 /* phones: 44 px tap targets for the tab row (its bottom padding gives most of the height back), the panel head's buttons
-   and the legend's show / hide (its margins keep the legend's size); the Details arrow, once out, wider by the row's gaps */
+   and the legend's show / hide (its margins keep the legend's size) */
 @media (max-width: 767px) {
   .tabs { padding-bottom: 2px; }
   .tabs button { min-height: 44px; }
@@ -1589,9 +1601,16 @@ table.weg-table .here { font-size: 11px; }
   #dataBtn { display: none; } /* the DOWNLOAD tab just below does the same; its room keeps the place's lines from wrapping */
   .legend h5 button { min-height: 44px; min-width: 44px; margin: -14px -10px -14px 0; }
 }
-@media (max-width: 400px) {
-  .tabs:has(> .tab-more[aria-expanded="true"]:not([hidden])) { gap: 1px; }
-  .tabs button.tab-more[aria-expanded="true"] { padding-left: 5px; padding-right: 5px; }
+/* the Wind erosion Overview's land card (index.html .ov-land): the dominant soil, then the current practice, each under
+   a small heading with its link */
+.ov-sub { margin: 0 0 2px; }
+.ov-sub h4 { margin: 0; font-size: 11.5px; font-weight: 650; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.ov-land .ov-soil + .ov-sub { margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--line); }
+/* the Details card, last on an Overview (js/app.js detailsCard): a plain card, apart from the coloured control plan above */
+.card.cta.dt-card { background: var(--surface); box-shadow: var(--shadow); }
+/* phones: 44 px tap targets for the land card's links and the Details card's button */
+@media (max-width: 767px) {
+  .ov-land .link, .dt-card .btn { min-height: 44px; }
 }
 
 /* ---------- keyboard focus and reduced motion ---------- */

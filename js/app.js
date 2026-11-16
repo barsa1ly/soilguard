@@ -435,30 +435,53 @@
     ...Object.fromEntries(Object.entries(WG.weather.layers).map(([t, list]) => [t, (list.find(x => x.def) || list[0] || {}).key || null])) };
   const groups = { refs, themes, soilLayers, live: new Proxy({}, { get: (_, k) => live[state.theme] && live[state.theme][k] }) };
   const showItem = (it, v) => { [it.layer, it.extra].filter(Boolean).forEach(l => (v ? l.addTo(map) : map.removeLayer(l))); };
-  /* Wind erosion and Soil maps open on their Overview: their other tabs (data-detail in index.html) are the details, which
-     the row's Details button brings out and puts away again, the choice kept on this device. A step to a detail tab from
-     anywhere else (an Overview tile's or card's link, Wind erosion › Soil's link to Soil maps › Soil, the land cover key)
-     brings them out first, for this visit only, so the short row stays the default. */
+  /* Wind erosion and Soil maps open on their Overview: their other tabs (data-detail in index.html) are the details. The
+     Details card, last on the Overview, brings them out and puts them away again, the choice kept on this device. A step
+     to a detail tab from anywhere else (an Overview row's or card's link, Wind erosion › Soil's link to Soil maps › Soil,
+     the land cover key) brings them out first, for this visit only, so the short row stays the default. */
   let details = false;
   try { details = localStorage.getItem("fg.details") === "1"; } catch (e) { /* storage off: the Overview alone */ }
   const isDetail = name => !!$(`.tabs button[data-tab="${name}"][data-detail]`);
   function tabRow() {
     $$(".tabs button[data-tab]").forEach(b => { b.hidden = !b.dataset.for.split(" ").includes(state.theme) || (!details && b.hasAttribute("data-detail")); });
-    const more = $("#tabMore"), names = $$(".tabs button[data-detail]").filter(b => b.dataset.for.split(" ").includes(state.theme)).map(b => (b.querySelector(".full") || b).textContent.trim());
-    more.hidden = !names.length; // a theme without detail tabs: no Details button
-    if (!names.length) return;
-    const say = details ? "Hide the detail tabs" : names.length > 1 ? `Details: show the ${names.slice(0, -1).join(", ")} and ${names[names.length - 1]} tabs` : `Details: show the ${names[0]} tab`;
-    more.setAttribute("aria-expanded", String(details));
-    more.setAttribute("aria-label", say);
-    more.title = say; // out, it is only an arrow
+    syncDetails();
   }
-  $("#tabMore").addEventListener("click", () => {
+  /* The Details card: WG.app.detailsCard(theme) gives its HTML, "" for a theme without one. While the details are
+     hidden it names the detail tabs and what they hold, with Show details: they come out and the first one opens. While
+     they are out it says so, with Hide details. tabRow keeps every copy on the page in step, and one click handler
+     (on [data-details]) serves them all. Drought's is its History card (js/weather.js). */
+  const DETAIL_TABS = {
+    erosion: ["Wind, Soil and Practices", "the wind month by month, the soil and your soil test, and a control plan for your land"],
+    soilmaps: ["Soil, Soil moisture and Basin", "the soil's layers and chemistry, soil moisture over time, and the watershed's runoff and soil loss"],
+  };
+  const dcLine = t => (details ? `The ${DETAIL_TABS[t][0]} tabs are open in the row above.` : `${DETAIL_TABS[t][0]}: ${DETAIL_TABS[t][1]}.`);
+  const dcBtn = () => (details ? "Hide details" : "Show details");
+  function detailsCard(theme) {
+    if (!DETAIL_TABS[theme]) return "";
+    return `<div class="card cta dt-card" data-details-card="${theme}"><div><h3>More detail</h3><p class="fine">${esc(dcLine(theme))}</p></div>
+      <button type="button" class="btn" data-details>${dcBtn()}</button></div>`;
+  }
+  function syncDetails() {
+    $$("[data-details-card]").forEach(c => {
+      const t = c.dataset.detailsCard, p = c.querySelector("p"), b = c.querySelector("[data-details]");
+      if (!DETAIL_TABS[t] || !p || !b) return;
+      p.textContent = dcLine(t);
+      b.textContent = dcBtn();
+    });
+  }
+  WG.app = { ...(WG.app || {}), detailsCard };
+  $("#tab-overview").insertAdjacentHTML("beforeend", detailsCard("erosion"));
+  $("#panel").addEventListener("click", e => {
+    if (!e.target.closest("[data-details]")) return;
     details = !details;
-    try { localStorage.setItem("fg.details", details ? "1" : "0"); } catch (e) { /* storage off: for this visit */ }
+    try { localStorage.setItem("fg.details", details ? "1" : "0"); } catch (err) { /* storage off: for this visit */ }
     tabRow();
-    const on = $(".tabs button.active");
-    if (!on || on.hidden) showTab($(".tabs button[data-tab]:not([hidden])").dataset.tab); // the detail tab on show put away: the theme's Overview
+    const first = $(".tabs button[data-detail]:not([hidden])"), on = $(".tabs button.active");
+    // out: the theme's first detail tab opens at its top, with keyboard focus on its tab
+    if (details && first) { showTab(first.dataset.tab); first.focus({ preventScroll: true }); return; }
+    if (!on || on.hidden) showTab($(".tabs button[data-tab]:not([hidden])").dataset.tab); // put away while one was on show: the Overview
     else fitTabRow(); // the row's length changed, not its box: its end fade is measured again
+    if (!details) WG.say("The detail tabs are hidden");
   });
   // tab: the tab to open (a link to another theme's tab), else the one on show if it belongs, else the theme's first
   function setTheme(t, tab) {
@@ -1050,15 +1073,12 @@
      The active tab is scrolled clear of it, so a link to another theme's tab lands on a tab that shows. DOWNLOAD's fade
      marks tabs hidden under it, so it goes ("at-end") once the row is scrolled to its end or fits, where it would only
      pale the tab next to it. Not measured while the panel is not laid out (no site yet); measured again as the row
-     changes size (the panel opening widens it over .35 s, a window resized). The Details button keeps beside DOWNLOAD
-     (sticky at DOWNLOAD's width and the gap, --dl-w; css "detail tabs"), so the tabs scroll under both and its fade is
-     the row's. */
+     changes size (the panel opening widens it over .35 s, a window resized). */
   function fitTabRow() {
-    const row = $(".tabs"), dl = $(".tabs .tab-dl"), b = $(".tabs button.active"), more = $("#tabMore");
+    const row = $(".tabs"), dl = $(".tabs .tab-dl"), b = $(".tabs button.active");
     if (!row.clientWidth) return;
-    row.style.setProperty("--dl-w", `${dl.offsetWidth + (parseFloat(getComputedStyle(row).columnGap) || 0)}px`);
     if (b && b !== dl && row.scrollWidth > row.clientWidth) {
-      const x = b.getBoundingClientRect(), left = row.getBoundingClientRect().left + parseFloat(getComputedStyle(row).paddingLeft), right = (more.hidden ? dl : more).getBoundingClientRect().left - 16;
+      const x = b.getBoundingClientRect(), left = row.getBoundingClientRect().left + parseFloat(getComputedStyle(row).paddingLeft), right = dl.getBoundingClientRect().left - 16;
       // its left end first: in a row still narrower than the tab (the panel opening), scrolled no further than keeps it
       if (x.left < left) row.scrollLeft -= left - x.left;
       else if (x.right > right) row.scrollLeft += Math.min(x.right - right, x.left - left);
@@ -1203,7 +1223,7 @@
     $("#glance").innerHTML = ["Mean wind (10 m)", "Erosive wind", "Prevailing erosive wind", "Wind data", "Land cover"]
       .map(k => `<span class="k">${k}</span><span class="v"><span class="skeleton" style="width:80px"></span></span><span class="n"></span>`).join("");
     renderWegTable(null);
-    $("#monthStrip").innerHTML = U.MONTHS.map(m => `<div class="m"><i class="skeleton" style="height:28px"></i>${m[0]}</div>`).join("");
+    monthStrips(U.MONTHS.map(m => `<div class="m"><i class="skeleton" style="height:28px"></i>${m[0]}</div>`).join(""), "Red: 10% or more of the year's erosive wind energy, in dry conditions.");
     $("#ovSoil").innerHTML = '<span class="skeleton"></span><span class="skeleton" style="width:60%"></span>';
     $("#soilSummary").innerHTML = '<span class="skeleton"></span><span class="skeleton" style="width:60%"></span>';
     $("#soilDerived").innerHTML = "";
@@ -1235,7 +1255,7 @@
         use(e);
         later.then(use); // USGS 3DEP (1 m), when it answers after the Copernicus DEM was shown
       }).catch(() => {}),
-      fetchNLCD(lat, lon).then(n => { if (live()) { state.nlcd = n; renderStats(); renderPractices(); } }).catch(() => { if (live()) { state.nlcd = { code: null }; renderStats(); } }),
+      fetchNLCD(lat, lon).then(n => { if (live()) { state.nlcd = n; renderStats(); renderPractices(); } }).catch(() => { if (live()) { state.nlcd = { code: null }; renderStats(); renderPractices(); } }),
       // "wg-soil": the survey read (or its failure) and the surface edits, for the Soil maps theme's tabs (js/soilmaps.js, js/basins.js)
       S.fetchSoil(lat, lon).then(s => {
         if (!live()) return;
@@ -1700,17 +1720,20 @@
         ["Land cover", state.nlcd ? state.nlcd.name || "n/a" : "…", state.nlcd ? { nlcd: "NLCD 2021, 30 m", io: "Sentinel-2, 10 m" }[state.nlcd.src] || "" : ""],
       ]);
       // the months are ranked by their share of the year only when the period covers all 12
-      $("#monthStrip").innerHTML = w.months.map((m, i) => `<div class="m ${m.level}" title="${U.MONTHS_LONG[i]}: ${m.valid ? `${(m.share * 100).toFixed(0)}% of ${w.annualized ? "annual" : "the covered months'"} risk` : "no data in this period"}"><i></i>${U.MONTHS[i][0]}</div>`).join("");
-      $("#monthStripNote").textContent = !w.annualized
-        ? `Months covered: ${monthsText(w.months.flatMap((m, i) => (m.valid ? [i] : [])))}. Months are ranked (red: 10% or more of the year's erosive wind energy, in dry conditions) only when the period covers all 12.`
-        : w.riskMonths.length ? `High-risk: ${monthsText(w.riskMonths)}. Red: 10% or more of the year's erosive wind energy, in dry conditions.`
-          : "Erosive wind is spread evenly across the year here.";
+      monthStrips(w.months.map((m, i) => `<div class="m ${m.level}" title="${U.MONTHS_LONG[i]}: ${m.valid ? `${(m.share * 100).toFixed(0)}% of ${w.annualized ? "annual" : "the covered months'"} risk` : "no data in this period"}"><i></i>${U.MONTHS[i][0]}</div>`).join(""),
+        !w.annualized
+          ? `Months covered: ${monthsText(w.months.flatMap((m, i) => (m.valid ? [i] : [])))}. Months are ranked (red: 10% or more of the year's erosive wind energy, in dry conditions) only when the period covers all 12.`
+          : w.riskMonths.length ? `High-risk: ${monthsText(w.riskMonths)}. Red: 10% or more of the year's erosive wind energy, in dry conditions.`
+            : "Erosive wind is spread evenly across the year here.");
     } else if (w && w.error) { // the series failed to load, or has no usable month in the period: a message, no numbers
       const what = w.insufficient ? "Not enough wind data" : "Wind history unavailable";
       $("#glance").innerHTML = facts([["Wind history", w.insufficient ? "not enough data" : "unavailable", w.error], ["Land cover", state.nlcd ? state.nlcd.name || "n/a" : "…", ""]]);
-      $("#monthStrip").innerHTML = `<p class="fine" style="grid-column:1/-1">${what}: ${esc(w.error)}</p>`;
-      $("#monthStripNote").textContent = w.insufficient ? "Each month is summarised from 20 or more days of hourly wind." : "";
+      monthStrips(`<p class="fine" style="grid-column:1/-1">${what}: ${esc(w.error)}</p>`, w.insufficient ? "Each month is summarised from 20 or more days of hourly wind." : "");
     }
+  }
+  // the month strip and its note, on the Wind tab and on the Overview
+  function monthStrips(html, note) {
+    [["#monthStrip", "#monthStripNote"], ["#ovMonthStrip", "#ovMonthStripNote"]].forEach(([s, n]) => { $(s).innerHTML = html; $(n).textContent = note; });
   }
 
   /* rows [label, value, note] as aligned columns (null rows are skipped) */
@@ -2275,6 +2298,7 @@
     const pf = tx ? null : WG.practices.profile(ss.code);
     if (pf === undefined) WG.practices.loadProfile(ss.code, ASSET_V).then(() => { if (state.siteState === ss) renderPractices(); });
     const none = !tx && !pf;
+    renderOvPractice(pf, none);
     $("#tab-practices").classList.toggle("elsewhere", none);
     $("#practicesElsewhere").hidden = !none;
     if (none) {
@@ -2290,6 +2314,18 @@
       grid: $("#luGrid"), qWrap: $("#luQuestions"), qBox: $("#qBox"), plan: $("#planBox"), suggestTag: $("#lcSuggest"),
       state, surface: currentSurface(), risk: riskModel(), profile: pf, onChange: () => renderPractices(),
     });
+  }
+  /* The Overview's current practice, under the dominant soil: the land use chosen on the Practices tab with its answers
+     in a few words (js/practices.js summary), else what the land cover map shows here. Drawn with the Practices tab, so
+     it follows each choice and answer and each new location; while a state's practice guidance loads, it waits. */
+  function renderOvPractice(pf, none) {
+    if (!state.site) return;
+    const s = none ? null : WG.practices.summary(state, pf), lc = state.nlcd;
+    $("#ovPracGo").textContent = s ? "Change →" : "Choose land use →";
+    $("#ovPrac").innerHTML = none && pf === undefined ? '<span class="skeleton"></span>'
+      : s ? `<div class="nm">${esc(s.name)}</div><div class="sub">${s.answers.map(esc).join(" · ")}</div>`
+        : `<div class="nm">Not chosen yet</div><div class="sub">${!lc ? '<span class="skeleton" style="width:60%"></span>'
+          : lc.name ? `The land cover map shows ${esc(lc.name)} here.` : lc.src ? "The land cover map gives no class here." : "The land cover map could not be read here."}</div>`;
   }
 
   /* A change in the units table redraws every view that shows numbers. */

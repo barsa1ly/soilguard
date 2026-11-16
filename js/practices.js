@@ -99,6 +99,26 @@ WG.practices = (function () {
       { id: "btype", label: "What is there?", opts: [["dune", "Active dunes / blowout"], ["sheet", "Bare sand sheet or old field"], ["caliche", "Caliche, gravel or rock"]] },
     ],
   };
+  /* An answer in a few plain words for the Overview's current practice (summary below), where the option's own text
+     does not stand alone; any other answer is its option's text without a closing bracket ("Irrigated (pivot/drip)"
+     reads "Irrigated"). "" leaves the answer out. */
+  const SAY = {
+    cropland: {
+      residue: { bare: "Bare after harvest", low: "Some residue after harvest" },
+      till: { conv: "Conventional tillage", reduced: "Reduced tillage", notill: "No-till or strip-till" },
+      barrier: { none: "No wind barriers", some: "Some wind barriers" },
+    },
+    rangeland: {
+      cond: { good: "Good ground cover", fair: "Fair ground cover", poor: "Poor ground cover" },
+      graze: { cont: "Grazed year-round", rot: "Rotational or deferred grazing" },
+      drought: { normal: "Normal moisture" },
+      lpc: { no: "", yes: "Lesser prairie-chicken range" },
+    },
+    shrubland: { under: { sparse: "Sparse grass" }, goal: { graze: "For livestock", wild: "For wildlife", both: "For livestock and wildlife" } },
+    pasture: { ptype: { irr: "Irrigated pasture" }, cond: { good: "Good stand", fair: "Fair stand", poor: "Thin or bare stand" } },
+    crp: { stage: { new: "New planting" }, cond: { good: "Good cover", poor: "Thin cover, bare spots" } },
+    disturbed: { stage: { spring: "Work ends in time to seed", fall: "Work ends going into the windy season" } },
+  };
 
   /* ------------------------------------------------------------------ sources */
   const R = {
@@ -753,6 +773,20 @@ WG.practices = (function () {
   const stateLU = pf => LU.map(l => (l.id === "cropland" && pf.crops.length ? { ...l, sub: pf.crops.slice(0, 4).map(c => c.name.toLowerCase()).join(", ") }
     : l.id === "shrubland" && pf.shrubs.length ? { ...l, sub: pf.shrubs.slice(0, 3).map(s => s.name.toLowerCase()).join(", ") }
       : l.id === "cropland" ? { ...l, sub: "row crops and small grains" } : l.id === "shrubland" ? { ...l, sub: "brush and shrubs" } : l));
+  /* The land use chosen on the Practices tab and its answers in a few plain words, for the Wind erosion Overview
+     (js/app.js renderOvPractice): { id, name, answers: ["Cotton", "Dryland", "Bare after harvest", ...] }, or null while
+     none is chosen. An unanswered question counts as its first option, as on the tab. pf: the state's profile outside
+     Texas, as render() takes it. */
+  function summary(st, pf) {
+    const lu = st.landUse && (pf ? stateLU(pf) : LU).find(l => l.id === st.landUse);
+    if (!lu) return null;
+    const say = SAY[lu.id] || {};
+    const answers = (pf ? stateQ(lu.id, pf) : Q[lu.id]).map(q => {
+      const v = q.opts.some(x => x[0] === (st.answers || {})[q.id]) ? st.answers[q.id] : q.opts[0][0];
+      return say[q.id] && v in say[q.id] ? say[q.id][v] : q.opts.find(x => x[0] === v)[1].replace(/\s*\([^)]*\)$/, "");
+    }).filter(Boolean);
+    return { id: lu.id, name: lu.name, answers };
+  }
 
   function planState(lu, a, ctx) {
     const pf = ctx.pf, B = pf.B, S = pf.name, P = [], notes = [];
@@ -1136,5 +1170,5 @@ WG.practices = (function () {
     return hit ? hit[1] : t.split(/[,:—]/)[0].slice(0, 18);
   }
 
-  return { render, context, plan, planState, loadProfile, profile, LU, coverReduction };
+  return { render, context, plan, planState, loadProfile, profile, LU, coverReduction, summary };
 })();
