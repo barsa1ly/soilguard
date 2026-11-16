@@ -299,6 +299,21 @@ WG.soilmaps = (function () {
   const dsVal = (s, hz, el) => { const a = ((s.p[hz] || {}).analyses || {})[DS_COL[el]]; return a === undefined || a === null || a === "" ? null : a; };
   const dsUnit = el => (DS_COL[el].endsWith("_pct") ? "%" : "mg/kg");
   const dsShow = (v, el) => (v === null ? "—" : typeof v === "string" ? esc(v) : fmt(v, dsUnit(el) === "%" ? 2 : v < 10 ? 1 : 0));
+  /* an element at the point itself, interpolated from the nearest sites (the app reads three) by inverse distance squared,
+     as the USGS maps are interpolated between the sites; a value below the detection limit ("<x") counts as half of x.
+     -> { v, n: sites used } or null when none has a value. The map service itself cannot be read at a point. */
+  function dsHere(sites, hz, el) {
+    let sw = 0, sv = 0, n = 0;
+    sites.forEach(s => {
+      const a = dsVal(s, hz, el);
+      if (a === null) return;
+      const t = String(a).trim(), x = typeof a === "number" ? a : num(t.replace(/^[<>]\s*/, ""));
+      if (!ok(x)) return;
+      const w = 1 / Math.max(0.5, s.km) ** 2; // km; a site within 0.5 km counts as 0.5 km away
+      sw += w; sv += w * (t.startsWith("<") ? x / 2 : x); n++;
+    });
+    return n ? { v: sv / sw, n } : null;
+  }
 
   /* NRCS KSSL: the lab-measured pedons nearest the point, their surface layer (a box widened once if it holds fewer than 3) */
   async function ksslAt(lat, lon) {
@@ -633,15 +648,16 @@ WG.soilmaps = (function () {
       if (!sites.length) { x.innerHTML = `<div class="card">${head("Nearest USGS soil geochemistry sites", "")}<p class="fine">No DS-801 site within about 160 km.</p></div>`; return; }
       const val = dsVal, unit = dsUnit, shows = dsShow;
       const depthOf = (s, hz) => (s.p[hz] && s.p[hz].depth_cm ? `${s.p[hz].depth_cm} cm` : "");
-      const cols = [th("Element"), ...sites.flatMap((s, i) => [th(`Site ${i + 1}, top 5 cm`, depthOf(s, "top5cm")), th(`Site ${i + 1}, A horizon`, depthOf(s, "ahorizon"))]), th("US median", "top 5 cm, same unit as the row")];
-      const rows = ELS.map(([el, n]) => [`${showBtn("chem", el, { el, hz: "Top5" })} <small>${esc(n)}, ${unit(el)}</small>`, ...sites.flatMap(s => [shows(val(s, "top5cm", el), el), shows(val(s, "ahorizon", el), el)]),
+      const here = el => dsHere(sites, "top5cm", el);
+      const cols = [th("Element"), th("Here, interpolated", "top 5 cm"), ...sites.flatMap((s, i) => [th(`Site ${i + 1}, top 5 cm`, depthOf(s, "top5cm")), th(`Site ${i + 1}, A horizon`, depthOf(s, "ahorizon"))]), th("US median", "top 5 cm, same unit as the row")];
+      const rows = ELS.map(([el, n]) => [`${showBtn("chem", el, { el, hz: "Top5" })} <small>${esc(n)}, ${unit(el)}</small>`, (h => (h ? `<b>${shows(h.v, el)}</b>` : "—"))(here(el)), ...sites.flatMap(s => [shows(val(s, "top5cm", el), el), shows(val(s, "ahorizon", el), el)]),
         lg && lg.elements[el] ? esc(String(lg.elements[el].Top5.median)) : "—"]);
-      tables.usgs = { title: "USGS DS-801 soil geochemistry, nearest sites: TOTAL element (not plant-available)", header: ["Element", "Unit", ...sites.flatMap((s, i) => [`Site ${i + 1} (#${s.id}, ${r1(s.km)} km ${s.dir}, ${s.p.colldate || ""}) top 5 cm`, `Site ${i + 1} A horizon`]), "US median top 5 cm"],
-        rows: ELS.map(([el]) => [el, unit(el), ...sites.flatMap(s => [val(s, "top5cm", el), val(s, "ahorizon", el)]), lg && lg.elements[el] ? lg.elements[el].Top5.median : null]) };
+      tables.usgs = { title: "USGS DS-801 soil geochemistry, nearest sites: TOTAL element (not plant-available)", header: ["Element", "Unit", "Here, interpolated top 5 cm (inverse distance squared, nearest sites)", ...sites.flatMap((s, i) => [`Site ${i + 1} (#${s.id}, ${r1(s.km)} km ${s.dir}, ${s.p.colldate || ""}) top 5 cm`, `Site ${i + 1} A horizon`]), "US median top 5 cm"],
+        rows: ELS.map(([el]) => [el, unit(el), (h => (h ? +h.v.toPrecision(4) : null))(here(el)), ...sites.flatMap(s => [val(s, "top5cm", el), val(s, "ahorizon", el)]), lg && lg.elements[el] ? lg.elements[el].Top5.median : null]) };
       const sLine = sites.map((s, i) => { const p = s.p; return `<b>${pinBtn(s.lat, s.lon, `USGS site ${i + 1} (#${s.id})`, [`soil geochemistry, sampled ${p.colldate || "2007–2010"}`, `${dist(s.km)} ${s.dir} of the point`], `Site ${i + 1}`)}</b> #${esc(s.id)}: ${dist(s.km)} ${esc(s.dir)}, sampled ${esc(p.colldate || "")}${p.landcover1 ? `, ${esc(p.landcover1)}${p.landcover2 ? ` (${esc(p.landcover2)})` : ""}` : ""}`; }).join("; ");
       x.innerHTML = `<div class="card">${head("Nearest USGS soil geochemistry sites", "usgs", "TOTAL element")}
         <p class="fine" style="margin-top:0">${sLine}.</p>${grid(cols, rows)}
-        <p class="fine"><b>Total element in the soil, not plant-available:</b> a near-total four-acid digest (ICP-AES/MS) that counts the element held in minerals; K, Ca, Mg, S, Fe and Na in % by weight (1% = 10,000 mg/kg), the others in mg/kg. A soil test (available P, K …) reads tens to hundreds of times lower and is not predicted by these. Compare a site with the US median: higher means richer in that element, not more available to the crop. "&lt;": below the detection limit. USGS Data Series 801 (Smith et al. 2013, doi:10.3133/ds801), public domain, one site per about 1,600 km², sampled 2007–2010. Click an element to map it, or a site to see where it is.</p></div>`;
+        <p class="fine"><b>Total element in the soil, not plant-available:</b> a near-total four-acid digest (ICP-AES/MS) that counts the element held in minerals; K, Ca, Mg, S, Fe and Na in % by weight (1% = 10,000 mg/kg), the others in mg/kg. A soil test (available P, K …) reads tens to hundreds of times lower and is not predicted by these. Compare a site with the US median: higher means richer in that element, not more available to the crop. "&lt;": below the detection limit. <b>Here, interpolated:</b> the point's own value, from these sites weighted by the inverse square of their distance (as the USGS maps are interpolated between sites; a value below the detection limit counts as half of it), an estimate, not a sample. USGS Data Series 801 (Smith et al. 2013, doi:10.3133/ds801), public domain, one site per about 1,600 km², sampled 2007–2010. Click an element to map it, or a site to see where it is.</p></div>`;
     }, fail("smUsgs", "the USGS soil geochemistry sites"));
 
     /* NRCS KSSL pedons */
@@ -817,13 +833,13 @@ WG.soilmaps = (function () {
       const nt = box("so-elnote"), note = EL_NOTE; // the site and its distance are in each row's tip
       if (nt && nt.textContent !== note) nt.textContent = note;
       MINERALS.forEach(([e, name]) => {
-        const id = `el${e}`, v = site ? dsVal(site, "top5cm", e) : null, c = lg && lg.elements && lg.elements[e] ? lg.elements[e].Top5 : null, k = v === null ? null : usClass(v, c);
+        const h = sites && site ? dsHere(sites, "top5cm", e) : null, id = `el${e}`, v = h ? h.v : null, c = lg && lg.elements && lg.elements[e] ? lg.elements[e].Top5 : null, k = v === null ? null : usClass(v, c);
         if (G === undefined) return row(id);
         if (G instanceof Error) return row(id, G);
         if (!site) return row(id, "—", aside(sites.length ? "Not sampled" : "No site near"));
         if (v === null) return row(id, "—", aside("Not measured"));
         const med = c && ok(num(c.median)) ? `${c.median}${dsUnit(e) === "%" ? "%" : ` ${dsUnit(e)}`}` : "";
-        row(id, u(dsShow(v, e), dsUnit(e)), k ? chip(k[0], k[1]) : "", `Total ${name.toLowerCase()}, top 5 cm, at USGS site #${site.id} (${dist(site.km)} ${site.dir}${site.p.colldate ? `, sampled ${site.p.colldate}` : ""})${k ? `: ${k[2]}${c.n ? ` of ${c.n.toLocaleString()} sites` : ""}` : ""}${med ? `; US median ${med}` : ""}. Total in the soil, not what a crop can take up.`);
+        row(id, u(dsShow(v, e), dsUnit(e)), k ? chip(k[0], k[1]) : "", `Total ${name.toLowerCase()}, top 5 cm, interpolated at this point from the ${h.n} nearest USGS sites (${sites.slice(0, 3).map(s => `${dist(s.km)} ${s.dir}`).join(", ")}) by inverse distance; nearest site #${site.id}${site.p.colldate ? `, sampled ${site.p.colldate}` : ""}${k ? `: ${k[2]}${c.n ? ` of ${c.n.toLocaleString()} sites` : ""}` : ""}${med ? `; US median ${med}` : ""}. Total in the soil, not what a crop can take up.`);
       });
       /* the parts of other files: their tables, or how the reads behind the row ended (as the part told, else as the
          whole part ended): still read, failed (a reload button), or done without this value */
