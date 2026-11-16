@@ -170,7 +170,9 @@ WG.util = (function () {
      triple the wait for an error. Never on another 4xx (the same question gets the same answer), on the caller's stop,
      or on this module's own time limit (a 45 s wait should not become 135 s). POST is asked again too: the app's POSTs
      are read-only queries (Soil Data Access, ACIS, The National Map's query by POST), so a second ask changes nothing
-     on the server. */
+     on the server. A caller with another server to turn to asks one time only (opts.once: js/basins.js and the area
+     tool's USGS NHD, whose copies are read at once after a 502); three tries would also count three failures, enough
+     to leave the whole server alone (above). */
   const BUSY = new Set([429, 503]), GATE = new Set([502, 504]), SLOW_MS = 8000, BACK = [1000, 3000], BACK_MAX = 20000;
   const again = (r, err, ms) => (err ? err instanceof TypeError && ms < SLOW_MS : BUSY.has(r.status) || (GATE.has(r.status) && ms < SLOW_MS));
   function backoff(r, k) {
@@ -207,7 +209,7 @@ WG.util = (function () {
           r = await fetch(url, { ...opts, signal: ctrl.signal });
         } catch (e) { err = e; } finally { clearTimeout(hdr); if (!own) free(host); }
         if (!own && !(err && err.busy)) mark(host, err ? (ctrl.signal.aborted || over ? null : true) : r.status >= 500 || r.status === 429, B);
-        if (k < BACK.length && !ctrl.signal.aborted && again(r, err, Date.now() - t0)) {
+        if (k < BACK.length && !opts.once && !ctrl.signal.aborted && again(r, err, Date.now() - t0)) {
           clearTimeout(timer);
           const ms = backoff(r, k);
           if (r && r.body) r.body.cancel().catch(() => {});

@@ -12,6 +12,9 @@
    - gross sheet-and-rill soil loss by RUSLE, A = R K LS C P: R of the point's NHDPlus V2 catchment (USGS RF7100, pre-built
      per state into data/states/XX/rfactor.json by tools/build_basins.py; the COMID from USGS NLDI), K, slope and slope
      length from SSURGO, C from the NLCD classes, P from the support practice chosen (on cropland only).
+   When The National Map's server does not answer (16 Nov 2026: 502s, NHDPlus HR silent), the HU12 comes from Esri's
+   Living Atlas copy of WBD, else WBD's January 2025 copy on the USGS water data server, and the network from NHDPlus V2
+   (1:100,000) on the USGS water data server, each catchment's own flow worked out from EROM's; the card says which.
    Two map layers join the theme: watershed boundaries (WBD) and NHDPlus HR streams, both drawn by the USGS servers.
    Loaded after soilmaps.js (whose layer list and tab it joins) and before landcover.js and app.js. */
 WG.basins = (function () {
@@ -23,6 +26,12 @@ WG.basins = (function () {
   const WBD = "https://hydro.nationalmap.gov/arcgis/rest/services/wbd/MapServer";
   const HR = "https://hydro.nationalmap.gov/arcgis/rest/services/NHDPlus_HR/MapServer";
   const NLDI = "https://api.water.usgs.gov/nldi/linked-data";
+  /* the copies read when The National Map's server does not answer: Esri's Living Atlas copy of WBD's HU12s, and the
+     USGS water data server: its GeoServer (NHDPlus V2, about 0.4 s an answer; USGS retires it on 31 Dec 2026) and its
+     OGC API, the GeoServer's successor (the same NHDPlus V2 tables and WBD as of January 2025, 3 to 13 s an answer) */
+  const GS = "https://api.water.usgs.gov/geoserver/wmadata/ows";
+  const FAB = "https://api.water.usgs.gov/fabric/pygeoapi/collections";
+  const WBD_ESRI = "https://services.arcgis.com/P3ePLMYs2RVChkJx/arcgis/rest/services/Watershed_Boundary_Dataset_HUC_12s/FeatureServer/0";
   const rgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
 
   /* ---------- the map layers: an ArcGIS MapServer drawn as 512 px tiles of export images ----------
@@ -50,6 +59,8 @@ WG.basins = (function () {
     classBreakInfos: ORD.map(([classMaxValue, c, w]) => ({ classMaxValue, symbol: { type: "esriSLS", style: "esriSLSSolid", color: [...rgb(c), 255], width: w * f } })) } } }],
     { minZoom: 12, thin: z => (z >= 13 ? 1 : 2), attribution: "USGS NHDPlus High Resolution" });
   const HR_CREDIT = "USGS NHDPlus High Resolution (NHDPlus HR, 1:24,000 NHD with value-added attributes, public domain), drawn by The National Map's server";
+  const V2_CREDIT = "USGS and EPA NHDPlus Version 2 (1:100,000 NHD with value-added attributes and EROM flows, public domain), read from the USGS water data server";
+  const netName = N => (N && N.v2 ? "NHDPlus V2" : "NHDPlus HR");
   SM.layers.push(
     { key: "wbd", name: "Watershed boundaries (HU8, HU10, HU12)", sub: "USGS Watershed Boundary Dataset, drawn by its server", layer: wbdLayer, opacity: 2,
       legend: { title: "Watershed boundaries", unit: "hydrologic units", rows: HUS.map(h => [h[1], h[3]]) },
@@ -84,43 +95,192 @@ WG.basins = (function () {
     return `MULTIPOLYGON(${polys.map(p => `(${p.map(r => `(${txt(r)})`).join(",")})`).join(",")})`;
   }
   const ll = rings => rings.map(r => r.map(([x, y]) => [y, x]));
+  // GeoJSON polygons as Esri rings, the order wkt() reads: each outer ring clockwise, its holes counter-clockwise
+  const esriRings = g => (g.type === "MultiPolygon" ? g.coordinates : g.type === "Polygon" ? [g.coordinates] : [])
+    .flatMap(p => p.map((r, i) => { const s = r.map(([x, y]) => [+x.toFixed(6), +y.toFixed(6)]); return (signed(s) < 0) === (i === 0) ? s : s.reverse(); }));
+  const bboxOf = rings => rings.flat().reduce(([a, b, c, d], [x, y]) => [Math.min(a, x), Math.min(b, y), Math.max(c, x), Math.max(d, y)], [Infinity, Infinity, -Infinity, -Infinity]);
+  // about 40 points of a polygon's longest ring, for a quick test of overlap
+  const sample = rings => { const r = rings.reduce((a, b) => (a.length >= b.length ? a : b)), k = Math.max(1, Math.ceil(r.length / 40)); return r.filter((p, i) => i % k === 0); };
 
   /* ---------- the sources ---------- */
-  // ArcGIS query by POST (an HU12 polygon or an id list is too long for a URL), paged past the 2,000-record limit
-  async function arcAll(url, params) {
+  /* A part of hydro.nationalmap.gov that fails is kept in this browser for 3 hours (fg.hydro), so the next point goes
+     straight to its copy. Each part by its own failure: on 16 Nov 2026 its WBD layer gave 502s without a CORS header
+     while NHDPlus HR gave no answer in 25 s, and later that day WBD gave none while HR answered in under a second.
+     js/util.js's "busy" is not kept: that request was never sent (the server, or another of its services such as the
+     area tool's water bodies, failed 3 times in a row just before), so it says nothing new; that point alone reads the
+     copy. While a copy is read, the server is asked again quietly once a visit, 30 s in (when it was last asked over
+     30 minutes ago, or failed in this visit): a part that answers is read first again from the next point on. A part
+     passed over is still asked when its copies fail too (hu12At, netIn). The USGS GeoServer failing is kept too (gs),
+     and it is asked again only after the 3 hours. */
+  const HY_MEM = "fg.hydro", HY_DOWN = 3 * 36e5;
+  const hyMem = () => { try { return JSON.parse(localStorage.getItem(HY_MEM)) || {}; } catch (e) { return {}; } };
+  const hyKeep = o => { try { localStorage.setItem(HY_MEM, JSON.stringify({ ...hyMem(), ...o })); } catch (e) { /* storage off: this page still remembers */ } };
+  const hy = hyMem(), hyOff = k => Date.now() - (hy[k] || 0) < HY_DOWN;
+  let hyAt = null, hyRechecked = false, wbdAsked = false;
+  const HY_NAME = { wbd: "The National Map's WBD", hr: "The National Map's NHDPlus HR", gs: "the USGS water data server's GeoServer" };
+  // the parts marked down after the error e; false when nothing is kept (js/util.js's "busy")
+  function hyDown(keys, e) {
+    if (e && e.busy) return false;
+    const why = (e && e.message) || String(e);
+    if (!keys.every(hyOff)) console.warn(`basins: ${keys.map(k => HY_NAME[k]).join(" and ")} did not answer (${why}); the next source is read for 3 hours`);
+    const t = Date.now();
+    keys.forEach(k => { hy[k] = t; });
+    hyKeep(Object.fromEntries(keys.map(k => [k, t])));
+    return true;
+  }
+  const hyUp = k => { if (hy[k]) { hy[k] = 0; hyKeep({ [k]: 0 }); } };
+  // asked again 30 s later at the last point: WBD's HU12 and NHDPlus HR's sinks, without geometry, once each
+  function hyRecheck(now) {
+    if (hyRechecked || !hyAt || (!now && Date.now() - Math.max(hy.probe || 0, hy.wbd || 0, hy.hr || 0) < 30 * 60e3)) return;
+    hyRechecked = true;
+    setTimeout(() => {
+      hy.probe = Date.now(); hyKeep({ probe: hy.probe });
+      const [lat, lon] = hyAt;
+      [["wbd", `${WBD}/6`, "huc12"], ["hr", `${HR}/1`, "nhdplusid"]].filter(([k]) => hyOff(k)).forEach(([k, url, f]) =>
+        fetchJSON(`${url}/query?${new URLSearchParams({ geometry: `${lon},${lat}`, geometryType: "esriGeometryPoint", inSR: 4326, spatialRel: "esriSpatialRelIntersects", outFields: f, returnGeometry: false, f: "json" })}`, { once: true }, 15000)
+          .then(j => { if (j.error) throw new Error(j.error.message || "the query was refused"); hyUp(k); console.info(`basins: ${HY_NAME[k]} answers again; read first from the next point`); })
+          .catch(e => hyDown([k], e)));
+    }, 30000);
+  }
+  // ArcGIS query by POST (an HU12 polygon or an id list is too long for a URL), paged past the 2,000-record limit;
+  // ms: the wait for each answer to start (the whole answer has 60 s); once: not asked again when it fails
+  async function arcAll(url, params, ms = 60000, once = false) {
     let out = [];
     for (let page = 0; page < 20; page++) {
       const body = new URLSearchParams({ ...params, f: "json", ...(page ? { resultOffset: out.length, resultRecordCount: 2000 } : {}) });
-      const j = await fetchJSON(url, { method: "POST", body }, 60000);
+      const j = await fetchJSON(url, { method: "POST", body, once }, 60000, ms);
       if (j.error) throw new Error(j.error.message || "the USGS map server refused the query");
       out = out.concat(j.features || []);
       if (!j.exceededTransferLimit || !(j.features || []).length) break;
     }
     return out;
   }
-  // the HU12 that holds the point (its polygon simplified to about 10 m)
-  async function hu12At(lat, lon) {
+  /* the HU12 that holds the point from an ArcGIS layer, its polygon simplified to about 10 m: WBD's own (The National
+     Map's layer 6) or Esri's copy; null when none holds it */
+  async function hu12Arc(layer, lat, lon, ms, once = false) {
     const q = new URLSearchParams({ geometry: `${lon},${lat}`, geometryType: "esriGeometryPoint", inSR: 4326, outSR: 4326, spatialRel: "esriSpatialRelIntersects", outFields: "huc12,name,areasqkm,tohuc,states",
       returnGeometry: true, maxAllowableOffset: 0.0001, geometryPrecision: 6, f: "json" });
-    const j = await fetchJSON(`${WBD}/6/query?${q}`, {}, 30000);
+    const j = await fetchJSON(`${layer}/query?${q}`, { once }, ms);
     if (j.error) throw new Error(j.error.message || "the Watershed Boundary Dataset's server refused the query");
     const f = (j.features || [])[0];
     if (!f || !f.geometry || !f.geometry.rings) return null;
     const a = f.attributes, rings = f.geometry.rings;
     return { huc12: a.huc12, name: a.name, km2: num(a.areasqkm), tohuc: a.tohuc, states: a.states, rings, polys: [rings] };
   }
+  // the same from WBD's copy on the USGS water data server (January 2025), in GeoJSON
+  async function hu12Fab(lat, lon) {
+    const e = 1e-6, q = new URLSearchParams({ f: "json", bbox: [lon - e, lat - e, lon + e, lat + e].map(v => v.toFixed(6)).join(","), properties: "huc12,name,areasqkm,tohuc,states", limit: 10 });
+    const fs = ((await fetchJSON(`${FAB}/wbd12_20250107/items?${q}`, {}, 30000)).features || []).filter(f => f.geometry).map(f => ({ a: f.properties || {}, rings: esriRings(f.geometry) }));
+    const f = fs.find(x => inRings(lon, lat, x.rings)) || fs[0];
+    return f ? { huc12: f.a.huc12, name: f.a.name, km2: num(f.a.areasqkm), tohuc: f.a.tohuc, states: f.a.states, rings: f.rings, polys: [f.rings] } : null;
+  }
+  /* the HU12 at the point: WBD's own server first (12 s, asked once, so a 502 moves on at once), else Esri's copy
+     (about 1 s), else the USGS water data server's (3 to 13 s); src says which. WBD passed over for an earlier failure
+     is asked after all when both copies fail. */
+  const HU_SRC = { wbd: "USGS Watershed Boundary Dataset (The National Map)", fab: "USGS Watershed Boundary Dataset, January 2025 copy (USGS water data server)", esri: "USGS Watershed Boundary Dataset, Esri Living Atlas copy" };
+  const HU_WHY = { esri: " (Esri's Living Atlas copy, as The National Map's server did not answer)", fab: " (its January 2025 copy on the USGS water data server, as The National Map's server and Esri's copy did not answer)" };
+  async function hu12At(lat, lon) {
+    hyAt = [lat, lon];
+    // last: asked after the copies failed (the card's "slow" line is then left out)
+    const off = hyOff("wbd"), wbd = async last => {
+      wbdAsked = !last;
+      try { const h = await hu12Arc(`${WBD}/6`, lat, lon, 12000, true); hyUp("wbd"); return h && { ...h, src: "wbd" }; } finally { wbdAsked = false; }
+    };
+    let why = "", busy = false;
+    if (!off) {
+      try { return await wbd(false); } catch (e) { why = e.message || String(e); busy = !!e.busy; if (hyDown(["wbd"], e)) hyRecheck(true); }
+    } else hyRecheck(false);
+    for (const [src, read] of [["esri", () => hu12Arc(WBD_ESRI, lat, lon, 15000)], ["fab", () => hu12Fab(lat, lon)]]) {
+      try { const h = await read(); return h && { ...h, src }; } catch (e) { busy = busy || !!e.busy; console.warn("basins: HU12 copy", src, e); }
+    }
+    if (off) {
+      try { return await wbd(true); } catch (e) { why = e.message || String(e); busy = busy || !!e.busy; hyDown(["wbd"], e); }
+    }
+    throw new Error(`The National Map's watershed server did not answer${why ? ` (${why})` : ""}, nor its copies on Esri's Living Atlas and the USGS water data server${busy ? "; try again in a minute" : ""}`);
+  }
   const FL_FIELDS = "nhdplusid,gnis_name,streamorde,hydroseq,dnhydroseq,dnminorhyd,qincrama,qama,areasqkm,totdasqkm,ftype";
-  // the NHDPlus HR flowlines and sinks inside the HU12, then their catchments by id (500 ids a request)
+  /* the NHDPlus HR flowlines and sinks inside the HU12, then their catchments by id (500 ids a request); each answer
+     must start within 15 s (the catchments' 20 s) and is asked once, else NHDPlus V2 is read (netIn) */
   async function hrIn(hu) {
     const geo = { geometry: JSON.stringify({ rings: hu.rings, spatialReference: { wkid: 4326 } }), geometryType: "esriGeometryPolygon", inSR: 4326, outSR: 4326, spatialRel: "esriSpatialRelIntersects" };
     const [fl, sk] = await Promise.all([
-      arcAll(`${HR}/3/query`, { ...geo, outFields: FL_FIELDS, returnGeometry: true, maxAllowableOffset: 0.0001, geometryPrecision: 5 }),
-      arcAll(`${HR}/1/query`, { ...geo, outFields: "nhdplusid,purpcode", returnGeometry: false }),
+      arcAll(`${HR}/3/query`, { ...geo, outFields: FL_FIELDS, returnGeometry: true, maxAllowableOffset: 0.0001, geometryPrecision: 5 }, 15000, true),
+      arcAll(`${HR}/1/query`, { ...geo, outFields: "nhdplusid,purpcode", returnGeometry: false }, 15000, true),
     ]);
     const ids = [...new Set([...fl, ...sk].map(f => Math.round(f.attributes.nhdplusid)).filter(Number.isFinite))], parts = [];
     for (let i = 0; i < ids.length; i += 500) parts.push(ids.slice(i, i + 500));
-    const cats = (await Promise.all(parts.map(p => arcAll(`${HR}/10/query`, { where: `nhdplusid in (${p.join(",")})`, outFields: "nhdplusid,areasqkm", returnGeometry: true, outSR: 4326, maxAllowableOffset: 0.0002, geometryPrecision: 5 })))).flat();
+    const cats = (await Promise.all(parts.map(p => arcAll(`${HR}/10/query`, { where: `nhdplusid in (${p.join(",")})`, outFields: "nhdplusid,areasqkm", returnGeometry: true, outSR: 4326, maxAllowableOffset: 0.0002, geometryPrecision: 5 }, 20000, true)))).flat();
     return { fl, sk, cats };
+  }
+  /* NHDPlus V2 (1:100,000) from the USGS water data server when NHDPlus HR does not answer, in HR's shape so that
+     network() and the card read either. The catchments over the HU12's box, kept when they reach into the HU12 (V2's
+     are larger and do not follow its edge); the flowlines in the box, and a kept catchment's flowline outside it by
+     COMID (sinks have negative ids). V2 gives each flowline's mean annual flow from EROM step A (QA_MA, the same
+     McCabe-Wolock model as HR's), not the catchment's own part (HR's qincrama): that is QA_MA less the QA_MA of the
+     flowlines that flow into it, asked by their dnhydroseq for each flowline that starts outside the box. */
+  const FL2 = "comid,gnis_name,streamorde,hydroseq,dnhydroseq,dnminorhyd,uphydroseq,qa_ma,areasqkm,totdasqkm,ftype";
+  // an OGC API collection's features, 1,000 a page (the server's most)
+  async function fabAll(coll, params, pages = 10) {
+    let out = [];
+    for (let page = 0; page < pages; page++) {
+      const fs = (await fetchJSON(`${FAB}/${coll}/items?${new URLSearchParams({ f: "json", limit: 1000, ...params, ...(page ? { offset: out.length } : {}) })}`, {}, 30000)).features || [];
+      out = out.concat(fs);
+      if (fs.length < 1000) break;
+    }
+    return out;
+  }
+  /* an NHDPlus V2 table's features: from the USGS GeoServer (WFS, asked once) while it answers, else from the OGC API.
+     sel: { bbox } or { field, ids } (whole numbers); props: the fields; geom: with the geometry */
+  async function v2Get(coll, sel, props, geom = true, pages = 10) {
+    const list = sel.ids && `${sel.field} IN (${[...new Set(sel.ids.map(x => Math.round(x)))].join(",")})`;
+    if (!hyOff("gs")) {
+      try {
+        const q = new URLSearchParams({ service: "WFS", version: "1.0.0", request: "GetFeature", outputFormat: "application/json", typeName: `wmadata:${coll}`, maxFeatures: 5000,
+          propertyName: geom ? `${props},the_geom` : props, ...(sel.bbox ? { BBOX: sel.bbox } : { CQL_FILTER: list }) });
+        const j = await fetchJSON(`${GS}?${q}`, { once: true }, 20000);
+        if (!Array.isArray(j.features)) throw new Error("its answer holds no features");
+        return j.features;
+      } catch (e) { hyDown(["gs"], e); }
+    }
+    return fabAll(coll, { properties: props, ...(sel.bbox ? { bbox: sel.bbox } : { filter: list, "filter-lang": "cql2-text" }), ...(geom ? {} : { skipGeometry: true }) }, pages);
+  }
+  const paths = g => (!g ? [] : g.type === "MultiLineString" ? g.coordinates : g.type === "LineString" ? [g.coordinates] : []);
+  async function v2In(hu) {
+    const [x0, y0, x1, y1] = bboxOf(hu.rings), bbox = [x0, y0, x1, y1].map(v => v.toFixed(6)).join(",");
+    const [fl0, cs] = await Promise.all([v2Get("nhdflowline_network", { bbox }, FL2), v2Get("catchmentsp", { bbox }, "featureid,areasqkm")]);
+    const hs = sample(hu.rings), reach = r => inRings(...centroid(r), hu.rings) || sample(r).some(p => inRings(p[0], p[1], hu.rings)) || hs.some(p => inRings(p[0], p[1], r));
+    const cats = cs.map(c => ({ attributes: { nhdplusid: num((c.properties || {}).featureid), areasqkm: num((c.properties || {}).areasqkm) }, geometry: { rings: c.geometry ? esriRings(c.geometry) : [] } }))
+      .filter(c => ok(c.attributes.nhdplusid) && c.geometry.rings.length && reach(c.geometry.rings));
+    const by = new Map(fl0.map(f => [Math.round(f.properties.comid), f]));
+    const miss = cats.map(c => Math.round(c.attributes.nhdplusid)).filter(id => id > 0 && !by.has(id));
+    if (miss.length) (await v2Get("nhdflowline_network", { field: "comid", ids: miss }, FL2)).forEach(f => by.set(Math.round(f.properties.comid), f));
+    const fl = [...by.values()].map(f => f.properties), geo = new Map([...by].map(([id, f]) => [id, paths(f.geometry)]));
+    // a flowline whose upstream end is outside the box, or whose upstream main stem was not read: its inflows are asked
+    const seq = new Set(fl.map(p => p.hydroseq)), outside = p => { const s = ((geo.get(Math.round(p.comid)) || [])[0] || [])[0]; return !s || s[0] < x0 || s[0] > x1 || s[1] < y0 || s[1] > y1; };
+    const need = fl.filter(p => p.uphydroseq > 0 && (!seq.has(p.uphydroseq) || outside(p))).map(p => p.hydroseq);
+    const ins = need.length ? (await v2Get("nhdflowline_network", { field: "dnhydroseq", ids: need }, "comid,hydroseq,dnhydroseq,qa_ma", false)).map(f => f.properties) : [];
+    const into = new Map(), seen = new Set();
+    [...fl, ...ins].forEach(p => { if (seen.has(p.comid)) return; seen.add(p.comid); if (p.dnhydroseq > 0) { if (!into.has(p.dnhydroseq)) into.set(p.dnhydroseq, []); into.get(p.dnhydroseq).push(p); } });
+    // the catchment's own flow (cfs); a rounding step below 0 is 0, a larger one (a split channel) unknown
+    const q0 = v => (ok(num(v)) && num(v) >= 0 ? num(v) : null);
+    const own = p => { const q = q0(p.qa_ma), up = into.get(p.hydroseq) || []; if (!ok(q) || !up.every(u => ok(q0(u.qa_ma)))) return null; const d = q - up.reduce((s, u) => s + q0(u.qa_ma), 0); return d >= -0.01 ? Math.max(0, d) : null; };
+    const kept = new Set(cats.map(c => Math.round(c.attributes.nhdplusid)));
+    return { v2: true, sk: [], cats, fl: fl.filter(p => kept.has(Math.round(p.comid))).map(p => ({ attributes: { nhdplusid: Math.round(p.comid), gnis_name: String(p.gnis_name || "").trim(), streamorde: p.streamorde,
+      hydroseq: p.hydroseq, dnhydroseq: p.dnhydroseq, dnminorhyd: p.dnminorhyd, qincrama: own(p), qama: q0(p.qa_ma), areasqkm: p.areasqkm, totdasqkm: p.totdasqkm, ftype: p.ftype }, geometry: { paths: geo.get(Math.round(p.comid)) || [] } })) };
+  }
+  /* the stream network inside the HU12: NHDPlus HR, else NHDPlus V2; to() tells the card when it turns to V2. HR passed
+     over for an earlier failure is asked after all when V2 fails too. */
+  async function netIn(hu, to) {
+    const off = hyOff("hr");
+    if (!off) {
+      try { const r = await hrIn(hu); hyUp("hr"); return r; }
+      catch (e) { if (hyDown(["hr"], e)) hyRecheck(true); }
+    } else hyRecheck(false);
+    if (to) to();
+    try { return await v2In(hu); } catch (e) { if (!off) throw e; console.warn("basins: NHDPlus V2", e); }
+    const r = await hrIn(hu);
+    hyUp("hr");
+    return r;
   }
   /* each catchment's EROM runoff, the one at the point, those upstream of it inside the HU12, and the HU12's mean */
   function network(hr, hu, lat, lon) {
@@ -141,7 +301,7 @@ WG.basins = (function () {
     cats.forEach(c => { c.here = c === here; c.up = up.has(c.id); });
     const run = cats.filter(c => c.inHu && ok(c.mm)), sinks = cats.filter(c => c.inHu && c.sink), upc = cats.filter(c => c.up);
     const sum = (a, k) => a.reduce((s, c) => s + (c[k] || 0), 0);
-    return { cats, here, flows: hr.fl, nRun: run.length, runKm2: sum(run, "area"), huMm: sum(run, "area") ? (893.6 * sum(run, "q")) / sum(run, "area") : null,
+    return { v2: !!hr.v2, cats, here, flows: hr.fl, nIn: cats.filter(c => c.inHu).length, nRun: run.length, runKm2: sum(run, "area"), huMm: sum(run, "area") ? (893.6 * sum(run, "q")) / sum(run, "area") : null,
       sinkKm2: sum(sinks, "area"), nSink: sinks.length, upN: upc.length, upKm2: sum(upc, "area") + (here ? here.area : 0),
       upMm: here && ok(here.mm) ? (893.6 * (sum(upc.filter(c => ok(c.q)), "q") + here.q)) / (sum(upc.filter(c => ok(c.q)), "area") + here.area) : null };
   }
@@ -216,6 +376,19 @@ WG.basins = (function () {
       if (!f) continue;
       let a = 0, b = f.ids.length - 1;
       while (a <= b) { const m = (a + b) >> 1; if (f.ids[m] === comid) return { R: Math.exp(f.q[m] / 100), st: s }; if (f.ids[m] < comid) a = m + 1; else b = m - 1; }
+    }
+    return null;
+  }
+  /* R where the point's own catchment has none: a sink's catchment (the playas of the High Plains: NLDI finds no
+     flowline there and RF7100 has no value), or NLDI not answering. The V2 catchments around the point from the USGS
+     water data server (about 10 km, then 30 km), nearest first: the first with an RF7100 value. R changes slowly over
+     such distances (the isoerodent maps' lines are tens of km apart). */
+  async function rNear(st, lat, lon) {
+    const kx = Math.cos((lat * Math.PI) / 180), far = rings => Math.min(...rings.flat().map(([x, y]) => Math.hypot((x - lon) * kx, y - lat)));
+    for (const d of [0.1, 0.3]) {
+      const cs = await v2Get("catchmentsp", { bbox: [lon - d, lat - d, lon + d, lat + d].map(v => v.toFixed(5)).join(",") }, "featureid", true, 1);
+      const near = cs.map(c => ({ id: Math.round(num((c.properties || {}).featureid)), d: c.geometry ? far(esriRings(c.geometry)) : Infinity })).filter(c => c.id > 0).sort((a, b) => a.d - b.d);
+      for (const c of near) { const r = await rAt(st, c.id); if (r) return { ...r, comid: c.id, km: c.d * 111.2 }; }
     }
     return null;
   }
@@ -333,7 +506,7 @@ WG.basins = (function () {
     if (M.net) {
       M.net.cats.forEach(c => L.polygon(ll(c.rings), { renderer: cv, color: c.here ? "#d7301f" : c.up ? "#e6550d" : "#4d4d4d", weight: c.here ? 3 : c.up ? 1.8 : 0.5, opacity: 0.9,
         fillColor: c.sink ? "#d9d9d9" : runColor(c.mm), fillOpacity: c.inHu ? 0.6 : 0.25, dashArray: c.sink ? "3 3" : null })
-        .bindTooltip(`${c.here ? "<b>The point's catchment</b><br>" : c.up ? "Upstream of the point<br>" : ""}${c.a && c.a.gnis_name ? `${esc(c.a.gnis_name)}<br>` : ""}NHDPlus HR catchment ${c.id}<br>${fmt(c.area, 2)} km² · ${c.sink ? "drains to a sink: no EROM runoff" : `runoff ${fmt(c.mm, 1)} mm/yr (model)`}`, { sticky: true })
+        .bindTooltip(`${c.here ? "<b>The point's catchment</b><br>" : c.up ? "Upstream of the point<br>" : ""}${c.a && c.a.gnis_name ? `${esc(c.a.gnis_name)}<br>` : ""}${netName(M.net)} catchment ${c.id}<br>${fmt(c.area, 2)} km² · ${c.sink ? "drains to a sink: no EROM runoff" : `runoff ${fmt(c.mm, 1)} mm/yr (model)`}`, { sticky: true })
         .addTo(g));
       M.net.flows.forEach(f => { const o = num(f.attributes.streamorde) || 1, s = ORD.find(x => o <= x[0]) || ORD[3]; if (f.geometry && f.geometry.paths) L.polyline(ll(f.geometry.paths), { renderer: cv, color: s[1], weight: s[2] * 1.6, opacity: 0.95, interactive: false }).addTo(g); });
     }
@@ -354,8 +527,8 @@ WG.basins = (function () {
     const x = box("bsNet");
     if (!x) return;
     const N = M.net, hu = M.hu, h = N && N.here;
-    if (M.err.net) { x.innerHTML = `<p class="fine">Could not read the NHDPlus HR network: ${esc(M.err.net.message || String(M.err.net))}. <button type="button" class="wx-retry" data-wx-retry title="Reload this part" aria-label="Reload this part"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/></svg></button></p>`; return; }
-    if (!N) { x.innerHTML = `<p class="fine">Reading the NHDPlus HR flowlines and catchments inside the HU12 (about 5 s)…</p>`; return; }
+    if (M.err.net) { x.innerHTML = `<p class="fine">Could not read the stream network (NHDPlus HR, nor NHDPlus V2 on the USGS water data server): ${esc(M.err.net.message || String(M.err.net))}. <button type="button" class="wx-retry" data-wx-retry title="Reload this part" aria-label="Reload this part"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/></svg></button></p>`; return; }
+    if (!N) { x.innerHTML = `<p class="fine">${M.v2try ? "The National Map's NHDPlus HR did not answer: reading NHDPlus V2 (1:100,000) from the USGS water data server (usually a few seconds, at times up to 20)…" : "Reading the NHDPlus HR flowlines and catchments inside the HU12 (about 5 s; if it has not answered in 15 s, NHDPlus V2 is read instead)…"}</p>`; return; }
     const ha = h && h.a, legend = `<div class="bs-leg">${RUN.colors.map((c, i) => `<span><i style="background:${c}"></i>${RUN.labels[i]}</span>`).join("")}<span><i class="sink"></i>drains to a sink</span><span><i class="here"></i>the point's catchment</span><span><i class="up"></i>upstream</span></div>`;
     x.innerHTML = `${kv([
       ["HU12 mean annual runoff", ok(N.huMm) ? `${fmt(N.huMm, 1)}${small("mm/yr")}` : "—", ok(N.huMm) ? `${P_U(N.huMm)}/yr over ${fmt(N.runKm2, 1)} km² that drain to streams` : "no EROM runoff"],
@@ -364,9 +537,10 @@ WG.basins = (function () {
       h && ["Upstream in this HU12", `${N.upN + 1}${small(N.upN ? "catchments" : "catchment")}`, `${fmt(N.upKm2, 1)} km²${ok(N.upMm) ? ` · runoff ${fmt(N.upMm, 1)} mm/yr` : ""}`],
     ])}
       ${legend}
-      <p class="fine">${N.cats.filter(c => c.inHu).length} NHDPlus HR catchments in the HU12: ${N.nRun} drain to the stream network (${fmt(N.runKm2, 1)} km²)${N.nSink ? `, ${N.nSink} to sinks such as playas and stock ponds (${fmt(N.sinkKm2, 1)} km², no runoff in EROM)` : ""}; the HU12 is ${fmt(hu.km2, 1)} km². Upstream catchments are traced through the flowlines' hydrologic sequence (hydroseq) inside this HU12 only${ha && num(ha.totdasqkm) > N.upKm2 * 1.05 ? `; the stream here also gathers water from upstream HU12s (its whole drainage area is ${fmt(num(ha.totdasqkm), 1)} km²)` : ""}.
+      ${N.v2 ? `<p class="fine"><b>Stream network: NHDPlus V2</b> (medium resolution, 1:100,000, from the USGS water data server), as The National Map's NHDPlus HR (1:24,000) did not answer. V2's catchments are larger, so its values differ from HR's; HR is asked first again later.</p>` : ""}
+      <p class="fine">${N.nIn} ${netName(N)} catchment${N.nIn === 1 ? "" : "s"} ${N.v2 ? `${N.nIn === 1 ? "has its" : "have their"} centre in the HU12 (V2's do not follow its edge)` : "in the HU12"}: ${N.nRun} drain${N.nRun === 1 ? "s" : ""} to the stream network (${fmt(N.runKm2, 1)} km²)${N.nSink ? `, ${N.nSink} to sinks such as playas and stock ponds${N.v2 ? " or to no stream mapped in V2" : ""} (${fmt(N.sinkKm2, 1)} km², no runoff in EROM)` : ""}; the HU12 is ${fmt(hu.km2, 1)} km². Upstream catchments are traced through the flowlines' hydrologic sequence (hydroseq) inside this HU12 only${ha && num(ha.totdasqkm) > N.upKm2 * 1.05 ? `; the stream here also gathers water from upstream HU12s (its whole drainage area is ${fmt(num(ha.totdasqkm), 1)} km²)` : ""}.
       <button class="link" data-bs-act="zoom">Zoom to the HU12</button> · <button class="link" data-bs-act="nldi">${M.nldi ? "Upstream basin drawn" : "Draw the whole upstream basin (USGS NLDI)"}</button>${M.nldiNote ? ` · ${M.nldiNote}` : ""} · <button class="link" data-sm-csv="basin_catchments">catchments (CSV)</button> · Maps: ${SM.showBtn("wbd", "watershed boundaries")} · ${SM.showBtn("flow", "streams")}</p>
-      <p class="fine"><b>Model values, not measured:</b> mean annual runoff generated in each catchment by NHDPlus HR's flow estimates (EROM step A: the McCabe-Wolock monthly water-balance model, 1971–2000 climate), 893.6 × qincrama (cfs) ÷ area (km²) = mm/yr; the HU12's is the sum over its stream catchments. Other models can differ by a factor of two here (EPA StreamCat's runoff on the NHDPlus V2 network is one); check against a stream gauge before relying on it. ${HR_CREDIT}; catchments read by id, coloured on the map.</p>`;
+      <p class="fine"><b>Model values, not measured:</b> mean annual runoff generated in each catchment by ${netName(N)}'s flow estimates (EROM step A: the McCabe-Wolock monthly water-balance model, 1971–2000 climate), 893.6 × ${N.v2 ? "the catchment's own flow (its flowline's QA_MA less the QA_MA of the flowlines that flow into it, cfs)" : "qincrama (cfs)"} ÷ area (km²) = mm/yr; the HU12's is the sum over its stream catchments. Other models can differ by a factor of two here (EPA StreamCat's runoff on the NHDPlus V2 network is one); check against a stream gauge before relying on it. ${N.v2 ? `${V2_CREDIT}; catchments` : `${HR_CREDIT}; catchments read by id,`} coloured on the map.</p>`;
   }
   // the design storm and its runoff by the curve number
   function cnModel() {
@@ -483,7 +657,7 @@ WG.basins = (function () {
         ["A / T, all land", t2(ok(A) && Tf.v ? A / Tf.v : null), "", "", "", "", ""], ["Soil moved each year, all land", t2(tons), "short tons/yr", t2(ok(tons) ? tons * 0.90718 : null), "t/yr", "A × the HU12's land area", ""]] };
     T().basin_soils = { title: `Soil components in HU12 ${M.hu.huc12} (SSURGO by SDA)`, header: ["Map unit", "Map unit name", "Map unit share of HU12 (%)", "Component", "Component (%)", "Kind", "Major", "Hydrologic group", "K", "K source", "Slope (%)", "USLE slope length (m)", "L", "S", "LS", "T (t/ac/yr)", "P on cropland"],
       rows: S.map(c => [c.sym, c.mu, t2(100 * c.muShare), c.name, c.pct, c.kind || "", c.major ? "yes" : "no", c.hydgrp || "", c.K, c.kSrc === "kw" ? "Kw" : c.kSrc === "kf" ? "Kf" : "", c.slope, c.lam, t2(c.L), t2(c.S), t2(c.LS), c.T, t2(pOf(c))]) };
-    const noR = !ok(R) ? `<p class="fine"><b>No R factor${ok(M.comid) ? ` for NHDPlus V2 COMID ${M.comid}` : ""}</b>${M.err.R ? ` (${esc(M.err.R.message || String(M.err.R))})` : ""}: type one above (US units; the USGS RF7100 grid or NRCS AH 703's isoerodent maps).</p>` : "";
+    const noR = !ok(R) ? `<p class="fine"><b>No R factor${ok(M.comid) ? ` for NHDPlus V2 COMID ${M.comid}` : ""}</b>${M.err.R ? ` (USGS NLDI: ${esc(String(M.err.R.message || M.err.R).trim())})` : ""}: type one above (US units; the USGS RF7100 grid or NRCS AH 703's isoerodent maps).</p>` : "";
     x.innerHTML = `${noR}${kv([
       ["Soil loss, all land", ta(A), th_(A)],
       crop && ["Cropland", ta(Ac), `${th_(Ac)} · C ${pick.cropC} · P ${ok(P) ? fmt(P, 2) : "—"}`],
@@ -494,7 +668,7 @@ WG.basins = (function () {
       ${SM.grid([SM.th("Factor"), SM.th("Value", "US units"), SM.th("SI"), SM.th("Source"), SM.th("Covers")], rows.map(r => [`${esc(r[0])}${r[7] ? `<small class="bs-mean">${esc(r[7])}</small>` : ""}`, `${r[1]}${r[2] ? ` <small>${esc(r[2])}</small>` : ""}`, r[3] ? `${r[3]} <small>${esc(r[4])}</small>` : "", esc(r[5]), esc(r[6])]))}</details>
       ${helpBox("What the letters mean", RUSLE_VARS, P_TABLE)}
       <p class="fine">A = R × K × LS × C × P (RUSLE, USDA Agriculture Handbook 703) in short tons per acre per year; × 2.2417 = metric tonnes per hectare. K and LS are taken together for each soil component, and land cover as independent of the soils inside the HU12; P applies to the cropland (NLCD cultivated crops), as the practices are ways of farming it. <button class="link" data-sm-csv="basin_soils">soil components (CSV)</button> · <button class="link" data-sm-csv="basin_rusle">factors (CSV)</button></p>
-      <p class="fine"><b>Limits:</b> gross sheet and rill erosion on the slopes, a long-term yearly average; not gullies, stream banks or channels, and not the sediment that leaves the HU12 (only part of it reaches the stream). LS comes from the survey's representative slope and slope length for each soil, not from a terrain model; C from land-cover classes is coarse (crops, residue and tillage change it ten-fold, so set cropland's C from your rotation); RUSLE fits rangeland, urban land and wetlands poorly. R: USGS RF7100 (Wieczorek &amp; LaMotte 2010; the PRISM-based 1971–2000 R of Daly &amp; Taylor) for the point's NHDPlus V2 catchment (USGS NLDI), kept to 1%.</p>`;
+      <p class="fine"><b>Limits:</b> gross sheet and rill erosion on the slopes, a long-term yearly average; not gullies, stream banks or channels, and not the sediment that leaves the HU12 (only part of it reaches the stream). LS comes from the survey's representative slope and slope length for each soil, not from a terrain model; C from land-cover classes is coarse (crops, residue and tillage change it ten-fold, so set cropland's C from your rotation); RUSLE fits rangeland, urban land and wetlands poorly. R: USGS RF7100 (Wieczorek &amp; LaMotte 2010; the PRISM-based 1971–2000 R of Daly &amp; Taylor) for the point's NHDPlus V2 catchment (USGS NLDI), or the nearest catchment's where the point's has none (a sink's), kept to 1%.</p>`;
     summary();
   }
   /* the factors' table is folded each time the tab is drawn (a new point, other units); it stays as you left it while
@@ -504,14 +678,15 @@ WG.basins = (function () {
   function summary() {
     if (!M || !M.live()) return;
     const hu = M.hu, N = M.net, C = M.cn, R = M.rusle, rows = [
-      ["HU12", hu.huc12, "", "USGS Watershed Boundary Dataset"], ["HU12 name", hu.name, "", ""], ["HU12 area", t2(hu.km2), "km2", ""], ["Flows to HU12", hu.tohuc || "", "", ""],
+      ["HU12", hu.huc12, "", HU_SRC[hu.src] || HU_SRC.wbd], ["HU12 name", hu.name, "", ""], ["HU12 area", t2(hu.km2), "km2", ""], ["Flows to HU12", hu.tohuc || "", "", ""],
       ["Point", `${M.lat.toFixed(5)}, ${M.lon.toFixed(5)}`, "lat, lon", ""]];
-    if (N) rows.push(["HU12 mean annual runoff", t2(N.huMm), "mm/yr", "NHDPlus HR EROM step A (model), stream catchments"], ["Area draining to streams", t2(N.runKm2), "km2", ""], ["Area draining to sinks", t2(N.sinkKm2), "km2", ""],
-      ["Point's NHDPlus HR catchment", N.here ? String(N.here.id) : "", "", ""], ["Point's catchment runoff", N.here ? t2(N.here.mm) : null, "mm/yr", "EROM step A (model)"], ["Point's reach mean annual flow", N.here && N.here.a ? t2(num(N.here.a.qama)) : null, "cfs", "EROM step A (model)"],
-      ["Point's drainage area", N.here && N.here.a ? t2(num(N.here.a.totdasqkm)) : null, "km2", "NHDPlus HR VAA"], ["Upstream catchments in the HU12 (with the point's)", N.here ? N.upN + 1 : null, "", "hydroseq"], ["Upstream area in the HU12", N.here ? t2(N.upKm2) : null, "km2", ""]);
+    if (N) rows.push(["Stream network", N.v2 ? "NHDPlus V2 (1:100,000)" : "NHDPlus HR (1:24,000)", "", N.v2 ? "USGS water data server, as NHDPlus HR did not answer" : "The National Map"],
+      ["HU12 mean annual runoff", t2(N.huMm), "mm/yr", `${netName(N)} EROM step A (model), stream catchments`], ["Area draining to streams", t2(N.runKm2), "km2", ""], ["Area draining to sinks", t2(N.sinkKm2), "km2", ""],
+      [`Point's ${netName(N)} catchment`, N.here ? String(N.here.id) : "", "", ""], ["Point's catchment runoff", N.here ? t2(N.here.mm) : null, "mm/yr", "EROM step A (model)"], ["Point's reach mean annual flow", N.here && N.here.a ? t2(num(N.here.a.qama)) : null, "cfs", "EROM step A (model)"],
+      ["Point's drainage area", N.here && N.here.a ? t2(num(N.here.a.totdasqkm)) : null, "km2", `${netName(N)} VAA`], ["Upstream catchments in the HU12 (with the point's)", N.here ? N.upN + 1 : null, "", "hydroseq"], ["Upstream area in the HU12", N.here ? t2(N.upKm2) : null, "km2", ""]);
     if (C && ok(M.P)) rows.push(["Storm depth, 24 h", t2(M.P), "mm", storm() !== "own" ? `NOAA Atlas 14, ${storm()}-yr` : "typed"], ["Curve number (area-weighted)", t2(C.cn), "", "TR-55, NLCD 2021 x SSURGO groups"], ["Storm runoff Q", t2(C.q), "mm", "per land cover and soil group, averaged"],
       ["Storm runoff volume", t2((C.q / 1000) * C.land * 1e6), "m3", ""], ...HSG.map(g => [`Hydrologic group ${g}`, t2(100 * C.h[g]), "% of area with a group", "SSURGO"]));
-    if (R) rows.push(["NHDPlus V2 COMID", ok(M.comid) ? String(M.comid) : "", "", "USGS NLDI"], ["R", t2(R.R), "hundreds ft-tonf-in/(ac-h-yr)", "USGS RF7100"], ["K", t2(R.K.v), "US", "SSURGO"], ["LS", t2(R.Ls.v), "", "SSURGO slope, slope length"], ["C", t2(R.C), "", "NLCD 2021"], ["P", t2(R.P), "", `${pName()}, cropland only`],
+    if (R) rows.push(["NHDPlus V2 COMID", ok(M.comid) ? String(M.comid) : "", "", "USGS NLDI"], ["R", t2(R.R), "hundreds ft-tonf-in/(ac-h-yr)", M.Rsrc || "USGS RF7100"], ["K", t2(R.K.v), "US", "SSURGO"], ["LS", t2(R.Ls.v), "", "SSURGO slope, slope length"], ["C", t2(R.C), "", "NLCD 2021"], ["P", t2(R.P), "", `${pName()}, cropland only`],
       ["Soil loss A, all land", t2(R.A), "t/ac/yr", "RUSLE, gross sheet and rill"], ["Soil loss A, all land", t2(ok(R.A) ? R.A * 2.2417 : null), "t/ha/yr", ""], ["Soil loss A, cropland", t2(R.Ac), "t/ac/yr", `C = ${pick.cropC}`], ["T", t2(R.Tf.v), "t/ac/yr", "SSURGO tfact"]);
     const pt = pointCn();
     if (ok(pt.cn)) rows.push(["Point: land cover", pt.cls[1], "", "NLCD 2021, the 30 m cell"], ["Point: hydrologic soil group", pt.d.hydgrp || pt.g, "", `SSURGO, ${pt.d.compname} (dominant soil)`],
@@ -551,17 +726,19 @@ WG.basins = (function () {
     return m[k];
   };
   async function render(el, live, lat, lon, say) {
-    const h0 = await Wx.once("bs:hu12", () => hu12At(lat, lon));
+    // The National Map's watershed server slow to answer: said after 5 s, as its copy is read only after 12 s
+    const slow = setTimeout(() => { if (live() && wbdAsked) el.innerHTML = Wx.wait("the watershed (HU12) at the point. The National Map's server is slow to answer: a copy of its map is read if it has not answered in 12 s"); }, 5000);
+    const h0 = await Wx.once("bs:hu12", () => hu12At(lat, lon)).finally(() => clearTimeout(slow));
     if (!live()) return;
     if (h0 && !huSeen.has(h0.huc12)) { huSeen.set(h0.huc12, { hu: h0 }); if (huSeen.size > 6) huSeen.delete(huSeen.keys().next().value); }
     const hu = h0 && huSeen.get(h0.huc12).hu; // the same object, so js/landcover.js's count of its polygon is kept too
     if (!hu) { el.innerHTML = `<div class="card">${SM.head("Basin: runoff and soil loss", "")}<p class="fine">No 12-digit hydrologic unit (WBD) holds this point.</p></div>`; return; }
     const st = (WG.state.siteState || {}).code || "";
     if (pick.storm === "own") pick.storm = "2"; // a typed depth belongs to its point
-    M = { el, live, tok: WG.state.token, hu, lat, lon, st, net: null, soils: null, lc: null, R: undefined, Rv: null, a14: undefined, own: null, err: {}, nldi: null, say: say || (() => {}) };
+    M = { el, live, tok: WG.state.token, hu, lat, lon, st, net: null, soils: null, lc: null, R: undefined, Rv: null, a14: undefined, own: null, err: {}, nldi: null, v2try: hyOff("hr"), say: say || (() => {}) };
     const me = M, mine = () => M === me && live();
     el.innerHTML = `<div class="card">${SM.head("Basin: watershed and mean annual runoff", "basin", `HU12 ${hu.huc12}`)}
-        <p class="fine" style="margin-top:0"><b>${esc(hu.name)}</b>, HUC ${esc(hu.huc12)}: ${fmt(hu.km2, 1)} km² (${UN.fmt("area", hu.km2 * 1e6)}), flows to HU12 ${esc(hu.tohuc || "—")}. The small watershed (HU12) that holds the point, from the USGS Watershed Boundary Dataset, drawn on the map with its NHDPlus HR catchments while this theme is on.</p>
+        <p class="fine" style="margin-top:0"><b>${esc(hu.name)}</b>, HUC ${esc(hu.huc12)}: ${fmt(hu.km2, 1)} km² (${UN.fmt("area", hu.km2 * 1e6)}), flows to HU12 ${esc(hu.tohuc || "—")}. The small watershed (HU12) that holds the point, from the USGS Watershed Boundary Dataset${HU_WHY[hu.src] || ""}, drawn on the map with its catchments while this theme is on.</p>
         <div id="bsNet"></div></div>
       <div class="card">${SM.head("Design-storm runoff (curve number)", "basin_landcover", "TR-55")}<div id="bsCnCtl"></div><div id="bsCnOut"></div></div>
       <div class="card">${SM.head("Soil loss (RUSLE)", "basin_rusle", "sheet and rill")}<div id="bsRusleCtl">${rusleControls()}</div><div id="bsRusleOut"></div></div>`;
@@ -573,19 +750,25 @@ WG.basins = (function () {
     const done = (k, f) => v => { if (!mine()) return; M[k] = v; f(); tell(); }, fail = (k, f) => e => { console.warn("basins", k, e); if (!mine()) return; M.err[k] = e instanceof Error ? e : new Error(String(e)); f(); tell(); };
     const both = () => { drawCn(); drawRusle(); };
     const jobs = [
-      perHu(hu.huc12, "hr", () => hrIn(hu)).then(hr => { if (!mine()) return; M.net = network(hr, hu, lat, lon); overlay(M); drawNet(); summary(); T().basin_catchments = catTable(); tell(); }, fail("net", drawNet)),
+      perHu(hu.huc12, "net", () => netIn(hu, () => { if (mine()) { M.v2try = true; drawNet(); } })).then(hr => { if (!mine()) return; M.net = network(hr, hu, lat, lon); overlay(M); drawNet(); summary(); T().basin_catchments = catTable(); tell(); }, fail("net", drawNet)),
       perHu(hu.huc12, "soils", () => soilsIn(hu)).then(done("soils", both), fail("soils", both)),
       M.ptLc ? null : Wx.once("bs:lcpt", () => WG.landcover.classAt(lat, lon)).then(code => { if (mine()) { M.ptLc = { code, src: "MRLC WCS" }; drawCn(); } }, e => { console.warn("basins point land cover", e); if (mine()) { M.ptLc = e instanceof Error ? e : new Error(String(e)); drawCn(); } }),
       WG.landcover.boundaryShares(hu.polys).then(done("lc", both), fail("lc", both)),
       (A14.has(st) ? a14File(st) : Promise.resolve(null)).then(j => { if (!mine()) return; M.a14 = j ? a14At(j, lat, lon) : null; const c = box("bsCnCtl"); if (c) c.innerHTML = stormControls(); drawCn(); tell(); }),
-      Wx.once("bs:comid", () => comidAt(lat, lon)).then(async c => { const r = await rAt(st, c); if (!mine()) return; M.comid = c; M.R = r; M.Rv = r ? r.R : null; M.Rsrc = M.Rsrc0 = r ? `USGS RF7100, NHDPlus V2 COMID ${c} (NLDI)${r.st !== st ? `, ${r.st} file` : ""}` : ""; },
-        e => { if (!mine()) return; M.err.R = e; M.R = null; }).then(() => { if (!mine()) return; const c = box("bsRusleCtl"); if (c) c.innerHTML = rusleControls(); drawRusle(); tell(); }),
+      Wx.once("bs:comid", () => comidAt(lat, lon)).then(c => rAt(st, c).then(r => ({ c, r })), e => ({ e })).then(async ({ c, r, e }) => {
+        const n = r ? null : await rNear(st, lat, lon).catch(err => { console.warn("basins: R nearby", err); return null; });
+        if (!mine()) return;
+        M.comid = c; M.R = r || n; M.Rv = M.R ? M.R.R : null;
+        if (!M.R && e) M.err.R = e;
+        const why = ok(c) ? `COMID ${c}, the point's, has none` : e && /^404/.test(e.message || "") ? "the point's catchment drains to a sink, which RF7100 does not cover" : "USGS NLDI did not answer";
+        M.Rsrc = M.Rsrc0 = r ? `USGS RF7100, NHDPlus V2 COMID ${c} (NLDI)${r.st !== st ? `, ${r.st} file` : ""}` : n ? `USGS RF7100 of the nearest catchment with a value (NHDPlus V2 COMID ${n.comid}, ${fmt(n.km, 1)} km away), as ${why}` : "";
+      }).then(() => { if (!mine()) return; const x = box("bsRusleCtl"); if (x) x.innerHTML = rusleControls(); drawRusle(); tell(); }),
     ];
     await Promise.allSettled(jobs);
   }
   function catTable() {
     const N = M.net;
-    return { title: `NHDPlus HR catchments of HU12 ${M.hu.huc12}: mean annual runoff (EROM step A, model)`, header: ["NHDPlus ID", "Stream name", "Area (km2)", "qincrama (cfs)", "Runoff (mm/yr)", "Mean annual flow qama (cfs)", "Stream order", "Drainage area (km2)", "hydroseq", "dnhydroseq", "Drains to", "Inside the HU12", "At the point", "Upstream of the point"],
+    return { title: `${netName(N)} catchments of HU12 ${M.hu.huc12}: mean annual runoff (EROM step A, model)`, header: [N.v2 ? "COMID" : "NHDPlus ID", "Stream name", "Area (km2)", N.v2 ? "Own flow, QA_MA less inflows (cfs)" : "qincrama (cfs)", "Runoff (mm/yr)", N.v2 ? "Mean annual flow QA_MA (cfs)" : "Mean annual flow qama (cfs)", "Stream order", "Drainage area (km2)", "hydroseq", "dnhydroseq", "Drains to", "Inside the HU12", "At the point", "Upstream of the point"],
       rows: N.cats.map(c => [String(c.id), c.a ? c.a.gnis_name || "" : "", t2(c.area), c.a ? t2(num(c.a.qincrama)) : null, t2(c.mm), c.a ? t2(num(c.a.qama)) : null, c.a ? num(c.a.streamorde) : null, c.a ? t2(num(c.a.totdasqkm)) : null,
         c.a ? String(c.a.hydroseq) : "", c.a ? String(c.a.dnhydroseq || "") : "", c.sink ? "sink" : "stream", c.inHu ? "yes" : "no", c.here ? "yes" : "", c.up ? "yes" : ""]) };
   }
@@ -648,5 +831,5 @@ WG.basins = (function () {
   });
 
   SM.addPart({ key: "basin", wait: "the watershed (HU12) at the point", render, tab: "soilbasin" });
-  return { hu12At, hrIn, network, soilsIn, comidAt, rAt, rFile, a14At, ls, scsQ, CN, CN_AS, C_OF, RUN, A14, pContour, pStrip, P_TERR };
+  return { hu12At, hrIn, v2In, netIn, network, soilsIn, comidAt, rAt, rNear, rFile, a14At, ls, scsQ, CN, CN_AS, C_OF, RUN, A14, pContour, pStrip, P_TERR };
 })();

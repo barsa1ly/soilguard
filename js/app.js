@@ -435,12 +435,13 @@
     ...Object.fromEntries(Object.entries(WG.weather.layers).map(([t, list]) => [t, (list.find(x => x.def) || list[0] || {}).key || null])) };
   const groups = { refs, themes, soilLayers, live: new Proxy({}, { get: (_, k) => live[state.theme] && live[state.theme][k] }) };
   const showItem = (it, v) => { [it.layer, it.extra].filter(Boolean).forEach(l => (v ? l.addTo(map) : map.removeLayer(l))); };
-  /* Wind erosion and Soil maps open on their Overview: their other tabs (data-detail in index.html) are the details. The
-     Details card, last on the Overview, brings them out and puts them away again, the choice kept on this device. A step
-     to a detail tab from anywhere else (an Overview row's or card's link, Wind erosion › Soil's link to Soil maps › Soil,
-     the land cover key) brings them out first, for this visit only, so the short row stays the default. */
+  /* Wind erosion and Soil maps open on their Overview: their other tabs (data-detail in index.html) are the details.
+     The Details card, last on the Overview, brings them out and puts them away. They are put away on each visit and
+     whenever the theme changes, so a theme always opens on its Overview. A link to a detail tab (an Overview row's or
+     card's link, Wind erosion › Soil's link to Soil maps › Soil, the land cover key) brings them out first. The choice
+     is not kept: the one older versions saved (fg.details) is removed. */
   let details = false;
-  try { details = localStorage.getItem("fg.details") === "1"; } catch (e) { /* storage off: the Overview alone */ }
+  try { localStorage.removeItem("fg.details"); } catch (e) { /* storage off */ }
   const isDetail = name => !!$(`.tabs button[data-tab="${name}"][data-detail]`);
   function tabRow() {
     $$(".tabs button[data-tab]").forEach(b => { b.hidden = !b.dataset.for.split(" ").includes(state.theme) || (!details && b.hasAttribute("data-detail")); });
@@ -474,7 +475,6 @@
   $("#panel").addEventListener("click", e => {
     if (!e.target.closest("[data-details]")) return;
     details = !details;
-    try { localStorage.setItem("fg.details", details ? "1" : "0"); } catch (err) { /* storage off: for this visit */ }
     tabRow();
     const first = $(".tabs button[data-detail]:not([hidden])"), on = $(".tabs button.active");
     // out: the theme's first detail tab opens at its top, with keyboard focus on its tab
@@ -485,6 +485,7 @@
   });
   // tab: the tab to open (a link to another theme's tab), else the one on show if it belongs, else the theme's first
   function setTheme(t, tab) {
+    const was = state.theme;
     state.theme = WG.weather.THEMES.some(x => x.key === t) ? t : "erosion";
     Object.entries(themes).forEach(([k, it]) => { const on = state.theme === "erosion" && k === choice.erosion; if (it.on !== on) { it.on = on; showItem(it, on); } });
     Object.entries(live).forEach(([tk, set]) => Object.entries(set).forEach(([k, it]) => { const on = tk === state.theme && k === choice[tk]; if (it.on !== on) { it.on = on; showItem(it, on); } }));
@@ -494,7 +495,9 @@
     if (!$("#layerSheet").hidden) buildLayerSheet();
     const T = WG.weather.THEMES.find(x => x.key === state.theme);
     $("#hintText").textContent = T.hint;
-    // the panel's tabs: those of this theme (the details out for a link to one); the one on show stays if it belongs, else the theme's first
+    /* the panel's tabs: those of this theme. Another theme opens with its details put away, and a link to one of its
+       detail tabs brings them out; the tab on show stays if it belongs, else the theme's first opens */
+    if (state.theme !== was) details = false;
     if (tab && isDetail(tab)) details = true;
     tabRow();
     const on = $(".tabs button.active"), to = tab && $(`.tabs button[data-tab="${tab}"]:not([hidden])`);
@@ -1059,7 +1062,7 @@
   // the weather tab a panel tab is drawn with: Drought's History with Drought's own (js/weather.js RENDER.drought)
   function wx(n) { return n === "droughthist" ? "drought" : n; }
   function showTab(name) {
-    if (!details && isDetail(name)) { details = true; tabRow(); } // a step to a detail tab brings the details out with it (for this visit)
+    if (!details && isDetail(name)) { details = true; tabRow(); } // a step to a detail tab brings the details out with it (until the theme changes)
     $$(".tabs button").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
     $$('.tabs [role="tab"]').forEach(b => { const on = b.dataset.tab === name; b.setAttribute("aria-selected", String(on)); b.tabIndex = on ? 0 : -1; });
     $$(".tab").forEach(t => { t.hidden = t.id !== "tab-" + name; });
@@ -2324,8 +2327,9 @@
     $("#ovPracGo").textContent = s ? "Change →" : "Choose land use →";
     $("#ovPrac").innerHTML = none && pf === undefined ? '<span class="skeleton"></span>'
       : s ? `<div class="nm">${esc(s.name)}</div><div class="sub">${s.answers.map(esc).join(" · ")}</div>`
-        : `<div class="nm">Not chosen yet</div><div class="sub">${!lc ? '<span class="skeleton" style="width:60%"></span>'
-          : lc.name ? `The land cover map shows ${esc(lc.name)} here.` : lc.src ? "The land cover map gives no class here." : "The land cover map could not be read here."}</div>`;
+        : !lc ? '<span class="skeleton"></span><span class="skeleton" style="width:60%"></span>'
+        : lc.name ? `<div class="sub">Land cover map shows</div><div class="nm" style="text-transform:uppercase">${esc(lc.name)}</div>`
+        : `<div class="sub">Land cover map</div><div class="nm">${lc.src ? "No class at this point" : "Could not be read here"}</div>`;
   }
 
   /* A change in the units table redraws every view that shows numbers. */

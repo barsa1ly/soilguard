@@ -293,6 +293,12 @@ WG.soilmaps = (function () {
   }
   const usgsNear = (lat, lon) => Wx.once("sm:ds801", () => usgsNearAt(lat, lon));
   const DS_COL = { P: "p_ppm", K: "k_pct", Ca: "ca_pct", Mg: "mg_pct", S: "s_pct", Zn: "zn_ppm", Fe: "fe_pct", Mn: "mn_ppm", Cu: "cu_ppm", Na: "na_pct" };
+  /* a site's value of an element in a layer ("top5cm", "ahorizon"): a number, the lab's text for a value below the
+     detection limit ("<50"), or null; its unit; and the value as the lab reports it, as the Soil tab's card and the
+     Overview show it */
+  const dsVal = (s, hz, el) => { const a = ((s.p[hz] || {}).analyses || {})[DS_COL[el]]; return a === undefined || a === null || a === "" ? null : a; };
+  const dsUnit = el => (DS_COL[el].endsWith("_pct") ? "%" : "mg/kg");
+  const dsShow = (v, el) => (v === null ? "—" : typeof v === "string" ? esc(v) : fmt(v, dsUnit(el) === "%" ? 2 : v < 10 ? 1 : 0));
 
   /* NRCS KSSL: the lab-measured pedons nearest the point, their surface layer (a box widened once if it holds fewer than 3) */
   async function ksslAt(lat, lon) {
@@ -625,9 +631,7 @@ WG.soilmaps = (function () {
       const x = at("smUsgs");
       if (!x) return;
       if (!sites.length) { x.innerHTML = `<div class="card">${head("Nearest USGS soil geochemistry sites", "")}<p class="fine">No DS-801 site within about 160 km.</p></div>`; return; }
-      const val = (s, hz, el) => { const a = ((s.p[hz] || {}).analyses || {})[DS_COL[el]]; return a === undefined || a === null || a === "" ? null : a; };
-      const unit = el => (DS_COL[el].endsWith("_pct") ? "%" : "mg/kg");
-      const shows = (v, el) => (v === null ? "—" : typeof v === "string" ? esc(v) : fmt(v, unit(el) === "%" ? 2 : v < 10 ? 1 : 0)); // as the lab reports them
+      const val = dsVal, unit = dsUnit, shows = dsShow;
       const depthOf = (s, hz) => (s.p[hz] && s.p[hz].depth_cm ? `${s.p[hz].depth_cm} cm` : "");
       const cols = [th("Element"), ...sites.flatMap((s, i) => [th(`Site ${i + 1}, top 5 cm`, depthOf(s, "top5cm")), th(`Site ${i + 1}, A horizon`, depthOf(s, "ahorizon"))]), th("US median", "top 5 cm, same unit as the row")];
       const rows = ELS.map(([el, n]) => [`${showBtn("chem", el, { el, hz: "Top5" })} <small>${esc(n)}, ${unit(el)}</small>`, ...sites.flatMap(s => [shows(val(s, "top5cm", el), el), shows(val(s, "ahorizon", el), el)]),
@@ -686,23 +690,36 @@ WG.soilmaps = (function () {
   const facts = rows => rows.filter(Boolean).map(([k, v, n]) => `<span class="k">${esc(k)}</span><span class="v">${esc(v)}</span><span class="n">${esc(n || "")}</span>`).join("");
   const rowOf = (t, re, unit) => (t && t.rows.find(r => re.test(String(r[0])) && (!unit || r[2] === unit))) || null;
   const val = r => (r && ok(num(r[1])) ? num(r[1]) : null);
+  /* the table's minerals: TOTAL amounts in the top 5 cm at the nearest USGS site, as the Soil tab's card gives them, and
+     the note above them (the site is added once it is read) */
+  const MINERALS = [["Ca", "Calcium"], ["Mg", "Magnesium"], ["K", "Potassium"], ["P", "Phosphorus"], ["Fe", "Iron"]];
+  const EL0 = `el${MINERALS[0][0]}`, EL_NOTE = "Minerals: total in the soil, not what a crop can take up";
+  // a depth in brackets that stays on one line: no break at its spaces or after its dash
+  const dep = d => `(${d.replace(/ /g, "\u00a0").replace(/–/g, "–\u2060")})`;
   // id, name, group, the tab and card its → opens (a | between choices: the first the tab has), and the part it needs;
   // in the order a grower acts on: soil moisture, then the soil's chemistry, and the basin last
   const TILES = [
     ["smm", "Today (model)", "wet", "soilmoist", "#smmToday", "moisture"], ["stn", "Nearest station", "wet", "soilmoist", "#smmSt|#smmToday", "moisture"],
-    ["ph", "pH, 0–15 cm", "soil", "soilmaps", "#smSurvey"], ["salt", "Salinity · sodicity", "soil", "soilmaps", "#smSurvey"], ["cec", "CEC · organic matter", "soil", "soilmaps", "#smSurvey"],
-    ["n", "Total nitrogen", "soil", "soilmaps", "#smN"], ["basin", "Yearly runoff", "basin", "soilbasin", "#smPart-basin", "basin"], ["storm", "Design-storm runoff", "basin", "soilbasin", "#bsCnOut", "basin"],
+    ["cec", `CEC ${dep("0–15 cm")}`, "soil", "soilmaps", "#smSurvey"], ...MINERALS.map(([e, n]) => [`el${e}`, `${n} ${dep("top 5 cm")}`, "soil", "soilmaps", "#smUsgs"]),
+    ["n", `Total nitrogen ${dep("0–5 cm")}`, "soil", "soilmaps", "#smN"], ["basin", "Yearly runoff", "basin", "soilbasin", "#smPart-basin", "basin"], ["storm", "Design-storm runoff", "basin", "soilbasin", "#bsCnOut", "basin"],
     ["loss", "Soil loss (RUSLE)", "basin", "soilbasin", "#bsRusleOut", "basin"]];
   // the groups, each under a header row with a small icon: a drop, the soil's layers, waves
   const GROUPS = [["wet", "Soil moisture", `<path d="M12 3.5c3 3.9 5.5 7.1 5.5 10a5.5 5.5 0 0 1-11 0c0-2.9 2.5-6.1 5.5-10z"/>`],
     ["soil", "Soil chemistry", `<path d="M3 8c2.2-1.5 4.3-1.5 6.5 0s4.3 1.5 6.5 0 3.6-1.2 5-.5M3 13h18M3 18h18"/>`],
     ["basin", "Basin", `<path d="M3 10c2-1.6 4-1.6 6 0s4 1.6 6 0 4-1.6 6 0M3 16c2-1.6 4-1.6 6 0s4 1.6 6 0 4-1.6 6 0"/>`]];
-  /* each row's class as a small chip in a calm colour: pH as the headline's groups; salinity and soil loss from green
-     (fine) through yellow and orange to red, as the risk colours; sodic in the SAR map's purples; total N green, darker
-     the more there is; soil moisture from amber (dry) through green to blue (wet) */
-  const SAL_C = ["#2f8f5b", "#8fb34f", "#e2b13c", "#e0742c", "#b3261e"], SODIC_C = { Sodic: "#8a64bd", "Saline-sodic": "#47237f" };
+  /* each row's class as a small chip in a calm colour: a mineral against the US sites in the USGS map's order (blue
+     lower, green typical, orange higher); total N green, darker the more there is; soil loss green (tolerable) to red,
+     as the risk colours; soil moisture from amber (dry) through green to blue (wet) */
   const N_C = ["#c9a63f", "#9dbb4e", "#5aa469", "#2e8b57", "#1c6b3d"];
   const WET = [["Dry", "#c47d2c"], ["Fairly dry", "#d9b13b"], ["Moist", "#4f9d69"], ["Wet", "#2f6f9f"]];
+  /* a mineral against the US sites' tenths in the top 5 cm (data/soilchem_legend.json: the map's classes): the lowest
+     three tenths, the middle four or the top three; null when a value given as below or above a limit cannot be placed */
+  const US3 = [["Lower", "#4a7fc1", "lower than most US soils, in the lowest 30%"], ["Typical", "#7fb069", "typical of US soils, in the middle 40%"], ["Higher", "#e08a3c", "higher than most US soils, in the top 30%"]];
+  function usClass(v, c) {
+    const s = String(v), lt = s.startsWith("<"), gt = s.startsWith(">"), x = typeof v === "number" ? v : num(s.replace(/^[<>]\s*/, ""));
+    if (!c || !c.breaks || !ok(x)) return null;
+    return x <= c.breaks[2] && !gt ? US3[0] : x > c.breaks[6] && !lt ? US3[2] : lt || gt ? null : US3[1];
+  }
   /* soil moisture against this soil's surface wilting point and field capacity (the survey read for the wind erosion, as
      js/soilmoisture.js soilRange): dry below the wilting point, fairly dry with less than half of the water a crop can
      use left, moist up to field capacity, wet above it; null while that soil is not known */
@@ -728,14 +745,14 @@ WG.soilmaps = (function () {
     // the tab a row's → opens: its own where the page has that tab button, else the tab that holds its part
     const goTo = t => (document.querySelector(`.tabs [data-tab="${t[3]}"]`) ? t[3] : t[5] && partOf(t[5]) ? partOf(t[5]).tab || "soilmaps" : "soilmaps");
     const body = GROUPS.map(([g, name, ico]) => { const list = tiles.filter(t => t[2] === g);
-      return list.length ? `<tbody><tr class="so-gh"><th colspan="3" scope="rowgroup"><svg viewBox="0 0 24 24" aria-hidden="true">${ico}</svg>${esc(name)}</th></tr>${list.map(t => `<tr class="so-gr" id="so-${t[0]}"></tr>`).join("")}</tbody>` : ""; }).join("");
+      return list.length ? `<tbody><tr class="so-gh"><th colspan="3" scope="rowgroup"><svg viewBox="0 0 24 24" aria-hidden="true">${ico}</svg>${esc(name)}</th></tr>${list.map(t => `${t[0] === EL0 ? `<tr class="so-gn"><td colspan="3" id="so-elnote">${esc(EL_NOTE)}</td></tr>` : ""}<tr class="so-gr" id="so-${t[0]}"></tr>`).join("")}</tbody>` : ""; }).join("");
     el.innerHTML = `<div class="risk-card so-head loading" id="soHead"></div>
       <div class="card so-glcard">${head("At a glance", "", "")}<p class="fine so-glsub">Survey and model values for typical soil here, not a test of a field. Each row's → opens its card.</p>
         <table class="so-gl"><colgroup><col class="so-gc1"><col><col class="so-gc3"></colgroup>${body}</table></div>
       <div class="card">${head("Select map layers", "", "")}${chips()}</div>
       ${WG.app && WG.app.detailsCard ? WG.app.detailsCard("soilmaps") : ""}`;
     const box = id => (live() ? el.querySelector(`#${id}`) : null);
-    let S, N, MS; // each: undefined while read, the value, or an Error
+    let S, N, MS, G; // each: undefined while read, the value, or an Error (G: the USGS sites and the US sites' tenths)
     const hzLink = cls => `<button class="link ${cls}" data-goto="soilmaps" data-so-go="#smHz">Horizons →</button>`;
     /* a row: v undefined while it is read (a skeleton), an Error (a dash and a reload button), or the value with its unit;
        side: its class chip or a plain note; tip: more about it, on hover. Written again only when it changes. */
@@ -752,7 +769,7 @@ WG.soilmaps = (function () {
     const u = (v, unit) => `${v}${unit ? ` <small>${esc(unit)}</small>` : ""}`;
     function draw() {
       if (!live()) return;
-      /* the survey: the headline, pH, salinity and sodicity, CEC and organic matter of the dominant component, 0-15 cm */
+      /* the survey: the headline (pH, salinity, sodicity, organic matter) and the CEC row, of the dominant component, 0-15 cm */
       const top = S && !(S instanceof Error) && S.mu ? S.comps.filter(c => c.hz.length)[0] : null, l = top ? layerOf(top.hz, 0, 15) : null;
       const hd = box("soHead");
       if (hd) {
@@ -768,21 +785,12 @@ WG.soilmaps = (function () {
           <p class="risk-text">${why ? esc(why) : `${esc(S.mu.name)} (${esc(S.mu.sym)} · ${esc(S.mu.area)}). ${esc(SURVEY_NOTE)}`}</p>
           <div class="risk-links"><button class="link risk-how" data-goto="soilmaps" data-so-go="#smSurvey">pH and chemistry by depth →</button>${hzLink("risk-how")}<button class="link risk-how" data-methods="m-sources">Sources →</button></div>`;
       }
-      // the pH row only while the headline gives no pH
-      const phT = box("so-ph");
-      if (phT) phT.hidden = !!(l && ok(l.ph));
-      if (S === undefined) ["ph", "salt", "cec"].forEach(k => row(k));
-      else if (S instanceof Error) ["ph", "salt", "cec"].forEach(k => row(k, S));
-      else if (!l) ["ph", "salt", "cec"].forEach(k => row(k, "—", aside(S.mu ? "No horizon data" : "Not surveyed")));
-      else {
-        const g = ph5(l.ph), sod = sodicity(l.ec, l.sar, l.esp), sodic = sod === "Sodic" || sod === "Saline-sodic";
-        row("ph", ok(l.ph) ? `${fmt(l.ph, 1)}${l.cacl2 ? " <small>CaCl₂</small>" : ""}` : "—", ok(l.ph) ? (l.cacl2 ? "" : chip(reaction(l.ph), PH5[g - 1][3])) : aside("Not given here"),
-          `${top.name}${l.cacl2 ? ": pH in CaCl₂, about 0.5 below water pH" : ""}`);
-        row("salt", ok(l.ec) ? u(fmt(l.ec, 1), "dS/m") : "—", sodic ? chip(sod, SODIC_C[sod]) : ok(l.ec) ? chip(salinity(l.ec), SAL_C[[2, 4, 8, 16].filter(x => l.ec >= x).length]) : aside("Not given here"),
-          `${ok(l.ec) ? salinity(l.ec) : "No EC"}${sod ? `, ${sod.toLowerCase()}` : ""}: SAR ${fmt(l.sar, 1)}, ESP ${ok(l.esp) ? `${fmt(l.esp, 0)}%` : "—"}. ${SAR_TIP}`);
-        row("cec", ok(l.cec) ? u(fmt(l.cec, 1), `cmol(+)/kg${l.ecec ? " ECEC" : ""}`) : "—", ok(l.om) ? aside(`OM ${fmt(l.om, 1)}%`) : ok(l.cec) ? "" : aside("Not given here"),
-          `${ok(l.om) ? `Organic matter ${fmt(l.om, 1)}%. ` : ""}${ok(l.bs) ? `Base saturation ${fmt(Math.min(100, l.bs), 0)}%. ` : ""}${CEC_TIP}`);
-      }
+      // pH, salinity, sodicity and organic matter are in the headline: the table adds the CEC, with the base saturation
+      if (S === undefined) row("cec");
+      else if (S instanceof Error) row("cec", S);
+      else if (!l) row("cec", "—", aside(S.mu ? "No horizon data" : "Not surveyed"));
+      else row("cec", ok(l.cec) ? u(fmt(l.cec, 1), `cmol(+)/kg${l.ecec ? " ECEC" : ""}`) : "—", !ok(l.cec) ? aside("Not given here") : ok(l.bs) ? aside(`base saturation ${fmt(Math.min(100, l.bs), 0)}%`) : "",
+        `${top.name}, 0–15 cm${l.ecec ? ", effective CEC (the survey gives no CEC at pH 7 here)" : ", at pH 7"}. ${CEC_TIP}${ok(l.bs) ? ` ${BS_TIP}` : ""}`);
       /* SoilGrids' total N, 0-5 cm */
       const n0 = N && !(N instanceof Error) ? N.find(r => r.t === 0) : null, ng = n0 && ok(n0.mean) ? n0.mean : null;
       if (N === undefined) row("n");
@@ -790,6 +798,20 @@ WG.soilmaps = (function () {
       else if (ok(ng)) row("n", u(fmt(ng, 2), "g/kg"), chip(cap(nClass(ng)), N_C[[1, 2, 5, 10].filter(x => ng >= x).length]),
         `0–5 cm: ${fmt(ng / 10, 3)}% (1 g/kg = 0.1%), ${nClass(ng)} (Landon 1991). Total N, not what the crop can use; SoilGrids model`);
       else row("n", "—", aside("No value here"));
+      /* the minerals, from the nearest USGS site with a top 5 cm sample (the Soil tab's Site 1 as a rule), as its card
+         shows them, each against the US sites; the note above them names the site */
+      const sites = G && !(G instanceof Error) ? G[0] : null, site = sites ? sites.find(s => s.p && s.p.top5cm) : null, lg = sites ? G[1] : null;
+      const nt = box("so-elnote"), note = [EL_NOTE, site && `${site === sites[0] ? "nearest " : ""}USGS site, ${dist(site.km)} ${site.dir}`, site && lg && "compared with US soils"].filter(Boolean).join(" · ");
+      if (nt && nt.textContent !== note) nt.textContent = note;
+      MINERALS.forEach(([e, name]) => {
+        const id = `el${e}`, v = site ? dsVal(site, "top5cm", e) : null, c = lg && lg.elements && lg.elements[e] ? lg.elements[e].Top5 : null, k = v === null ? null : usClass(v, c);
+        if (G === undefined) return row(id);
+        if (G instanceof Error) return row(id, G);
+        if (!site) return row(id, "—", aside(sites.length ? "Not sampled" : "No site near"));
+        if (v === null) return row(id, "—", aside("Not measured"));
+        const med = c && ok(num(c.median)) ? `${c.median}${dsUnit(e) === "%" ? "%" : ` ${dsUnit(e)}`}` : "";
+        row(id, u(dsShow(v, e), dsUnit(e)), k ? chip(k[0], k[1]) : "", `Total ${name.toLowerCase()}, top 5 cm, at USGS site #${site.id} (${dist(site.km)} ${site.dir}${site.p.colldate ? `, sampled ${site.p.colldate}` : ""})${k ? `: ${k[2]}${c.n ? ` of ${c.n.toLocaleString()} sites` : ""}` : ""}${med ? `; US median ${med}` : ""}. Total in the soil, not what a crop can take up.`);
+      });
       /* the parts of other files: their tables, or how the reads behind the row ended (as the part told, else as the
          whole part ended): still read, failed (a reload button), or done without this value */
       const T = tables, cur = run.tok === WG.state.token, st = k => (cur ? run.parts[k] : undefined), told = (k, id) => (cur && run.rows[k] ? run.rows[k][id] : undefined);
@@ -803,9 +825,14 @@ WG.soilmaps = (function () {
         row(id, end ? "—" : undefined, end ? aside("Not given here") : "");
       };
       if (has("basin")) {
-        const B = T.basin, name = rowOf(B, /^HU12 name$/), huc = rowOf(B, /^HU12$/), mm = val(rowOf(B, /mean annual runoff/i));
-        // the HU12's mean annual runoff, once the NHDPlus HR network has been read
-        later("basin", "basin", () => (ok(mm) ? [`${UN.html("precip", mm)}<small>/yr</small>`, "", `Mean annual runoff of ${name ? name[1] : "the HU12"}${huc ? `, HUC ${huc[1]}` : ""} (a model)`] : null));
+        const B = T.basin, name = rowOf(B, /^HU12 name$/), huc = rowOf(B, /^HU12$/), mm = val(rowOf(B, /mean annual runoff/i)), net = rowOf(B, /^Stream network$/);
+        /* the HU12's mean annual runoff, once the stream network has been read. From NHDPlus V2, read when NHDPlus HR did
+           not answer (js/basins.js netIn), the row says "backup map", with a value or without, as V2 is coarser */
+        const v2 = !!net && /V2/.test(String(net[1])), huTxt = `${name ? name[1] : "the HU12"}${huc ? `, HUC ${huc[1]}` : ""}`;
+        const V2_MAP = "the backup stream map, NHDPlus V2 (1:100,000), read as the main one (NHDPlus HR, 1:24,000) did not answer";
+        later("basin", "basin", () => (ok(mm) ? [`${UN.html("precip", mm)}<small>/yr</small>`, v2 ? aside("backup map") : "",
+          `Mean annual runoff of ${huTxt} (a model)${v2 ? `, from ${V2_MAP}. V2 is coarser, so the value can differ from HR's; HR is asked first again later.` : ""}`]
+          : v2 ? ["—", aside("backup map"), `No runoff for ${huTxt} on ${V2_MAP}: its catchments drain to sinks such as playas, or to no stream it maps. HR may give a value; it is asked first again later.`] : null));
         const q = val(rowOf(B, /^Storm runoff Q/)), pr = rowOf(B, /^Storm depth/), p = val(pr), yr = pr && /(\d+)-yr/.exec(pr[3] || ""), qp = val(rowOf(B, /^Point: storm runoff Q/));
         // the whole HU12's average, as the Basin card's "The whole HU12" line; the card gives the point's own first
         later("basin", "storm", () => (ok(q) && ok(p) ? [UN.html("precip", q), aside(`${fmt((100 * q) / p, 0)}% of the rain`), `${fmt((100 * q) / p, 0)}% of the rain of the ${yr ? `${yr[1]}-year` : "chosen"}, 24-hour storm (${UN.fmt("precip", p)}) runs off, on average over the whole HU12${ok(qp) ? `; at the point itself ${UN.fmt("precip", qp)} (${fmt((100 * qp) / p, 0)}%)` : ""}`] : null));
@@ -844,7 +871,8 @@ WG.soilmaps = (function () {
     const pS = survey(lat, lon).then(v => { S = v; }, e => { S = e instanceof Error ? e : new Error(String(e)); }).then(draw);
     const pN = sgN(lat, lon).then(v => { N = v; }, e => { N = e instanceof Error ? e : new Error(String(e)); }).then(draw);
     const pM = SMM ? Promise.resolve().then(() => SMM(lat, lon)).then(v => { MS = v || { model: null, station: null }; }, e => { MS = e instanceof Error ? e : new Error(String(e)); }).then(draw) : null;
-    await Promise.allSettled([pS, pN, pM, pTab]);
+    const pG = Promise.all([usgsNear(lat, lon), chemLegend().catch(() => null)]).then(v => { G = v; }, e => { G = e instanceof Error ? e : new Error(String(e)); }).then(draw);
+    await Promise.allSettled([pS, pN, pM, pG, pTab]);
     draw();
   };
   // a row's →, or a link of the headline: the tab it names (app.js shows it on data-goto), scrolled to the card

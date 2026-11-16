@@ -179,9 +179,21 @@ def checks():
           has_keys("features")),
         # water
         C("USGS WBD (hydro.nationalmap.gov)", "the HU12 at a point", arcgis_point("https://hydro.nationalmap.gov/arcgis/rest/services/wbd/MapServer/6", "huc12,name"),
-          has_keys("features"), flaky="known flaky: HTTP 502 or 504 at times (11 and 12 Nov 2026)"),
+          has_keys("features"), flaky="known flaky: HTTP 502 or 504 at times (11, 12 and 16 Nov 2026); the app then reads a copy of WBD (below)"),
         C("USGS NHDPlus HR (hydro.nationalmap.gov)", "sinks at a point (layer 1)", arcgis_point("https://hydro.nationalmap.gov/arcgis/rest/services/NHDPlus_HR/MapServer/1", "nhdplusid"),
-          has_keys("features"), flaky="known flaky: slow at times (25 s to over 60 s on 12 Nov 2026)"),
+          has_keys("features"), flaky="known flaky: slow at times (25 s to over 60 s on 12 Nov 2026, no answer on 16 Nov); the app then reads NHDPlus V2 (below)"),
+        C("Esri Living Atlas (WBD copy)", "the HU12 at a point", arcgis_point("https://services.arcgis.com/P3ePLMYs2RVChkJx/arcgis/rest/services/Watershed_Boundary_Dataset_HUC_12s/FeatureServer/0", "huc12,name"),
+          has_keys("features")),
+        C("USGS water data server, OGC API (WBD copy)", "the HU12 at a point (WBD of January 2025)", "https://api.water.usgs.gov/fabric/pygeoapi/collections/wbd12_20250107/items?" + urlencode(
+            {"f": "json", "bbox": f"{LON - 1e-6:.6f},{LAT - 1e-6:.6f},{LON + 1e-6:.6f},{LAT + 1e-6:.6f}", "properties": "huc12", "skipGeometry": "true"}), has_keys("features"),
+          flaky="slow at times (3 to 13 s on 16 Nov 2026)"),
+        C("USGS water data server, GeoServer (NHDPlus V2)", "flowlines in a 2 km box (WFS)", "https://api.water.usgs.gov/geoserver/wmadata/ows?" + urlencode(
+            {"service": "WFS", "version": "1.0.0", "request": "GetFeature", "outputFormat": "application/json", "typeName": "wmadata:nhdflowline_network", "propertyName": "comid,qa_ma",
+             "BBOX": f"{LON - 0.01:.4f},{LAT - 0.01:.4f},{LON + 0.01:.4f},{LAT + 0.01:.4f}", "maxFeatures": 10}), has_keys("features"),
+          flaky="USGS retires this GeoServer on 31 Dec 2026; the app then reads the same tables from its OGC API (next row)"),
+        C("USGS water data server, OGC API (NHDPlus V2)", "flowlines in a 2 km box", "https://api.water.usgs.gov/fabric/pygeoapi/collections/nhdflowline_network/items?" + urlencode(
+            {"f": "json", "bbox": f"{LON - 0.01:.4f},{LAT - 0.01:.4f},{LON + 0.01:.4f},{LAT + 0.01:.4f}", "properties": "comid,qa_ma", "skipGeometry": "true", "limit": 10}),
+          has_keys("features"), flaky="slow at times (3 to 13 s on 16 Nov 2026)"),
         C("USGS NLDI", "the NHDPlus catchment at a point", "https://api.water.usgs.gov/nldi/linked-data/comid/position?" + urlencode({"coords": f"POINT({LON} {LAT})"}),
           has_keys("features")),
         # weather and climate
@@ -310,19 +322,23 @@ def fail(c, t0, why, notes=()):
 
 
 # Services the app reads as alternatives: it needs one of each group, so one down while another answers is reported, not
-# failed (the app moves to the other by itself: js/wind.js gmRead); the whole group down is a failure.
-ALTERNATIVES = [("gridMET THREDDS (OPeNDAP)", "gridMET file server (Univ. of Idaho)")]
+# failed (the app moves to the other by itself: js/wind.js gmRead, js/basins.js hu12At and netIn); the whole group down
+# is a failure. Each group comes with the note a service down in it gets.
+ALTERNATIVES = [(("gridMET THREDDS (OPeNDAP)", "gridMET file server (Univ. of Idaho)"), "the app reads the other gridMET server meanwhile"),
+                (("USGS WBD (hydro.nationalmap.gov)", "Esri Living Atlas (WBD copy)", "USGS water data server, OGC API (WBD copy)"), "the app reads the watershed from another of these meanwhile"),
+                (("USGS NHDPlus HR (hydro.nationalmap.gov)", "USGS water data server, GeoServer (NHDPlus V2)", "USGS water data server, OGC API (NHDPlus V2)"),
+                 "the app reads the stream network from another of these meanwhile")]
 
 
 def cover(res):
     by = {x["service"]: x for x in res}
-    for group in ALTERNATIVES:
+    for group, why in ALTERNATIVES:
         xs = [by[s] for s in group if s in by]
         if any(x["ok_"] for x in xs):
             for x in xs:
                 if not x["ok_"]:
                     x["covered"] = True
-                    x["note"] = "; ".join(p for p in (x["note"], "the app reads the other gridMET server meanwhile") if p)
+                    x["note"] = "; ".join(p for p in (x["note"], why) if p)
 
 
 def table(res):

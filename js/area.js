@@ -249,18 +249,19 @@ WG.area = (function () {
   }
 
   /* ArcGIS feature query as GeoJSON over an envelope; headerMs: wait for the first answer. When the server caps a
-     reply, later pages are asked for by offset (a server without paging just keeps the first page). */
-  async function arcgis(url, env, fields, { pages = 10, headerMs = 15000, extra = {}, sig } = {}) {
+     reply, later pages are asked for by offset (a server without paging just keeps the first page). once: a request
+     that fails is not asked again (js/util.js), for a source with a copy to turn to (USGS NHD) */
+  async function arcgis(url, env, fields, { pages = 10, headerMs = 15000, extra = {}, sig, once = false } = {}) {
     const base = { geometry: env.join(","), geometryType: "esriGeometryEnvelope", inSR: "4326",
       spatialRel: "esriSpatialRelIntersects", outFields: fields, returnGeometry: "true", outSR: "4326", f: "geojson", ...extra };
     const more = j => j.exceededTransferLimit || (j.properties && j.properties.exceededTransferLimit);
-    let j = await fetchJSON(`${url}?${new URLSearchParams(base)}`, { signal: sig }, 45000, headerMs);
+    let j = await fetchJSON(`${url}?${new URLSearchParams(base)}`, { signal: sig, once }, 45000, headerMs);
     if (j.error) throw new Error(j.error.message || "query failed");
     const out = [...(j.features || [])]; // out.truncated: not every feature was read
     let k = 1;
     for (; k < pages && more(j) && j.features && j.features.length; k++) {
       try {
-        j = await fetchJSON(`${url}?${new URLSearchParams({ ...base, resultOffset: String(out.length) })}`, { signal: sig }, 45000, headerMs);
+        j = await fetchJSON(`${url}?${new URLSearchParams({ ...base, resultOffset: String(out.length) })}`, { signal: sig, once }, 45000, headerMs);
       } catch (e) { if (sig && sig.aborted) throw e; out.truncated = true; break; }
       if (j.error) { out.truncated = true; break; }
       for (const f of j.features || []) out.push(f);
@@ -284,7 +285,9 @@ WG.area = (function () {
     const opt = quick ? { pages: 1, headerMs: 3000 } : {};
     // water: USGS NHD, with Esri's NHD copy asked at the same time because NHD can take several seconds to wake up.
     // A click check takes whichever answers first; an area analysis waits up to 5 s for NHD before using the copy.
-    const nhd = arcgis(NHD, env, "FTYPE,GNIS_NAME", { ...opt, headerMs: quick ? 3000 : 5000 }).then(f => ({ ok: true, f, src: "USGS NHD" }));
+    // NHD is asked once: its 502s, each asked again twice, counted 3 failures a click against hydro.nationalmap.gov,
+    // which js/util.js then left alone for 2 minutes, the Basin tab's watershed with it.
+    const nhd = arcgis(NHD, env, "FTYPE,GNIS_NAME", { ...opt, headerMs: quick ? 3000 : 5000, once: true }).then(f => ({ ok: true, f, src: "USGS NHD" }));
     const copy = arcgis(NHD_COPY, env, "FTYPE,NAME", opt).then(f => ({ ok: true, f, src: "Esri copy of NHD" }));
     nhd.catch(() => {});
     copy.catch(() => {}); // the request not used may still fail later
@@ -325,7 +328,7 @@ WG.area = (function () {
       },
       water: async env => {
         let f;
-        try { f = await arcgis(NHD, env, "FTYPE,GNIS_NAME", { ...opt, headerMs: 8000 }); srcs.add("USGS NHD"); } catch (e) {
+        try { f = await arcgis(NHD, env, "FTYPE,GNIS_NAME", { ...opt, headerMs: 8000, once: true }); srcs.add("USGS NHD"); } catch (e) {
           if (run.stop) throw e;
           f = await arcgis(NHD_COPY, env, "FTYPE,NAME", opt);
           srcs.add("Esri copy of NHD");
