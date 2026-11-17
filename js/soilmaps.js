@@ -863,8 +863,13 @@ WG.soilmaps = (function () {
           `Mean annual runoff of ${huTxt} (a model)${v2 ? `, from ${V2_MAP}. V2 is coarser, so the value can differ from HR's; HR is asked first again later.` : ""}`]
           : v2 ? ["—", aside("backup map"), `No runoff for ${huTxt} on ${V2_MAP}: its catchments drain to sinks such as playas, or to no stream it maps. HR may give a value; it is asked first again later.`] : null));
         const q = val(rowOf(B, /^Storm runoff Q/)), pr = rowOf(B, /^Storm depth/), p = val(pr), yr = pr && /(\d+)-yr/.exec(pr[3] || ""), qp = val(rowOf(B, /^Point: storm runoff Q/));
-        // the whole HU12's average, as the Basin card's "The whole HU12" line; the card gives the point's own first
-        later("basin", "storm", () => (ok(q) && ok(p) ? [UN.html("precip", q), aside(`${fmt((100 * q) / p, 0)}% of the rain`), `${fmt((100 * q) / p, 0)}% of the rain of the ${yr ? `${yr[1]}-year` : "chosen"}, 24-hour storm (${UN.fmt("precip", p)}) runs off, on average over the whole HU12${ok(qp) ? `; at the point itself ${UN.fmt("precip", qp)} (${fmt((100 * qp) / p, 0)}%)` : ""}`] : null));
+        const pc = v => `${fmt((100 * v) / p, 0)}% of the rain`, storm = `the ${yr ? `${yr[1]}-year` : "chosen"}, 24-hour storm (${UN.fmt("precip", p)})`;
+        /* the point's own runoff, the Basin card's first value ("Here, at the point"): it needs only the point's land cover
+           cell and the survey's soil there, so it is given while the HU12's soils cannot be read; the whole HU12's average
+           in the tip, and as the value where the point has no curve number (open water) */
+        later("basin", "storm", () => (!ok(p) ? null
+          : ok(qp) ? [UN.html("precip", qp), aside(pc(qp)), `At the point: ${pc(qp)} of ${storm} runs off (its land cover and soil group, TR-55 curve number)${ok(q) ? `; over the whole HU12 ${UN.fmt("precip", q)} (${fmt((100 * q) / p, 0)}%)` : ""}`]
+          : ok(q) && told("basin", "storm") === "done" ? [UN.html("precip", q), aside(pc(q)), `${pc(q)} of ${storm} runs off, on average over the whole HU12 (no curve number at the point itself)`] : null));
         const R = T.basin_rusle, a = val(rowOf(B, /^Soil loss A, all land/, "t/ac/yr")) ?? val(rowOf(R, /^A, all land/)), tf = val(rowOf(B, /^T$/, "t/ac/yr")) ?? val(rowOf(R, /^T, tolerable/)), okT = ok(tf) && tf > 0;
         // soil loss: EPA EnviroAtlas's for the HUC12 (js/basins.js eaAt), against the survey's T once the Basin tab has read it
         const ev = EA && !(EA instanceof Error) && ok(EA.a) ? EA.a : null;

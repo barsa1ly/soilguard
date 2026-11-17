@@ -727,7 +727,8 @@ WG.basins = (function () {
       ["HU12 mean annual runoff", t2(N.huMm), "mm/yr", `${netName(N)} EROM step A (model), stream catchments`], ["Area draining to streams", t2(N.runKm2), "km2", ""], ["Area draining to sinks", t2(N.sinkKm2), "km2", ""],
       [`Point's ${netName(N)} catchment`, N.here ? String(N.here.id) : "", "", ""], ["Point's catchment runoff", N.here ? t2(N.here.mm) : null, "mm/yr", "EROM step A (model)"], ["Point's reach mean annual flow", N.here && N.here.a ? t2(num(N.here.a.qama)) : null, "cfs", "EROM step A (model)"],
       ["Point's drainage area", N.here && N.here.a ? t2(num(N.here.a.totdasqkm)) : null, "km2", `${netName(N)} VAA`], ["Upstream catchments in the HU12 (with the point's)", N.here ? N.upN + 1 : null, "", "hydroseq"], ["Upstream area in the HU12", N.here ? t2(N.upKm2) : null, "km2", ""]);
-    if (C && ok(M.P)) rows.push(["Storm depth, 24 h", t2(M.P), "mm", storm() !== "own" ? `NOAA Atlas 14, ${storm()}-yr` : "typed"], ["Curve number (area-weighted)", t2(C.cn), "", "TR-55, NLCD 2021 x SSURGO groups"], ["Storm runoff Q", t2(C.q), "mm", "per land cover and soil group, averaged"],
+    if (ok(M.P)) rows.push(["Storm depth, 24 h", t2(M.P), "mm", storm() !== "own" ? `NOAA Atlas 14, ${storm()}-yr` : "typed"]);
+    if (C && ok(M.P)) rows.push(["Curve number (area-weighted)", t2(C.cn), "", "TR-55, NLCD 2021 x SSURGO groups"], ["Storm runoff Q", t2(C.q), "mm", "per land cover and soil group, averaged"],
       ["Storm runoff volume", t2((C.q / 1000) * C.land * 1e6), "m3", ""], ...HSG.map(g => [`Hydrologic group ${g}`, t2(100 * C.h[g]), "% of area with a group", "SSURGO"]));
     const E = M.ea;
     if (E && !(E instanceof Error) && ok(E.a)) rows.push(["Soil loss, EPA EnviroAtlas", t2(E.a), "t/ac/yr", `EPA EnviroAtlas RUSLE (2011 land cover, P = 1), its HUC12 ${E.huc}${E.huc !== hu.huc12 ? ", not the HU12 above" : ""}`],
@@ -741,13 +742,15 @@ WG.basins = (function () {
     T().basin = { title: `Basin: runoff and soil loss, HU12 ${hu.huc12} ${hu.name}`, header: ["Quantity", "Value", "Unit", "Source"], rows };
   }
   /* how the reads behind the Overview's three basin rows ended, told to js/soilmaps.js (say) as each read ends: yearly
-     runoff needs the network; design-storm runoff the soils, the land cover and the Atlas 14 depths; soil loss the
-     soils, the land cover and the R factor. A row whose read failed shows it, with a reload button, as its card does. */
+     runoff needs the network; design-storm runoff the point's own reads (its land cover cell, the survey's soil at the
+     point, the Atlas 14 depths), as the row gives the point's runoff, the Basin card's first value; the HU12's soils and
+     land cover only where the point has none (open water); soil loss the soils, the land cover and the R factor. A row
+     whose read failed shows it, with a reload button, as its card does. */
   function tell() {
     if (!M || !M.live()) return;
-    const e = M.err.soils || M.err.lc, both = !!(M.soils && M.lc);
+    const e = M.err.soils || M.err.lc, both = !!(M.soils && M.lc), pt = pointCn(), ptWait = M.a14 === undefined || pt.lc === undefined || !pt.s;
     M.say("basin", M.err.net || (M.net ? "done" : undefined));
-    M.say("storm", e || (both && M.a14 !== undefined ? "done" : undefined));
+    M.say("storm", ok(pt.q) ? "done" : ptWait ? undefined : e || (both ? "done" : undefined));
     M.say("loss", e || (both && M.R !== undefined ? "done" : undefined));
   }
   const r0 = v => (ok(v) ? Math.round(v) : "");
@@ -803,7 +806,7 @@ WG.basins = (function () {
       eaP.then(v => { if (!mine()) return; M.ea = v; drawRusle(); }, e => { console.warn("basins: EnviroAtlas", e); if (mine()) { M.ea = e instanceof Error ? e : new Error(String(e)); drawRusle(); } }),
       perHu(hu.huc12, "net", () => netIn(hu, () => { if (mine()) { M.v2try = true; drawNet(); } })).then(hr => { if (!mine()) return; M.net = network(hr, hu, lat, lon); overlay(M); drawNet(); summary(); T().basin_catchments = catTable(); tell(); }, fail("net", drawNet)),
       perHu(hu.huc12, "soils", () => soilsIn(hu)).then(done("soils", both), fail("soils", both)),
-      M.ptLc ? null : Wx.once("bs:lcpt", () => WG.landcover.classAt(lat, lon)).then(code => { if (mine()) { M.ptLc = { code, src: "MRLC WCS" }; drawCn(); } }, e => { console.warn("basins point land cover", e); if (mine()) { M.ptLc = e instanceof Error ? e : new Error(String(e)); drawCn(); } }),
+      M.ptLc ? null : Wx.once("bs:lcpt", () => WG.landcover.classAt(lat, lon)).then(code => { if (mine()) { M.ptLc = { code, src: "MRLC WCS" }; drawCn(); tell(); } }, e => { console.warn("basins point land cover", e); if (mine()) { M.ptLc = e instanceof Error ? e : new Error(String(e)); drawCn(); tell(); } }),
       WG.landcover.boundaryShares(hu.polys).then(done("lc", both), fail("lc", both)),
       (A14.has(st) ? a14File(st) : Promise.resolve(null)).then(j => { if (!mine()) return; M.a14 = j ? a14At(j, lat, lon) : null; const c = box("bsCnCtl"); if (c) c.innerHTML = stormControls(); drawCn(); tell(); }),
       Wx.once("bs:comid", () => comidAt(lat, lon)).then(c => rAt(st, c).then(r => ({ c, r })), e => ({ e })).then(async ({ c, r, e }) => {
@@ -856,7 +859,7 @@ WG.basins = (function () {
   }
   // a list answers on "change", a box on "input" (each fires both, which would draw the results twice)
   ["input", "change"].forEach(ev => document.addEventListener(ev, e => { const t = e.target.closest && e.target.closest("[data-bs]"); if (t && (ev === "change") === (t.tagName === "SELECT")) onInput(t); }));
-  document.addEventListener("wg-soil", () => { if (M && M.live() && M.tok === WG.state.token) drawCn(); });
+  document.addEventListener("wg-soil", () => { if (M && M.live() && M.tok === WG.state.token) { drawCn(); tell(); } });
   document.addEventListener("click", async e => {
     const b = e.target.closest && e.target.closest("[data-bs-act]");
     if (!b || !M || !M.live()) return;
