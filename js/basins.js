@@ -327,22 +327,53 @@ WG.basins = (function () {
   }
 
   /* the soil survey inside the HU12: SDA intersects the polygon with the map units on its server and sums each map unit's
-     area there; every component with its share, hydrologic group, slope, USLE slope length, T and surface-horizon K */
-  async function soilsIn(hu) {
-    const rows = await SM.sda(`WITH a AS (SELECT geometry::STGeomFromText('${wkt(hu.rings)}', 4326).MakeValid() AS g),
+     area there; every component with its share, hydrologic group, slope, USLE slope length, T and surface-horizon K. When
+     SDA does not answer, the same from this app's backup copy of the survey (js/soil.js backupIn): its 30 m cells counted
+     inside the HU12; the list then carries .backup ({ res, cover }) for the cards' caution */
+  async function soilsIn(hu, st) {
+    let rows, backup = null;
+    try {
+      rows = await SM.sda(`WITH a AS (SELECT geometry::STGeomFromText('${wkt(hu.rings)}', 4326).MakeValid() AS g),
       m AS (SELECT P.mukey, SUM(P.mupolygongeo.STIntersection(a.g).STArea()) AS ar FROM mupolygon P, a WHERE P.mupolygongeo.STIntersects(a.g) = 1 GROUP BY P.mukey)
       SELECT m.mukey, m.ar, mu.musym, mu.muname, c.cokey, c.compname, c.comppct_r, c.compkind, c.majcompflag, c.hydgrp, c.slope_r, c.slopelenusle_r, c.tfact, h.kwfact, h.kffact
       FROM m JOIN mapunit mu ON mu.mukey = m.mukey JOIN component c ON c.mukey = m.mukey LEFT JOIN chorizon h ON h.cokey = c.cokey AND h.hzdept_r = 0
       ORDER BY m.ar DESC, c.comppct_r DESC`);
+    } catch (e) {
+      const b = await soilsBackup(hu, st).catch(err => { console.warn("basins: the soil survey's backup copy", err); return undefined; });
+      if (!b) throw e;
+      ({ rows, backup } = b);
+    }
     const tot = [...new Map(rows.map(r => [r.mukey, num(r.ar) || 0])).values()].reduce((s, v) => s + v, 0), seen = new Set();
-    return rows.filter(r => !seen.has(r.cokey) && seen.add(r.cokey)).map(r => {
+    const out = rows.filter(r => !seen.has(r.cokey) && seen.add(r.cokey)).map(r => {
       const kw = num(r.kwfact), kf = num(r.kffact), s = num(r.slope_r), lam = num(r.slopelenusle_r), g = String(r.hydgrp || "").split("/").pop().trim().charAt(0).toUpperCase();
       const L0 = ls(s, lam);
       return { mukey: r.mukey, sym: r.musym, mu: r.muname, muShare: tot ? (num(r.ar) || 0) / tot : 0, name: r.compname, pct: num(r.comppct_r), kind: r.compkind, major: /yes/i.test(r.majcompflag || ""),
         hsg: "ABCD".includes(g) && g ? g : null, hydgrp: r.hydgrp, K: ok(kw) ? kw : kf, kSrc: ok(kw) ? "kw" : ok(kf) ? "kf" : "", slope: s, lam, T: num(r.tfact), ...L0,
         w: (tot ? (num(r.ar) || 0) / tot : 0) * ((num(r.comppct_r) || 0) / 100) };
     });
+    if (backup) out.backup = backup;
+    return out;
   }
+  /* the backup copy's map units in the HU12 as SDA's rows: in the states WBD lists for the HU12 and the point's; each map
+     unit's area = its 30 m cells inside, the surface horizon (top at 0 cm) of each component for K */
+  async function soilsBackup(hu, st) {
+    if (!WG.soil || !WG.soil.backupIn) return undefined;
+    const B = await WG.soil.backupIn(hu.rings, [st, ...(String(hu.states || "").match(/[A-Z]{2}/g) || [])].filter(Boolean));
+    if (!B) return undefined;
+    const rows = [], mapped = B.units.reduce((s, u) => s + u.cells, 0);
+    B.units.filter(u => u.rec).sort((a, b) => b.cells - a.cells).forEach(u => {
+      const r = u.rec, mu = r.mu || {}, ar = u.cells * B.res * B.res;
+      (r.comps || []).forEach(c => {
+        const h = (r.hz || []).find(z => z.cokey === c.cokey && num(z.hzdept_r) === 0);
+        rows.push({ mukey: String(u.mukey), ar, musym: mu.musym, muname: mu.muname, cokey: c.cokey, compname: c.compname, comppct_r: c.comppct_r, compkind: c.compkind, majcompflag: c.majcompflag,
+          hydgrp: c.hydgrp, slope_r: c.slope_r, slopelenusle_r: c.slopelenusle_r, tfact: c.tfact, kwfact: h ? h.kwfact : null, kffact: h ? h.kffact : null });
+      });
+    });
+    return { rows, backup: { res: B.res, cover: B.cells ? Math.min(1, mapped / B.cells) : null } };
+  }
+  /* the caution the cards give when the HU12's soils come from the backup copy: its title in view, why 30 m and what it
+     changes folded under it (a details, as What the letters mean) */
+  const bkNote = S => (S && S.backup ? `<details class="bs-help"><summary>Soils from the backup copy (30 m)</summary><p class="fine">Soil Data Access did not answer, so the HU12's soils come from this app's copy of the USDA soil survey (SSURGO FY2027). Each soil's share of the HU12 is counted on a ${S.backup.res} m grid instead of the survey's own map polygons: NRCS's 10 m soil map was made coarser so that every state's copy fits on free web hosting. Small or narrow map units (strips along streams, for example) can be missed or moved by a cell, so the shares, and the K, LS, T and soil groups averaged from them, can differ a little from Soil Data Access's; each soil's own values are the survey's.${ok(S.backup.cover) && S.backup.cover < 0.98 ? ` The copy maps ${fmt(100 * S.backup.cover, 0)}% of the HU12 (the rest is water, or a state without a copy).` : ""} Soil Data Access is asked first again at the next point.</p></details>` : "");
   /* RUSLE's topographic factor from the survey's slope (%) and USLE slope length (m): McCool et al. (1987) S, and
      L = (λ / 22.13)^m with Wischmeier & Smith's m by slope class */
   function ls(s, lam) {
@@ -627,7 +658,7 @@ WG.basins = (function () {
         header: ["NLCD code", "NLCD class", "Share of land (%)", "Area (km2)", "TR-55 cover type", "CN A", "CN B", "CN C", "CN D", "CN for the HU12's soil groups", `Runoff Q for ${r0(M.P)} mm (mm)`, "RUSLE C", "C literature range"],
         rows: R.cls.map(c => [c.code, c.name, t2(100 * c.share), t2(c.km2), CN_AS[c.code], ...CN[c.code], t2(c.cnMix), t2(c.q), c.code === 82 ? pick.cropC : C_OF[c.code], C_RANGE[c.code]]) };
       return `<p class="bs-hu">Curve number <b>${fmt(R.cn, 1)}</b> (area-weighted, land only) · runoff <b>${P_U(R.q)}</b>, ${fmt((100 * R.q) / M.P, 0)}% of the rain · <b>${fmt(vol / 1233.48, 0)} ac-ft</b> (${fmt(vol / 1e6, 2)} million m³) from ${fmt(R.land, 1)} km² of land</p>
-        <p class="fine">Hydrologic soil groups in the HU12 (SSURGO, by area): ${HSG.map(g => `${g} ${fmt(100 * R.h[g], 0)}%`).join(" · ")}${R.hsgCover < 0.995 ? `; ${fmt(100 * (1 - R.hsgCover), 0)}% of the area has no group (urban land, water, pits) and is left out` : ""}. ${R.water > 0.005 ? `Open water (${fmt(R.water, 1)} km²) is left out. ` : ""}Each land cover's share and curve numbers: <button class="link" data-sm-csv="basin_landcover">land cover table (CSV)</button>; for the states on the map or your own boundary, the <button class="link" data-goto="soilmaps" data-so-go="#smLc">Land cover card in Soil</button>. <button class="link" data-bs-act="nlcd">Land cover on the map</button>.</p>`;
+        <p class="fine">Hydrologic soil groups in the HU12 (SSURGO${M.soils && M.soils.backup ? `, from the backup copy's ${M.soils.backup.res} m grid as Soil Data Access did not answer: see the caution under Soil loss estimation (RUSLE method)` : ""}, by area): ${HSG.map(g => `${g} ${fmt(100 * R.h[g], 0)}%`).join(" · ")}${R.hsgCover < 0.995 ? `; ${fmt(100 * (1 - R.hsgCover), 0)}% of the area has no group (urban land, water, pits) and is left out` : ""}. ${R.water > 0.005 ? `Open water (${fmt(R.water, 1)} km²) is left out. ` : ""}Each land cover's share and curve numbers: <button class="link" data-sm-csv="basin_landcover">land cover table (CSV)</button>; for the states on the map or your own boundary, the <button class="link" data-goto="soilmaps" data-so-go="#smLc">Land cover card in Soil</button>. <button class="link" data-bs-act="nlcd">Land cover on the map</button>.</p>`;
     };
     x.innerHTML = `${here}<h4 class="sm-h">The whole HU12</h4>${hu()}${foot}`;
     summary();
@@ -672,10 +703,10 @@ WG.basins = (function () {
         ["A, all land", t2(A), "t/ac/yr", t2(ok(A) ? A * 2.2417 : null), "t/ha/yr", "R × (K × LS) × C × P, P on cropland only", ""], ["A, cropland", t2(Ac), "t/ac/yr", t2(ok(Ac) ? Ac * 2.2417 : null), "t/ha/yr", `the same with C = ${pick.cropC}`, crop ? `${fmt(crop.km2, 1)} km² of cropland` : "no cropland"],
         ["T, tolerable soil loss", t2(Tf.v), "t/ac/yr", t2(ok(Tf.v) ? Tf.v * 2.2417 : null), "t/ha/yr", "SSURGO tfact, by component and map-unit area", pct(Tf.cover)],
         ["A / T, all land", t2(ok(A) && Tf.v ? A / Tf.v : null), "", "", "", "", ""], ["Soil moved each year, all land", t2(tons), "short tons/yr", t2(ok(tons) ? tons * 0.90718 : null), "t/yr", "A × the HU12's land area", ""]] };
-    T().basin_soils = { title: `Soil components in HU12 ${M.hu.huc12} (SSURGO by SDA)`, header: ["Map unit", "Map unit name", "Map unit share of HU12 (%)", "Component", "Component (%)", "Kind", "Major", "Hydrologic group", "K", "K source", "Slope (%)", "USLE slope length (m)", "L", "S", "LS", "T (t/ac/yr)", "P on cropland"],
+    T().basin_soils = { title: `Soil components in HU12 ${M.hu.huc12} (${S.backup ? `SSURGO FY2027 from this app's backup copy, shares counted on its ${S.backup.res} m grid, as Soil Data Access did not answer` : "SSURGO by SDA"})`, header: ["Map unit", "Map unit name", "Map unit share of HU12 (%)", "Component", "Component (%)", "Kind", "Major", "Hydrologic group", "K", "K source", "Slope (%)", "USLE slope length (m)", "L", "S", "LS", "T (t/ac/yr)", "P on cropland"],
       rows: S.map(c => [c.sym, c.mu, t2(100 * c.muShare), c.name, c.pct, c.kind || "", c.major ? "yes" : "no", c.hydgrp || "", c.K, c.kSrc === "kw" ? "Kw" : c.kSrc === "kf" ? "Kf" : "", c.slope, c.lam, t2(c.L), t2(c.S), t2(c.LS), c.T, t2(pOf(c))]) };
     const noR = !ok(R) ? `<p class="fine"><b>No R factor${ok(M.comid) ? ` for NHDPlus V2 COMID ${M.comid}` : ""}</b>${M.err.R ? ` (USGS NLDI: ${esc(String(M.err.R.message || M.err.R).trim())})` : ""}: type one above (US units; the USGS RF7100 grid or NRCS AH 703's isoerodent maps).</p>` : "";
-    return { A, T: Tf.v, html: `${noR}${kv([
+    return { A, T: Tf.v, html: `${noR}${bkNote(S)}${kv([
       ["Soil loss, all land", ta(A), th_(A)],
       crop && ["Cropland", ta(Ac), `${th_(Ac)} · C ${pick.cropC} · P ${ok(P) ? fmt(P, 2) : "—"}`],
       ["Compared with T", ok(A) && Tf.v ? `${fmt(A / Tf.v, A / Tf.v < 1 ? 2 : 1)}${small("× T")}` : "—", ok(Tf.v) ? `T ${fmt(Tf.v, 1)} t/ac/yr (survey)${crop && ok(Ac) ? ` · cropland ${fmt(Ac / Tf.v, 1)} × T` : ""}` : ""],
@@ -733,6 +764,7 @@ WG.basins = (function () {
     const E = M.ea;
     if (E && !(E instanceof Error) && ok(E.a)) rows.push(["Soil loss, EPA EnviroAtlas", t2(E.a), "t/ac/yr", `EPA EnviroAtlas RUSLE (2011 land cover, P = 1), its HUC12 ${E.huc}${E.huc !== hu.huc12 ? ", not the HU12 above" : ""}`],
       ["Soil loss, EPA EnviroAtlas", t2(E.mgha), "t/ha/yr", ""]);
+    if (M.soils && M.soils.backup) rows.push(["HU12 soils", `backup copy, ${M.soils.backup.res} m grid`, "", "SSURGO FY2027, this app's copy, as Soil Data Access did not answer"]);
     if (R) rows.push(["NHDPlus V2 COMID", ok(M.comid) ? String(M.comid) : "", "", "USGS NLDI"], ["R", t2(R.R), "hundreds ft-tonf-in/(ac-h-yr)", M.Rsrc || "USGS RF7100"], ["K", t2(R.K.v), "US", "SSURGO"], ["LS", t2(R.Ls.v), "", "SSURGO slope, slope length"], ["C", t2(R.C), "", "NLCD 2021"], ["P", t2(R.P), "", `${pName()}, cropland only`],
       ["Soil loss A, all land", t2(R.A), "t/ac/yr", "RUSLE, gross sheet and rill"], ["Soil loss A, all land", t2(ok(R.A) ? R.A * 2.2417 : null), "t/ha/yr", ""], ["Soil loss A, cropland", t2(R.Ac), "t/ac/yr", `C = ${pick.cropC}`], ["T", t2(R.Tf.v), "t/ac/yr", "SSURGO tfact"]);
     const pt = pointCn();
@@ -805,7 +837,8 @@ WG.basins = (function () {
     const jobs = [
       eaP.then(v => { if (!mine()) return; M.ea = v; drawRusle(); }, e => { console.warn("basins: EnviroAtlas", e); if (mine()) { M.ea = e instanceof Error ? e : new Error(String(e)); drawRusle(); } }),
       perHu(hu.huc12, "net", () => netIn(hu, () => { if (mine()) { M.v2try = true; drawNet(); } })).then(hr => { if (!mine()) return; M.net = network(hr, hu, lat, lon); overlay(M); drawNet(); summary(); T().basin_catchments = catTable(); tell(); }, fail("net", drawNet)),
-      perHu(hu.huc12, "soils", () => soilsIn(hu)).then(done("soils", both), fail("soils", both)),
+      // an answer from the backup copy is not kept for the HU12: Soil Data Access is asked first again at the next point
+      perHu(hu.huc12, "soils", () => soilsIn(hu, st)).then(v => { if (v && v.backup) delete (huSeen.get(hu.huc12) || {}).soils; return v; }).then(done("soils", both), fail("soils", both)),
       M.ptLc ? null : Wx.once("bs:lcpt", () => WG.landcover.classAt(lat, lon)).then(code => { if (mine()) { M.ptLc = { code, src: "MRLC WCS" }; drawCn(); tell(); } }, e => { console.warn("basins point land cover", e); if (mine()) { M.ptLc = e instanceof Error ? e : new Error(String(e)); drawCn(); tell(); } }),
       WG.landcover.boundaryShares(hu.polys).then(done("lc", both), fail("lc", both)),
       (A14.has(st) ? a14File(st) : Promise.resolve(null)).then(j => { if (!mine()) return; M.a14 = j ? a14At(j, lat, lon) : null; const c = box("bsCnCtl"); if (c) c.innerHTML = stormControls(); drawCn(); tell(); }),

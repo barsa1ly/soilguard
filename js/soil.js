@@ -120,6 +120,70 @@ WG.soil = (function () {
     const rec = shard[String(mk)];
     return rec ? { ...rec, backup: true } : null;
   }
+  /* The backup copy inside a boundary (rings of [lon, lat], even-odd over all rings, so holes count): the copy's 30 m
+     cells whose centres lie inside, counted by map unit in each given state that has a copy, with each map unit's record
+     as tablesAt gives it. For the Basin tab's HU12 (js/basins.js soilsIn) when Soil Data Access does not answer.
+     -> { units: [{ st, mukey, cells, rec }], res, cells: the boundary's area in cells }, or undefined where no copy covers
+     the states */
+  async function backupIn(rings, states) {
+    const sts = [...new Set(states)].filter(s => BACKUP_REPO[s]);
+    if (!sts.length || typeof DecompressionStream === "undefined" || !WG.landcover || !WG.landcover.albers) return undefined;
+    const R = rings.map(r => r.map(([lo, la]) => WG.landcover.albers(lo, la)));
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, area = 0;
+    R.forEach(r => r.forEach(([x, y], i) => { const [xb, yb] = r[(i + 1) % r.length]; area += x * yb - xb * y; x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }));
+    const units = [];
+    let res = 30;
+    for (const st of sts) {
+      const base = `${BACKUP}${BACKUP_REPO[st]}/${st}/`, ix = await bkGet(`${base}r30/index.json`, u => fetchJSON(u, {}, 20000)), T = ix.tile, have = new Set(ix.have);
+      res = ix.res;
+      // the boundary's box in this grid's cells, and the tiles over it copied into one block
+      const c0 = Math.max(0, Math.floor((x0 - ix.x0) / res)), c1 = Math.min(ix.cols * T - 1, Math.floor((x1 - ix.x0) / res));
+      const k0 = Math.max(0, Math.floor((ix.y0 - y1) / res)), k1 = Math.min(ix.rows * T - 1, Math.floor((ix.y0 - y0) / res));
+      if (c1 < c0 || k1 < k0) continue;
+      const w = c1 - c0 + 1, h = k1 - k0 + 1, data = new Uint16Array(w * h), jobs = [];
+      for (let tr = Math.floor(k0 / T); tr <= Math.floor(k1 / T); tr++) {
+        for (let tc = Math.floor(c0 / T); tc <= Math.floor(c1 / T); tc++) {
+          if (!have.has(`${tr}/${tc}`)) continue;
+          jobs.push(bkGet(`${base}r30/${tr}/${tc}.bin`, async u => new Uint16Array(await bkBin(u, "deflate"))).then(t => {
+            const ca = Math.max(c0, tc * T), cb = Math.min(c1, tc * T + T - 1);
+            for (let k = Math.max(k0, tr * T), kb = Math.min(k1, tr * T + T - 1); k <= kb; k++) data.set(t.subarray((k - tr * T) * T + ca - tc * T, (k - tr * T) * T + cb - tc * T + 1), (k - k0) * w + ca - c0);
+          }));
+        }
+      }
+      const [mk] = await Promise.all([bkGet(`${base}mukeys.json`, u => fetchJSON(u, {}, 20000)), ...jobs]);
+      // the cells by scanline, as js/landcover.js count(): row k's centre is at top - (k + .5) res
+      const left = ix.x0 + c0 * res, top = ix.y0 - k0 * res, xs = Array.from({ length: h }, () => []), n = new Map();
+      for (const r of R) {
+        for (let i = 0, m = r.length; i < m; i++) {
+          const [xa, ya] = r[i], [xb, yb] = r[(i + 1) % m];
+          if (ya === yb) continue;
+          const lo = Math.max(0, Math.ceil((top - Math.max(ya, yb)) / res - 0.5)), hi = Math.min(h - 1, Math.floor((top - Math.min(ya, yb)) / res - 0.5));
+          for (let k = lo; k <= hi; k++) { const y = top - (k + 0.5) * res; if ((ya <= y) !== (yb <= y)) xs[k].push(xa + ((y - ya) * (xb - xa)) / (yb - ya)); }
+        }
+      }
+      xs.forEach((row, k) => {
+        row.sort((a, b) => a - b);
+        for (let i = 0; i + 1 < row.length; i += 2) {
+          for (let c = Math.max(0, Math.ceil((row[i] - left) / res - 0.5)), cb = Math.min(w - 1, Math.floor((row[i + 1] - left) / res - 0.5)); c <= cb; c++) {
+            const v = data[k * w + c];
+            if (v) n.set(v, (n.get(v) || 0) + 1);
+          }
+        }
+      });
+      n.forEach((cells, i) => { if (mk[i]) units.push({ st, base, mukey: mk[i], cells }); });
+    }
+    // each map unit's record from its file (mukey % 1024), eight files at a time
+    const files = new Map();
+    units.forEach(u => { const k = `${u.base}mu/${u.mukey % 1024}.json.gz`; if (!files.has(k)) files.set(k, []); files.get(k).push(u); });
+    const keys = [...files.keys()];
+    for (let i = 0; i < keys.length; i += 8) {
+      await Promise.all(keys.slice(i, i + 8).map(async k => {
+        const s = await bkGet(k, async u => JSON.parse(new TextDecoder().decode(await bkBin(u, "gzip"))));
+        files.get(k).forEach(u => { u.rec = s[String(u.mukey)] || null; });
+      }));
+    }
+    return { units: units.map(({ base, ...u }) => u), res, cells: Math.abs(area) / 2 / (res * res) };
+  }
   async function tablesAt(lat, lon) {
     let j;
     try { j = await answerAt(lat, lon); }
@@ -531,6 +595,6 @@ WG.soil = (function () {
     return { ef: Math.min(1, Math.max(0, ef)), scf, inRange };
   }
 
-  return { fetchSoil, tablesAt, sda, parseTexture, textureClass, refineCode, wegFromSurface, saxtonRawls, profileLayers, siteParams, surfaceIndex,
+  return { fetchSoil, tablesAt, backupIn, sda, parseTexture, textureClass, refineCode, wegFromSurface, saxtonRawls, profileLayers, siteParams, surfaceIndex,
     rweq, toCSV, slu1, TEX, FAMILY, WEG_I, WEG_INFO, wegInfo, curveNumber, DRAIN, pickCounty, symOf };
 })();
