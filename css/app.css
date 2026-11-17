@@ -552,9 +552,6 @@ label.btn { display: inline-flex; align-items: center; cursor: pointer; }
 .month-strip .m.mid i { background: var(--amber); }
 .month-strip .m.hi { color: var(--red); }
 
-.ov-soil { display: grid; gap: 4px; }
-.ov-soil .nm { font-size: 15px; font-weight: 650; }
-.ov-soil .sub { color: var(--muted); font-size: 12.5px; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .chip { font-size: 12px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 13px; padding: 3px 9px; }
 .chip.warn { background: #fdecea; border-color: #f2c4bf; color: #8f231b; }
@@ -1607,16 +1604,17 @@ table.weg-table .here { font-size: 11px; }
   #dataBtn { display: none; } /* the DOWNLOAD tab just below does the same; its room keeps the place's lines from wrapping */
   .legend h5 button { min-height: 44px; min-width: 44px; margin: -14px -10px -14px 0; }
 }
-/* the Wind erosion Overview's land card (index.html .ov-land): the dominant soil, then the current practice, each under
-   a small heading with its link */
-.ov-sub { margin: 0 0 2px; }
-.ov-sub h4 { margin: 0; font-size: 11.5px; font-weight: 650; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
-.ov-land .ov-soil + .ov-sub { margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--line); }
+/* the Wind erosion Overview's At a glance (index.html #ovGlance): the Soil maps Overview's table; its months row carries
+   the Wind tab's 12-month strip, small, and its values and notes (a land use, a long texture name) may take two lines */
+.so-gv .ov-ms { flex: 1 1 100%; gap: 2px; }
+.so-gv .ov-ms .m { font-size: 10px; line-height: 1.1; }
+.so-gv .ov-ms .m i { height: 12px; margin-bottom: 2px; border-radius: 3px; }
+#ovGlance .so-gval, #ovGlance .so-gm { white-space: normal; }
 /* the Details card, last on an Overview (js/app.js detailsCard): a plain card, apart from the coloured control plan above */
 .card.cta.dt-card { background: var(--surface); box-shadow: var(--shadow); }
-/* phones: 44 px tap targets for the land card's links and the Details card's button */
+/* phones: a 44 px tap target for the Details card's button */
 @media (max-width: 767px) {
-  .ov-land .link, .dt-card .btn { min-height: 44px; }
+  .dt-card .btn { min-height: 44px; }
 }
 
 /* ---------- keyboard focus and reduced motion ---------- */

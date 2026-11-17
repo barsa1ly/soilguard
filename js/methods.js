@@ -137,8 +137,8 @@ WG.methods = (function () {
     ["FAO wind-erosion climatic index", "C<sub>FAO</sub> = (1/100) Σ<sub>months</sub> u₂³ · (ET₀ − P)/ET₀ · d", "u₂: mean monthly wind at 2 m (m/s); d: days. Months with P &gt; ET₀ count as 0.", "Wind tab", "FAO 1979", USED],
     ["Sand drift potential", "DP = Σ V² (V − Vₜ) / N,&nbsp; Vₜ = 12 kt", "V: hourly wind at 10 m (knots); N: all hours. RDP: length of the vector sum; RDD: its direction. DP &lt; 200 low, 200–399 intermediate, ≥ 400 high (VU).",
       "Wind tab", "Fryberger &amp; Dean 1979", USED],
-    ["Prevailing erosive direction", "sector k with max 0.5 E<sub>k−1</sub> + E<sub>k</sub> + 0.5 E<sub>k+1</sub>", "16 sectors of 22.5°. Barrier and strip rows run at that direction + 90°. None when no hour reaches the threshold.", "Wind tab, Practices", "App", USED],
-    ["Resultant transport direction", "atan2( Σ E sin(θ + 180°), Σ E cos(θ + 180°) )", "θ: direction the wind blows from.", "Wind tab", "App", USED],
+    ["Prevailing erosive direction", "sector k with max 0.5 E<sub>k−1</sub> + E<sub>k</sub> + 0.5 E<sub>k+1</sub>", "16 sectors of 22.5°. Barrier and strip rows run at that direction + 90°. None when no hour reaches the threshold.", "Overview, Wind tab, Practices", "App", USED],
+    ["Resultant transport direction", "atan2( Σ E sin(θ + 180°), Σ E cos(θ + 180°) )", "θ: direction the wind blows from.", "Overview, Wind tab", "App", USED],
     ["Trend", "b = Σ(x − x̄)(y − ȳ) / Σ(x − x̄)²,&nbsp; t = b / SE(b)", "y: erosive hours per year; x: year. Significant if |t| &gt; t<sub>0.975, n−2</sub>.", "Wind tab", "Ordinary least squares", USED],
     ["Calibration to the nearest station (quantile mapping)", "u′ = F<sup>−1</sup><sub>obs, m</sub>( F<sub>model, m</sub>(u) )",
       "F: empirical distribution for calendar month m, 101 quantiles 0.1–99.9%, trained on the model at the station's cell vs the station, same hours; beyond the ends u′ = u · q<sub>obs</sub>/q<sub>model</sub>. Applied to the model at the site. Gusts mapped the same way, always to an airport. A mesonet tower, when switched on, trains on its latest complete years only.",
@@ -170,7 +170,7 @@ WG.methods = (function () {
     ["Stage-1 evaporation limit", "U = 4 for sand and loamy sand · 8 for clay, silty clay and sandy clay · 6 for the other classes", "U in mm, by the surface texture class.", "DSSAT, APSIM files", "HC27 generic soils (Han et al. 2019); CSM default 6", USED],
     ["Drainage rate", "very poorly 0.01 · poorly 0.05 · somewhat poorly 0.25 · moderately well 0.40 · well 0.60 · somewhat excessively 0.75 · excessively 0.85", "Fraction per day.", ".SOL export", "DSSAT convention", USED],
     ["Runoff curve number", "A 61/64/68/71 · B 73/76/80/83 · C 81/84/88/91 · D 84/87/91/94", "By hydrologic group (second letter of dual groups) and slope 0–2, 2–5, 5–10, &gt; 10%.", ".SOL export", "NRCS NEH Part 630; DSSAT", USED],
-    ["Slope and aspect from the DEM", "slope = 100 √(g<sub>x</sub>² + g<sub>y</sub>²),&nbsp; g<sub>x</sub> = (z<sub>E</sub> − z<sub>W</sub>) / 2Δx,&nbsp; aspect = atan2(−g<sub>x</sub>, −g<sub>y</sub>)", "Elevations 100 m N, S, E and W of the point.", "Header, soil profile", "Finite differences", USED],
+    ["Slope and aspect from the DEM", "slope = 100 √(g<sub>x</sub>² + g<sub>y</sub>²),&nbsp; g<sub>x</sub> = (z<sub>E</sub> − z<sub>W</sub>) / 2Δx,&nbsp; aspect = atan2(−g<sub>x</sub>, −g<sub>y</sub>)", "Elevations 100 m N, S, E and W of the point.", "Header, Overview, soil profile", "Finite differences", USED],
   ];
 
   /* model files from the data sheet: [quantity, equation, terms, used for, source, status] */

@@ -151,7 +151,9 @@ WG.weather = (function () {
 
   /* ---------- the panel's tabs ---------- */
   const cache = new Map(); // token:what -> promise, so a tab shown again reads nothing twice for the same location
-  const once = (what, f) => { const k = `${WG.state.token}:${what}`; if (!cache.has(k)) cache.set(k, f().catch(e => { cache.delete(k); throw e; })); return cache.get(k); };
+  const once = (what, f) => { const k = `${WG.state.token}:${what}`; if (!cache.has(k)) { const p = f().catch(e => { if (cache.get(k) === p) cache.delete(k); throw e; }); cache.set(k, p); } return cache.get(k); };
+  // a read to be asked again at its next once(): the Soil moisture tab's ⟳ (js/soilmoisture.js fresh)
+  const forget = what => { cache.delete(`${WG.state.token}:${what}`); };
   const DL = `<svg viewBox="0 0 24 24"><path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/></svg>`;
   function card(id, title, height, fig) {
     const f = { own: true, title, file: fig.file, x: fig.x, sub: fig.sub, table: fig.table };
@@ -867,5 +869,5 @@ WG.weather = (function () {
     if (live()) sayDone(tab, el);
   }
 
-  return { THEMES, layers, legend, fresh, timeLabel, show, RENDER, card, once, siteLine, wait, failed, ok, usdmDate, usdmLast, usdmAt, usdmHere, usdmRange, usdmTable, usdmSrc, usdmMapUrl, DCLASS, USDM_CREDIT, USDM_DAY0, LA_CREDIT };
+  return { THEMES, layers, legend, fresh, timeLabel, show, RENDER, card, once, forget, siteLine, wait, failed, ok, usdmDate, usdmLast, usdmAt, usdmHere, usdmRange, usdmTable, usdmSrc, usdmMapUrl, DCLASS, USDM_CREDIT, USDM_DAY0, LA_CREDIT };
 })();

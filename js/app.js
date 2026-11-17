@@ -668,7 +668,7 @@
     const yr = d => new Date(d * 864e5).getUTCFullYear(), jan1 = y => Date.UTC(y, 0, 1) / 864e5, A = () => WG.landcover.annual, lay = soilLayers.nlcd.layer;
     let ys = null;
     const drawn = () => new Promise(res => { if (!lay._map) { res(); return; } const fin = () => { clearTimeout(t); lay.off("load", fin); res(); }, t = setTimeout(fin, 8000); lay.on("load", fin); });
-    // a year chosen, or the layer on or off: the Wind erosion Overview's land cover line follows (renderOvPractice)
+    // a year chosen, or the layer on or off: the Wind erosion Overview's Current land use row follows while no land use is chosen (renderOvPractice)
     const put = y => { const p = drawn(); A().set(y, lay); lcKey(); document.dispatchEvent(new Event("wg-mapdate")); return p; };
     lay.on("add remove", () => document.dispatchEvent(new Event("wg-mapdate")));
     (WG.tsAdapters = WG.tsAdapters || []).push({ key: "nlcd", item: soilLayers.nlcd, label: "Land cover (Annual NLCD)", start: jan1(1985), step: "year",
@@ -1227,7 +1227,7 @@
     Wd.setZone(here.tz); // days and months in the state's standard time
     window.WE_STATIONS = here.stations; // the airports within about 150 km of the state, for the calibration
     state.token++;
-    state.soil = null; state.edits = null; state.wind = null; state.windRaw = null; state.windSets = null; state.windStation = null; state.windAirport = null; state.windTower = null; state.windSkipped = []; state.nlcd = null; state.elev = null;
+    state.soil = null; state.edits = null; state.wind = null; state.windRaw = null; state.windSets = null; state.windStation = null; state.windAirport = null; state.windTower = null; state.windSkipped = []; state.nlcd = null; state.elev = null; state.elevErr = null;
     state.place = opts.place || null;
     WG.say(state.place ? `Loading ${state.place}` : "Loading this location");
 
@@ -1257,6 +1257,7 @@
     $("#siteName").textContent = state.place || "Selected location";
     $("#siteCoords").textContent = `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
     $("#siteElev").textContent = state.elev ? `${UN.fmt("elev", state.elev.z)} elev · ${fmt(state.elev.slope, 1)}% slope (${state.elev.src.replace(/ \d+ m.*$/, "")})` : "";
+    ovSlope();
   }
 
   function resetPanels() {
@@ -1272,7 +1273,8 @@
       .map(k => `<span class="k">${k}</span><span class="v"><span class="skeleton" style="width:80px"></span></span><span class="n"></span>`).join("");
     renderWegTable(null);
     monthStrips(U.MONTHS.map(m => `<div class="m"><i class="skeleton" style="height:28px"></i>${m[0]}</div>`).join(""), "Red: 10% or more of the year's erosive wind energy, in dry conditions.");
-    $("#ovSoil").innerHTML = '<span class="skeleton"></span><span class="skeleton" style="width:60%"></span>';
+    Object.keys(OVG).forEach(k => ovRow(k));
+    $("#ovWindSrc").textContent = "";
     $("#soilSummary").innerHTML = '<span class="skeleton"></span><span class="skeleton" style="width:60%"></span>';
     $("#soilDerived").innerHTML = "";
     $("#soilSrcTag").textContent = "SSURGO"; // the Soil maps theme's Soil tab is drawn anew for the new location (js/soilmaps.js)
@@ -1290,6 +1292,7 @@
     ["#moistTag", "#roseBox", "#roseNote", "#trendTag", "#trendNote", "#calKv", "#windIdx", "#windSource"].forEach(s => { $(s).textContent = ""; });
     $("#calCard").hidden = true;
     Ch.clear(WIND_CHARTS);
+    ovWind(); // the Overview's wind rows and their heading wait for the new series too
   }
 
   async function analyzeSite(tok) {
@@ -1302,7 +1305,7 @@
         const use = x => { if (x && live()) { state.elev = x; renderHeader(); renderSoilDetail(); } };
         use(e);
         later.then(use); // USGS 3DEP (1 m), when it answers after the Copernicus DEM was shown
-      }).catch(() => {}),
+      }).catch(e => { if (live()) { state.elevErr = e; ovSlope(); } }), // both DEMs failed: kept for the slope row
       fetchNLCD(lat, lon).then(n => { if (live()) { state.nlcd = n; renderStats(); renderPractices(); } }).catch(() => { if (live()) { state.nlcd = { code: null }; renderStats(); renderPractices(); } }),
       // "wg-soil": the survey read (or its failure) and the surface edits, for the Soil maps theme's tabs (js/soilmaps.js, js/basins.js)
       S.fetchSoil(lat, lon).then(s => {
@@ -1668,10 +1671,15 @@
     riskSaid = k;
     WG.say(text);
   }
+  /* the dominant soil, the first of the risk card's facts: the soil its class is worked out for, as the share of its map
+     unit (the map unit's name gives its slope); null before the survey is in */
+  function soilFact() {
+    const s = state.soil, d = s && !s.error ? s.dominant : null;
+    return d ? ["Dominant soil", d.compname, `${d.comppct_r === null || d.comppct_r === undefined ? "" : `${fmt(d.comppct_r, 0)}% of `}${s.mapunit.muname || `map unit ${s.mapunit.musym || s.mukey}`}`] : null;
+  }
   function renderRisk() {
     const rc = $("#riskCard");
     const r = riskModel();
-    const w = state.wind;
     if (!r) {
       const surf = currentSurface();
       const noGroup = !!surf && (surf.wei === null || surf.wei === undefined);
@@ -1680,7 +1688,7 @@
         Ch.gauge($("#riskGauge"), null);
         renderRiskScale(0);
         $("#riskUnit").textContent = "";
-        $("#riskFacts").innerHTML = "";
+        $("#riskFacts").innerHTML = facts([soilFact()]);
         $("#riskLevel").textContent = noGroup ? "No erodibility group" : "Soil data unavailable";
         sayRisk(`Wind erosion: ${noGroup ? "no erodibility group" : "soil data unavailable"}`);
         $("#riskText").textContent = state.soil.error ? `Soil survey request failed (${state.soil.error}). Try again or enter your soil test on the Soil tab.`
@@ -1692,7 +1700,7 @@
         Ch.gauge($("#riskGauge"), null);
         renderRiskScale(0);
         $("#riskUnit").textContent = "";
-        $("#riskFacts").innerHTML = "";
+        $("#riskFacts").innerHTML = facts([soilFact()]);
         $("#riskLevel").textContent = state.wind ? "Climatic factor unavailable" : "Analyzing…";
         if (state.wind) sayRisk("Wind erosion: climatic factor unavailable");
         $("#riskText").textContent = state.wind ? (state.wind.annualized === false ? "NRCS gives no climatic factor C for this map unit, and estimating one needs a period that covers all 12 months."
@@ -1711,7 +1719,6 @@
     sayRisk(notSoil ? `Wind erosion: not rated, ${dom.compname || "not soil"}` : `Wind erosion risk here: ${lv}, ${E}`);
     Ch.gauge($("#riskGauge"), notSoil ? null : r.frac);
     renderRiskScale(notSoil ? 0 : r.level);
-    const peak = w && !w.error && w.riskMonths.length ? monthsText(w.riskMonths) : null;
     const est = !r.cSrc.startsWith("NRCS"), ap = est ? "≈ " : "", tDp = UN.sym("soilLoss") === "t/ha/yr" ? 1 : 0;
     /* the answer first: one plain sentence under the level and its scale, then the factors under plain names; the
        formulas wait under the card's More */
@@ -1725,12 +1732,12 @@
       `Wind factor C: ${r.cSrc}; Garden City, KS = 100, windier and drier = more. It is the wind erosion equation's climatic factor, not RUSLE's cover factor C.`,
     ].filter(Boolean);
     $("#riskFacts").innerHTML = `<p class="risk-plain">${esc(plain)}</p>${facts([
+      soilFact(),
       ["Soil erodibility (I)", UN.fmt("soilLoss", r.I, 0), "how easily this soil blows when bare"],
       ["Wind factor (C)", `${ap}${fmtC(r.C)}`, `${est ? "estimated" : "NRCS"} · windier and drier places score higher`],
       r.T ? ["Tolerable loss (T)", UN.fmt("soilLoss", r.T, tDp), "the yearly loss this soil can take (NRCS)"] : null,
       ["Erodibility group (WEG)", r.weg || "—", "1 most erodible, 8 least"],
       r.EI ? ["Erodibility index", `${ap}${fmt(r.EI, 1)}`, r.EI >= 8 ? "highly erodible land (NRCS)" : "not highly erodible land (NRCS)"] : null,
-      peak ? ["Highest-risk months", peak, ""] : null,
     ])}<div class="risk-more" id="riskMore"${riskMoreOpen ? "" : " hidden"}>${more.map(t => `<p>${esc(t)}</p>`).join("")}</div><button type="button" class="risk-more-tg" aria-controls="riskMore" aria-expanded="${riskMoreOpen}">${riskMoreOpen ? "Less ▴" : "More ▾"}</button>`;
     $("#riskUnit").textContent = "";
     $("#riskText").textContent = "";
@@ -1768,20 +1775,70 @@
         ["Land cover", state.nlcd ? state.nlcd.name || "n/a" : "…", state.nlcd ? { nlcd: "NLCD 2021, 30 m", io: "Sentinel-2, 10 m" }[state.nlcd.src] || "" : ""],
       ]);
       // the months are ranked by their share of the year only when the period covers all 12
-      monthStrips(w.months.map((m, i) => `<div class="m ${m.level}" title="${U.MONTHS_LONG[i]}: ${m.valid ? `${(m.share * 100).toFixed(0)}% of ${w.annualized ? "annual" : "the covered months'"} risk` : "no data in this period"}"><i></i>${U.MONTHS[i][0]}</div>`).join(""),
-        !w.annualized
-          ? `Months covered: ${monthsText(w.months.flatMap((m, i) => (m.valid ? [i] : [])))}. Months are ranked (red: 10% or more of the year's erosive wind energy, in dry conditions) only when the period covers all 12.`
-          : w.riskMonths.length ? `High-risk: ${monthsText(w.riskMonths)}. Red: 10% or more of the year's erosive wind energy, in dry conditions.`
-            : "Erosive wind is spread evenly across the year here.");
+      const cells = w.months.map((m, i) => `<div class="m ${m.level}" title="${U.MONTHS_LONG[i]}: ${m.valid ? `${(m.share * 100).toFixed(0)}% of ${w.annualized ? "annual" : "the covered months'"} risk` : "no data in this period"}"><i></i>${U.MONTHS[i][0]}</div>`).join("");
+      const mNote = !w.annualized
+        ? `Months covered: ${monthsText(w.months.flatMap((m, i) => (m.valid ? [i] : [])))}. Months are ranked (red: 10% or more of the year's erosive wind energy, in dry conditions) only when the period covers all 12.`
+        : w.riskMonths.length ? `High-risk: ${monthsText(w.riskMonths)}. Red: 10% or more of the year's erosive wind energy, in dry conditions.`
+          : "Erosive wind is spread evenly across the year here.";
+      monthStrips(cells, mNote);
+      ovWind(w, src, cells, mNote, share);
     } else if (w && w.error) { // the series failed to load, or has no usable month in the period: a message, no numbers
       const what = w.insufficient ? "Not enough wind data" : "Wind history unavailable";
       $("#glance").innerHTML = facts([["Wind history", w.insufficient ? "not enough data" : "unavailable", w.error], ["Land cover", state.nlcd ? state.nlcd.name || "n/a" : "…", ""]]);
       monthStrips(`<p class="fine" style="grid-column:1/-1">${what}: ${esc(w.error)}</p>`, w.insufficient ? "Each month is summarised from 20 or more days of hourly wind." : "");
+      ovWind(w);
     }
   }
-  // the month strip and its note, on the Wind tab and on the Overview
-  function monthStrips(html, note) {
-    [["#monthStrip", "#monthStripNote"], ["#ovMonthStrip", "#ovMonthStripNote"]].forEach(([s, n]) => { $(s).innerHTML = html; $(n).textContent = note; });
+  // the month strip and its note, on the Wind tab (the Overview's months row is ovWind's)
+  function monthStrips(html, note) { $("#monthStrip").innerHTML = html; $("#monthStripNote").textContent = note; }
+
+  /* ---------- the Overview's At a glance table: the wind and the land at this point, as the Soil maps Overview's
+     (js/soilmaps.js: the same classes, and its handlers for the → and a tap on the row). A row a value: its label, the
+     value with a short note (the row's tip says more) and a → that opens its tab at its card. Each row waits on its own
+     read (a skeleton) and is written again only when it changes: the wind rows from renderStats, the land use from
+     renderOvPractice, the texture from the soil (renderSoilSummary, renderSoil), the slope from the elevation
+     (renderHeader). The months row carries the Wind tab's 12-month strip, small; the Wind tab keeps its own. ---------- */
+  const OVG = { // id -> [label, the tab its → opens, its card there]; the slope has no card of its own
+    months: ["Most wind-prone months", "wind", "#monthStrip"], ero: ["Erosive wind", "wind", "#glance"], dir: ["Prevailing erosive wind", "wind", "#roseBox"],
+    mean: ["Mean wind (10 m)", "wind", "#chSpeed"], lu: ["Current land use", "practices", "#luGrid"], tex: ["Surface texture", "soil", "#soilSummary"], slope: ["Slope", "", ""] };
+  // v: undefined while read (a skeleton), else the value's html ("—" when none); side: the note's html; tip: the row's title
+  function ovRow(id, v, side = "", tip = "") {
+    const x = $(`#ov-${id}`), t = OVG[id];
+    if (!x || !t) return;
+    const h = `<th scope="row">${esc(t[0])}</th><td><div class="so-gv">${v === undefined ? '<span class="skeleton"></span>' : `${v}${side}`}</div></td><td class="so-ggo">${v === undefined || !t[1] ? ""
+      : `<button type="button" class="so-go" data-goto="${t[1]}" data-so-go="${t[2]}" title="Details" aria-label="${esc(t[0])}: details"><span aria-hidden="true">→</span></button>`}</td>`;
+    if (x.ovHtml !== h) { x.ovHtml = h; x.innerHTML = h; }
+    if (x.title !== tip) x.title = tip;
+  }
+  // a value with its unit, and a short note (both may take two lines here: css/app.css #ovGlance)
+  const ovVal = (v, unit = "") => `<span class="so-gval">${v}${unit ? ` <small>${esc(unit)}</small>` : ""}</span>`;
+  const ovSide = text => (text ? `<span class="so-gm">${esc(text)}</span>` : "");
+  const OV_WIND = ["months", "ero", "dir", "mean"];
+  /* the wind rows: w the analysis (undefined while read, or with an error), src the wind data's [source, kind] (the
+     group's heading gives it with the period), cells and note the 12-month strip's, share the erosive hours' % of the year */
+  function ovWind(w, src, cells, note, share) {
+    const gd = $("#ovWindSrc");
+    if (gd) gd.textContent = w && !w.error ? ` · ${w.period ? w.period.label : periodLabel()}${src ? `, ${src[0]}` : ""}` : "";
+    if (!w) return OV_WIND.forEach(k => ovRow(k));
+    if (w.error) {
+      const why = w.insufficient ? "not enough wind data" : "wind history unavailable";
+      return OV_WIND.forEach(k => ovRow(k, "—", k === "months" ? ovSide(why) : "", `${why.charAt(0).toUpperCase()}${why.slice(1)}: ${w.error}`)); // the reason once, on the first row
+    }
+    ovRow("months", `<div class="month-strip ov-ms" aria-hidden="true">${cells}</div>`,
+      ovSide(!w.annualized ? "not ranked: part of the year" : w.riskMonths.length ? `High-risk: ${monthsText(w.riskMonths)}` : "spread evenly over the year"), note);
+    ovRow("ero", ovVal(fmt(w.eroHours, 0), w.annualized ? "h/yr" : "h"), ovSide(w.annualized ? `${fmt(share, share < 10 ? 1 : 0)}% of hours ≥ ${thrTxt(w.thr)}` : `months covered, ≥ ${thrTxt(w.thr)}`),
+      `Hours ${w.annualized ? "a year " : ""}with the wind at 10 m at or above the erosive threshold, ${thrTxt(w.thr)}, the speed that starts bare soil moving (set on the Wind tab)`);
+    if (w.prevailing === null) ovRow("dir", "—", ovSide(`no wind ≥ ${thrTxt(w.thr)}`), `No wind at or above ${thrTxt(w.thr)} in this period`);
+    else ovRow("dir", ovVal(esc(U.compass(w.prevailing)), `from ${fmt(w.prevailing, 0)}°`), w.rdd === null ? "" : ovSide(`soil moves toward ${U.compass(w.rdd)}`),
+      `The direction the erosive wind blows from most, weighted by its strength; a barrier works best across it${w.rdd === null ? "" : `. Blown soil moves toward ${U.compass(w.rdd)} (resultant drift direction)`}`);
+    ovRow("mean", `<span class="so-gval">${UN.html("wind", w.meanSpeed, UN.sym("wind") === "km/h" ? 0 : 1)}</span>`, "", `The mean wind speed at 10 m, ${w.period ? w.period.label : periodLabel()}`);
+  }
+  // the slope row: the DEM's slope at the point (renderHeader), or why there is none (state.elevErr, kept for the location)
+  function ovSlope(err = state.elevErr) {
+    const e = state.elev, flat = e && e.slope < 0.05; // level ground (0.0 %) faces no way
+    if (e) ovRow("slope", ovVal(fmt(e.slope, 1), "%"), ovSide(flat ? "level" : `facing ${U.compass(e.aspect)}`), `${e.src.replace(/ \d+ m$/, "")}: the ground's slope over about 200 m around the point (five elevations about 100 m apart)${flat ? "" : ", and the way it faces"}`);
+    else if (err) ovRow("slope", "—", ovSide("could not be read"), `The elevation could not be read: ${err.message || err}`);
+    else ovRow("slope");
   }
 
   /* rows [label, value, note] as aligned columns (null rows are skipped) */
@@ -2124,7 +2181,11 @@
   function renderSoil() {
     const s = state.soil;
     // no survey soil: the same message on the erosion Overview and Wind erosion › Soil; the Soil tab's is renderSoilDetail's
-    const say = msg => { ["#soilSummary", "#ovSoil"].forEach(id => { $(id).innerHTML = `<p class="fine">${msg}</p>`; }); renderSoilDetail(); };
+    const say = msg => { // msg: escaped html; the row's tip is its text
+      $("#soilSummary").innerHTML = `<p class="fine">${msg}</p>`;
+      ovRow("tex", "—", ovSide(s && s.error ? "could not be read" : "no survey data"), $("#soilSummary").textContent.trim());
+      renderSoilDetail();
+    };
     if (!s || s.error) return say(s && s.error ? `Soil survey request failed: ${esc(s.error)}` : "No soil survey map unit at this point.");
     const d = s.dominant;
     if (!d) return say(`Map unit ${esc(s.mapunit.muname)} has no component data.`);
@@ -2146,7 +2207,7 @@
     if (!s || s.error || !s.dominant) return;
     const d = s.dominant, surf = currentSurface();
     const tex = surf ? (surf.texName || S.TEX[surf.texCode] || surf.texCode) : "—";
-    // the erodibility chips, here and on the erosion Overview's soil card; the profile's own are in the Soil maps theme's Soil tab
+    // the erodibility chips of Wind erosion › Soil; the profile's own are in the Soil maps theme's Soil tab
     const chips = [
       surf && surf.weg ? `<span class="chip ${surf.wei >= 86 ? "warn" : surf.wei <= 38 ? "ok" : ""}" title="Wind Erodibility Group: nine classes from 1 (most erodible) to 8 (not erodible), with 4L between 4 and 5">WEG ${esc(surf.weg)} · I ${esc(UN.fmt("soilLoss", surf.wei, 0))}${surf.calc ? " (from your values)" : ""}</span>` : "",
       tex ? `<span class="chip">Surface: ${esc(tex)}</span>` : "",
@@ -2156,7 +2217,10 @@
       <div class="chips">${chips}</div>
       ${!s.dominantIsTop ? `<p class="fine">Largest component (${esc(s.components[0].compname)}) has no horizon data; showing the largest soil component.</p>` : ""}
       <p class="fine">Horizons, chemistry, classification, site parameters and the map unit's other soils: <button class="link" data-goto="soilmaps" data-goto-theme="soilmaps" data-so-go="#smHz">Soil maps › Soil →</button></p>`;
-    $("#ovSoil").innerHTML = `<div class="nm">${esc(d.compname)} ${tex ? "· " + esc(tex) : ""}</div><div class="sub">${esc(s.mapunit.muname || "")}</div><div class="chips">${chips}</div>`;
+    // the texture is the survey's unless sand, silt or clay was edited (a pH, OM or CaCO₃ edit keeps it)
+    const tx = surf && tex && tex !== "—" ? String(tex) : "", texEd = !!surf && !!s.surface && ["sand", "silt", "clay"].some(k => surf[k] !== s.surface[k]);
+    ovRow("tex", tx ? ovVal(esc(`${tx.charAt(0).toUpperCase()}${tx.slice(1)}`)) : "—", ovSide(!tx ? "no surface data" : texEd ? "from your soil test" : "soil survey, surface layer"),
+      tx ? `${d.compname}'s surface layer${surf.weg ? `: Wind Erodibility Group ${surf.weg}` : ""}${texEd ? ", from the sand, silt and clay you entered" : ""}. The Soil tab takes your own soil test.` : "");
     $("#soilSrcTag").textContent = `SSURGO · ${s.mapunit.areasymbol || ""}`;
     renderWegTable(surf);
     $("#soilSource").innerHTML = `Source: USDA-NRCS Soil Survey Geographic Database (SSURGO) via ${s.backup ? "this app's backup copy of it (FY2027, as Soil Data Access did not answer)" : '<a href="https://sdmdataaccess.nrcs.usda.gov/" target="_blank" rel="noopener">Soil Data Access</a>'}, map unit key ${s.mukey}, ${esc(s.mapunit.areaname || "")}${s.mapunit.saverest ? `, survey dated ${esc(String(s.mapunit.saverest).split(/[ T]/)[0])}` : ""}. Groups for edited values: NRCS National Soil Survey Handbook §618.93; RWEQ factors: Fryrear et al. (1994, 1998). <button class="link" data-methods="m-erod">Equations →</button>`;
@@ -2363,10 +2427,10 @@
       state, surface: currentSurface(), risk: riskModel(), profile: pf, onChange: () => renderPractices(),
     });
   }
-  /* The Overview's current practice, under the dominant soil: the land use chosen on the Practices tab with its answers
-     in a few words (js/practices.js summary), else what the land cover map shows here. Drawn with the Practices tab, so
-     it follows each choice and answer and each new location; while a state's practice guidance loads, it waits. */
-  /* With no land use chosen and the land cover on the map at a year chosen on its time slider (Annual NLCD), the line
+  /* The Overview's Current land use row (At a glance): the land use chosen on the Practices tab with its answers in a
+     few words (js/practices.js summary), else what the land cover map shows here. Drawn with the Practices tab, so it
+     follows each choice and answer and each new location; while a state's practice guidance loads, it waits. */
+  /* With no land use chosen and the land cover on the map at a year chosen on its time slider (Annual NLCD), the row
      gives that year's class here instead (js/landcover.js annual.at), read once a location and year; it follows the
      year and the layer ("wg-mapdate") once they rest. */
   let ovLast = null;
@@ -2388,17 +2452,17 @@
     if (!state.site) return;
     ovLast = [pf, none];
     const s = none ? null : WG.practices.summary(state, pf), lc = state.nlcd, ly = s ? null : lcYear();
-    const lcName = c => (WG.landcover.CLASSES.find(z => z[0] === c) || [])[1];
-    $("#ovPracGo").textContent = s ? "Change →" : "Choose land use →";
-    $("#ovPrac").innerHTML = none && pf === undefined ? '<span class="skeleton"></span>'
-      : s ? `<div class="nm">${esc(s.name)}</div><div class="sub">${s.answers.map(esc).join(" · ")}</div>`
-        : ly ? (ly.v === undefined ? '<span class="skeleton"></span><span class="skeleton" style="width:60%"></span>'
-          : ly.v instanceof Error ? `<div class="sub">Land cover map of ${ly.y}</div><div class="nm">Could not be read here</div>`
-          : ly.v === null ? `<div class="sub">Land cover map of ${ly.y}</div><div class="nm">No class at this point</div>`
-          : `<div class="sub">Land cover map of ${ly.y} shows</div><div class="nm" style="text-transform:uppercase">${esc(lcName(ly.v) || "")}</div>`)
-        : !lc ? '<span class="skeleton"></span><span class="skeleton" style="width:60%"></span>'
-        : lc.name ? `<div class="sub">Land cover map shows</div><div class="nm" style="text-transform:uppercase">${esc(lc.name)}</div>`
-        : `<div class="sub">Land cover map</div><div class="nm">${lc.src ? "No class at this point" : "Could not be read here"}</div>`;
+    const lcName = c => (WG.landcover.CLASSES.find(z => z[0] === c) || [])[1], go = "Choose your land use on the Practices tab (→) for a control plan.";
+    if (none && pf === undefined) ovRow("lu");
+    else if (s) ovRow("lu", ovVal(esc(s.name)), ovSide(s.answers.join(" · ") || "your choice"), `Chosen on the Practices tab: ${[s.name, ...s.answers].join(" · ")}`);
+    else if (ly) {
+      if (ly.v === undefined) ovRow("lu");
+      else if (ly.v instanceof Error) ovRow("lu", "—", ovSide(`land cover of ${ly.y}: could not be read`), `The land cover map of ${ly.y} could not be read here: ${ly.v.message}`);
+      else if (ly.v === null) ovRow("lu", "—", ovSide(`land cover of ${ly.y}: no class here`), go);
+      else ovRow("lu", ovVal(esc(lcName(ly.v) || "")), ovSide(`land cover map of ${ly.y}`), `What the land cover map of ${ly.y} (Annual NLCD) shows at this point. ${go}`);
+    } else if (!lc) ovRow("lu");
+    else if (lc.name) ovRow("lu", ovVal(esc(lc.name)), ovSide(`land cover map, ${lc.src === "io" ? "Sentinel-2" : "NLCD 2021"}`), `What the land cover map shows at this point. ${go}`);
+    else ovRow("lu", "—", ovSide(lc.src ? "no land cover class here" : "land cover could not be read"), go);
   }
 
   /* A change in the units table redraws every view that shows numbers. */

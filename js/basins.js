@@ -822,7 +822,7 @@ WG.basins = (function () {
     M = { el, live, tok: WG.state.token, hu, lat, lon, st, net: null, soils: null, lc: null, R: undefined, Rv: null, a14: undefined, own: null, err: {}, nldi: null, v2try: hyOff("hr"), ea: undefined, say: say || (() => {}) };
     const me = M, mine = () => M === me && live();
     el.innerHTML = `<div class="card">${SM.head("Basin: watershed and mean annual runoff", "basin", `HU12 ${hu.huc12}`)}
-        <p class="fine" style="margin-top:0"><b>${esc(hu.name)}</b>, HUC ${esc(hu.huc12)}: ${fmt(hu.km2, 1)} km² (${UN.fmt("area", hu.km2 * 1e6)}), flows to HU12 ${esc(hu.tohuc || "—")}. The small watershed (HU12) that holds the point, from the USGS Watershed Boundary Dataset${HU_WHY[hu.src] || ""}, drawn on the map with its catchments while this theme is on.</p>
+        <p class="fine" data-nofold style="margin-top:0"><b>${esc(hu.name)}</b>, HUC ${esc(hu.huc12)}: ${fmt(hu.km2, 1)} km² (${UN.fmt("area", hu.km2 * 1e6)}), flows to HU12 ${esc(hu.tohuc || "—")}. The small watershed (HU12) that holds the point, from the USGS Watershed Boundary Dataset${HU_WHY[hu.src] || ""}, drawn on the map with its catchments while this theme is on.</p>
         <div id="bsNet"></div></div>
       <div class="card">${SM.head("Design-storm runoff (curve number)", "basin_landcover", "TR-55")}<div id="bsCnCtl"></div><div id="bsCnOut"></div></div>
       <div class="card">${SM.head("Soil loss", "", "EPA EnviroAtlas")}<div id="bsEaOut"></div></div>

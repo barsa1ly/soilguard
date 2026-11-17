@@ -1,11 +1,12 @@
 /* The long notes of the panel's cards, folded as the legend's are (js/app.js foldNotes): the paragraphs that say how a
    value is worked out, where it comes from and what it leaves out wait under one small "More" button at the lower right of each
-   card and Overview tile, so each card shows its results first. A note is folded when it is a p.fine of 200 characters or more inside a
+   card and Overview tile, so each card shows its results first. A note is folded when it is a p.fine of 140 characters or more (MIN) inside a
    .card, with no button, box, choice or colour key in it (used, or read with a chart), not a card's lead into another
    tab (.cta), not in the Download tab (its notes go with its choices) and not marked data-nofold. Never folded either:
    a note that says something is being read, has failed, is missing here or is outside the states (KEEP below), and the
    few results written as notes (RESULT); a Reload button keeps its note in view by the rule above. Values, tables,
-   charts and warning boxes are not p.fine and stay as they are. A card's open or shut is its own and is kept on
+   charts and warning boxes are not p.fine and stay as they are. A facts row's note or an input's hint over 70 characters
+   folds too, but only inside a .card or a tile (.stat), which holds the button; elsewhere (the risk card) it stays in view. A card's open or shut is its own and is kept on
    this device under its tab and heading, so a card drawn again (a new point, other units, a Reload) keeps it. The cards
    are drawn by many files at any time: a MutationObserver on the panel's body looks again before the next frame, so a
    long note does not show first and then jump away. Loaded after app.js. */
@@ -58,8 +59,9 @@
       }
       add(s.querySelector(":scope > .tf-more"));
     });
-    // 3 long notes of the facts rows
+    // 3 long notes of the facts rows, in a card or a tile, which holds the More button (the risk card's stay in view)
     body.querySelectorAll(".facts .n").forEach(n => {
+      if (!scopeOf(n)) { n.classList.remove("tf-nh", "fold-show"); return; }
       const v = n.previousElementSibling, t = (n.textContent || "").trim();
       if (!n.classList.contains("tf-nh")) {
         if (!v || !v.classList.contains("v") || t.length <= 70 || TFAIL.test(t) || KEEP.test(t) || n.querySelector(".wx-retry, button")) return;
@@ -67,8 +69,9 @@
       }
       add(n);
     });
-    // 4 long hints under inputs
+    // 4 long hints under inputs, in a card or a tile as above
     body.querySelectorAll(".form-grid label > small, .bs-ctl label > small").forEach(sm => {
+      if (!scopeOf(sm)) { sm.classList.remove("tf-hint", "fold-show"); return; }
       const t = (sm.textContent || "").trim();
       if (!sm.classList.contains("tf-hint")) {
         if (t.length <= 70 || sm.matches(".bs-warn, [data-bs-cnote], [data-bs-pnote], [role=alert], [data-nofold]") || KEEP.test(t)) return;

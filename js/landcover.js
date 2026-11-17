@@ -158,7 +158,7 @@ WG.landcover = (function () {
     if (y === null) { delete layer.wmsParams.time; layer.setUrl(layer._lc21.url, true); layer.setParams({ layers: layer._lc21.layers }); }
     else { layer.setUrl(ANNUAL, true); layer.setParams({ layers: ANNUAL_LAYER, time: `${y}-01-01` }); }
   }
-  /* the class at a point in a year of Annual NLCD (the Wind erosion Overview's land cover line while a year is on the map):
+  /* the class at a point in a year of Annual NLCD (the Wind erosion Overview's Current land use row while a year is on the map and no land use is chosen):
      GeoServer's GetFeatureInfo on a box of ±0.0001° (3 x 3 pixels), the pixel under the point; its PALETTE_INDEX is the
      NLCD class code, null for none */
   async function annualAt(lat, lon, y) {

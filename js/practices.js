@@ -99,7 +99,7 @@ WG.practices = (function () {
       { id: "btype", label: "What is there?", opts: [["dune", "Active dunes / blowout"], ["sheet", "Bare sand sheet or old field"], ["caliche", "Caliche, gravel or rock"]] },
     ],
   };
-  /* An answer in a few plain words for the Overview's current practice (summary below), where the option's own text
+  /* An answer in a few plain words for the Overview's Current land use row (summary below), where the option's own text
      does not stand alone; any other answer is its option's text without a closing bracket ("Irrigated (pivot/drip)"
      reads "Irrigated"). "" leaves the answer out. */
   const SAY = {

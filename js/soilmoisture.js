@@ -218,10 +218,11 @@ WG.soilmoisture = (function () {
      its POST preflight is refused); the cell is asked in EPSG:5070 metres (js/landcover.js albers). The service answers
      at most 200 days a request, and takes up to half a minute for that many: a longer span is asked in parts at once. */
   const CASMA = "https://nassgeo.csiss.gmu.edu/smap_service?service=WPS&version=1.0.0&request=Execute&identifier=GetProfileByDate&DataInputs=", CASMA_MAX = 200;
-  async function smapAt(lat, lon, d0, d1) {
+  // one layer, p "TOP" (0-5 cm) or "SUB" (the root zone, 0-100 cm): [[day, m³/m³]]
+  async function smapLayer(lat, lon, p, d0, d1) {
     if (!WG.landcover || !WG.landcover.albers) throw new Error("the Albers projection (js/landcover.js) is not loaded");
     const [x, y] = WG.landcover.albers(lon, lat), dot = d => iso(d).replace(/-/g, ".");
-    const one = async (p, a, b) => {
+    const one = async (a, b) => {
       const t = await fetchText(`${CASMA}productId=SMAP-9KM-DAILY-${p};x=${Math.round(x)};y=${Math.round(y)};startDate=${dot(a)};endDate=${dot(b)}`, 60000);
       const u = (/https?:\/\/[^<\s"]+\.csv/.exec(t) || [])[0];
       if (!u) throw new Error((/<ows:ExceptionText>([^<]+)/.exec(t) || [])[1] || (/LiteralData[^>]*>([^<]{3,120})</.exec(t) || [])[1] || "Crop-CASMA gave no series");
@@ -230,8 +231,11 @@ WG.soilmoisture = (function () {
     };
     const parts = [];
     for (let a = d0; a <= d1; a += CASMA_MAX) parts.push([a, Math.min(a + CASMA_MAX - 1, d1)]);
-    const layer = p => Promise.all(parts.map(([a, b]) => one(p, a, b))).then(r => r.flat());
-    const [top, sub] = await Promise.allSettled([layer("TOP"), layer("SUB")]);
+    return (await Promise.all(parts.map(([a, b]) => one(a, b)))).flat();
+  }
+  // both layers: null for a layer that could not be read; throws when neither could
+  async function smapAt(lat, lon, d0, d1) {
+    const [top, sub] = await Promise.allSettled(["TOP", "SUB"].map(p => smapLayer(lat, lon, p, d0, d1)));
     if (top.status === "rejected" && sub.status === "rejected") throw top.reason;
     return { top: top.value || null, sub: sub.value || null };
   }
@@ -321,11 +325,18 @@ WG.soilmoisture = (function () {
     } catch (e) { console.warn("USCRN hourly", stem, e); } // the daily means still show
     return { daily, latest };
   }
-  /* the readings of a list of stations (from nearest): each station's {daily: depth -> [[day, m³/m³]], latest: depth -> {v, time}} or an Error */
+  /* the readings of a list of stations (from nearest): each station's {daily: depth -> [[day, m³/m³]], latest: depth ->
+     {v, time}} or an Error. Each part is kept for the location under its own key (Wx.once: the AWDB stations' one
+     request, each USCRN station's files), so a part that failed is asked again at the next read and the rest is not;
+     stKeys names those keys, which the Soil moisture by depth card's ⟳ forgets. A USCRN station whose record begins
+     after the period has no file for it: no readings, not an error. */
+  const awKey = (ids, d0, d1) => `smm:aw:${ids.join(",")}:${d0}:${d1}`, crnKey = (s, d0, d1) => `smm:crn:${s.id}:${d0}:${d1}`;
+  const stKeys = (list, d0, d1) => { const ids = list.filter(s => s.src === "awdb").map(s => s.id); return [...(ids.length ? [awKey(ids, d0, d1)] : []), ...list.filter(s => s.src === "crn").map(s => crnKey(s, d0, d1))]; };
   async function readStations(list, d0, d1) {
-    const aw = list.filter(s => s.src === "awdb"), got = new Map();
-    const pA = aw.length ? awdbRead(aw.map(s => s.id), d0, d1).then(m => m.forEach((v, k) => got.set(k, v)), e => aw.forEach(s => got.set(s.id, e))) : null;
-    await Promise.all([pA, ...list.filter(s => s.src === "crn").map(s => crnRead(s.stem, d0, d1).then(v => got.set(s.id, v), e => got.set(s.id, e)))]);
+    const aw = list.filter(s => s.src === "awdb"), ids = aw.map(s => s.id), got = new Map(), y1 = new Date(d1 * 864e5).getUTCFullYear();
+    const pA = ids.length ? Wx.once(awKey(ids, d0, d1), () => awdbRead(ids, d0, d1)).then(m => m.forEach((v, k) => got.set(k, v)), e => aw.forEach(s => got.set(s.id, e))) : null;
+    await Promise.all([pA, ...list.filter(s => s.src === "crn").map(s => (parseInt(s.since, 10) > y1 ? (got.set(s.id, { daily: new Map(), latest: new Map() }), null)
+      : Wx.once(crnKey(s, d0, d1), () => crnRead(s.stem, d0, d1)).then(v => got.set(s.id, v), e => got.set(s.id, e))))]);
     return list.map(s => got.get(s.id) || new Error("no answer"));
   }
 
@@ -437,6 +448,28 @@ WG.soilmoisture = (function () {
   const rng = st => (st ? `${v2(st.lo)}–${v2(st.hi)}` : "—");
   const { head, grid, th, showBtn } = SM;
   const W8 = Wx.wait;
+  /* reload: a part that could not be read gets the round button of the other tabs (js/weather.js: the tab is drawn
+     again and only what failed is asked again); the Soil moisture by depth card, once today's values are in, a ⟳ that
+     reads them again */
+  const RELOAD = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/></svg>`;
+  const RETRY = `<button type="button" class="wx-retry" data-wx-retry title="Reload this part" aria-label="Reload this part">${RELOAD}</button>`;
+  /* a part of the tab written only when its html changes, so a control in it keeps the focus while other reads come in.
+     When the part does change, the control that had the focus (a reload button, a year chip's ✕, a table's summary, a
+     station's name, a CSV or figure download, a choice, the More button) gets it back: the one at the same place among
+     those of its kind in the part; a <details> left open stays open. */
+  const KINDS = ["[data-wx-retry]", "[data-smm-drop]", "summary", "[data-smm-pt]", "[data-sm-csv]", "[data-fig]", "[data-smm-c]", ".fold-tg"];
+  function put(box, html) {
+    if (!box || box.smmHtml === html) return;
+    const a = document.activeElement, s = a && a !== box && box.contains(a) ? KINDS.find(x => a.matches(x)) : null, k = s ? [...box.querySelectorAll(s)].indexOf(a) : -1;
+    const open = [...box.querySelectorAll("details")].map(d => d.open);
+    box.smmHtml = html;
+    box.innerHTML = html;
+    box.querySelectorAll("details").forEach((d, i) => { if (open[i]) d.open = true; });
+    if (k < 0) return;
+    if (s === ".fold-tg" && WG.fold) WG.fold.scan(); // js/fold.js puts the card's More button back now, not a frame later
+    const b = box.querySelectorAll(s)[k];
+    if (b) b.focus({ preventScroll: true });
+  }
   const nwmSeen = new Map(); // NWM reads by point
   let redrawNow = null; // the tab's drawing on show, for the National Water Model's button
   /* the tab's tables join the Soil maps theme's set (js/soilmaps.js), filed under this tab by their "moisture" ids, for
@@ -467,49 +500,82 @@ WG.soilmoisture = (function () {
     scales: { x: xAx, y: { title: { display: true, text: "m³/m³" }, ticks: { callback: v => (+v).toFixed(2) } } } });
   const line = (label, data, color, o = {}) => ({ type: "line", label, data: data.map(r3), borderColor: color, backgroundColor: color, pointRadius: o.points ? 2.5 : 0, pointHoverRadius: 3.5, borderWidth: o.w || 2, spanGaps: false, ...(o.dash ? { borderDash: o.dash } : {}) });
 
-  /* today at the point, for the Overview's two rows: the models' 0-7 and 28-100 cm today (ECMWF IFS; ERA5-Land's latest
-     day when IFS gives none) and the nearest station's latest reading at its shallowest sensor. The same reads as the
-     tab's default view (IFS's last 31 days, ERA5-Land's year, the stations' last 30 days): either one reads them once.
-     lat, lon: the picked point. -> {model: {top, root, date, src} | null, station: {...} | null} */
-  const SUM = new Map();
+  /* today at the point, for the Overview's two rows and the Soil moisture tab's Soil moisture by depth card: the models'
+     0-7 and 28-100 cm today (ECMWF IFS; ERA5-Land's latest day when IFS gives none) and the nearest station's latest
+     reading at its shallowest sensor. The same reads as the tab's default view (IFS's last 31 days, ERA5-Land's year, the
+     stations' last 30 days): either one reads them once. lat, lon: the picked point.
+     -> {model, station}, each a value; null where there is none (no model value at the point, no station within 400 km);
+     {none: "recent", n} where the n nearest stations have no reading in the last 30 days; or an Error where it could not
+     be read. A value with .err stands in for a part that failed: ERA5-Land's latest day when ECMWF IFS did not answer, a
+     farther station when a nearer one could not be read. A summary with an Error or an .err is not kept, so the next one
+     (a reload) asks again what failed, and only that: the reads themselves are kept (Wx.once, readStations);
+     dropSummary() forgets one that was read, for the card's ⟳. */
+  const SUM = new Map(), sumKey = (lat, lon) => `${WG.state.token}|${ptKey(lat, lon)}`;
+  const dropSummary = (lat, lon) => { SUM.delete(sumKey(lat, lon)); };
+  // the last summary read here, complete or not: the card shows it while a new one is read (a part asked again, or ⟳)
+  const SUMLAST = new Map(), lastSummary = (lat, lon) => SUMLAST.get(sumKey(lat, lon)) || null;
+  // the first station of the list that could not be read, if it comes before the n-th (the one shown): {e, i}, else null
+  const failedBefore = (got, n) => { const i = got.findIndex(r => r instanceof Error); return i >= 0 && i < n ? { e: got[i], i } : null; };
+  // what a stand-in station carries: the failure, the name of the station that failed, and whether it was the nearest
+  const standIn = (f, list) => (f ? { err: f.e, errName: list[f.i].name, errNearest: f.i === 0 } : {});
+  const partial = x => x instanceof Error || !!(x && x.err);
   function summary(lat, lon) {
-    const k = `${WG.state.token}|${ptKey(lat, lon)}`;
-    if (!SUM.has(k)) SUM.set(k, (async () => {
-      const pt = ptKey(lat, lon), t1 = today();
-      const model = (async () => {
-        try {
-          const F = await Wx.once(`smm:ifs:31:${pt}`, () => ifsAt(lat, lon, 31)), d = lastOf(F);
-          if (d !== null) { const top = at(F.series[0].pts, d), root = at(F.series[2].pts, d); if (ok(top) || ok(root)) return { top: ok(top) ? top : null, root: ok(root) ? root : null, date: iso(d), src: "ECMWF IFS" }; }
-        } catch (e) { console.warn("soil moisture: IFS", e); }
-        const y = ymd(t1)[0];
-        await e5Read(lat, lon, t1 - 10 < eDay(y, 0, 1) ? [y - 1, y] : [y]); // ERA5-Land's latest day is about a week back
-        for (let d = Math.min(t1, utcDay()); d >= t1 - 400; d--) { const top = e5v(0, d), root = e5v(2, d); if (top === undefined) break; if (ok(top) || ok(root)) return { top, root, date: iso(d), src: "ERA5-Land" }; }
-        return null;
-      })();
-      const station = (async () => {
-        const list = await Wx.once(`smm:near:${pt}`, () => nearest(lat, lon, 3));
-        if (!list.length) return null;
-        const got = await Wx.once(`smm:st:${t1 - DAYS + 1}:${t1}:${pt}`, () => readStations(list, t1 - DAYS + 1, t1));
-        for (let n = 0; n < list.length; n++) {
-          const s = list[n], r = got[n];
-          if (r instanceof Error) continue;
-          for (const d of s.depths) {
-            const last = r.latest.get(d.key), p = r.daily.get(d.key) || [], ld = p.length ? p[p.length - 1] : null;
-            if (last || ld) return { name: s.name, net: NET[s.net][0], id: s.src === "crn" ? `WBAN ${s.id}` : s.id.split(":")[0], lat: s.lat, lon: s.lon, km: s.km, dir: s.dir,
-              depth: d.label, depthCm: +d.cm.toFixed(1), depthIn: +(d.cm / 2.54).toFixed(1), value: last ? last.v : ld[1], time: last ? last.time : `${iso(ld[0])}, daily mean` };
-          }
+    const k = sumKey(lat, lon);
+    if (SUM.has(k)) return SUM.get(k);
+    const pt = ptKey(lat, lon), t1 = today();
+    const model = (async () => {
+      let ifsErr = null;
+      try {
+        const F = await Wx.once(`smm:ifs:31:${pt}`, () => ifsAt(lat, lon, 31)), d = lastOf(F);
+        if (d !== null) { const top = at(F.series[0].pts, d), root = at(F.series[2].pts, d); if (ok(top) || ok(root)) return { top: ok(top) ? top : null, root: ok(root) ? root : null, date: iso(d), src: "ECMWF IFS" }; }
+      } catch (e) { console.warn("soil moisture: IFS", e); ifsErr = e; }
+      const y = ymd(t1)[0], ys = t1 - 10 < eDay(y, 0, 1) ? [y - 1, y] : [y];
+      await e5Read(lat, lon, ys); // ERA5-Land's latest day is about a week back
+      for (let d = Math.min(t1, utcDay()); d >= t1 - 400; d--) {
+        const top = e5v(0, d), root = e5v(2, d);
+        if (top === undefined) break;
+        if (ok(top) || ok(root)) return { top, root, date: iso(d), src: "ERA5-Land", ...(ifsErr ? { err: ifsErr } : {}) };
+      }
+      // neither model has a value: an Error when one of them did not answer (a reload may get it), else none here
+      const e5Err = ys.map(x => E5X.get(x)).find(Boolean), msg = e => (e && e.message) || String(e);
+      if (ifsErr || e5Err) throw new Error([ifsErr ? `ECMWF IFS: ${msg(ifsErr)}` : "", e5Err ? `ERA5-Land: ${msg(e5Err)}` : ""].filter(Boolean).join("; "));
+      return null;
+    })();
+    const station = (async () => {
+      const list = await Wx.once(`smm:near:${pt}`, () => nearest(lat, lon, 3));
+      if (!list.length) return null;
+      const got = await readStations(list, t1 - DAYS + 1, t1);
+      for (let n = 0; n < list.length; n++) {
+        const s = list[n], r = got[n];
+        if (r instanceof Error) continue;
+        for (const d of s.depths) {
+          const last = r.latest.get(d.key), p = r.daily.get(d.key) || [], ld = p.length ? p[p.length - 1] : null, f = failedBefore(got, n);
+          if (last || ld) return { name: s.name, net: NET[s.net][0], id: s.src === "crn" ? `WBAN ${s.id}` : s.id.split(":")[0], lat: s.lat, lon: s.lon, km: s.km, dir: s.dir,
+            depth: d.label, depthCm: +d.cm.toFixed(1), depthIn: +(d.cm / 2.54).toFixed(1), value: last ? last.v : ld[1], time: last ? last.time : `${iso(ld[0])}, daily mean`, ...standIn(f, list) };
         }
-        return null;
-      })();
-      const [m, s] = await Promise.allSettled([model, station]);
-      if (s.status === "rejected") console.warn("soil moisture: stations", s.reason);
-      return { model: m.status === "fulfilled" ? m.value : null, station: s.status === "fulfilled" ? s.value : null };
-    })());
-    return SUM.get(k);
+      }
+      // none with a reading: a station that could not be read may have one (readStations asks it again next time)
+      const bad = got.find(r => r instanceof Error);
+      if (bad) throw bad;
+      return { none: "recent", n: list.length };
+    })();
+    const p = Promise.allSettled([model, station]).then(([m, s]) => {
+      const err = x => { console.warn("soil moisture: today", x.reason); return x.reason instanceof Error ? x.reason : new Error(String(x.reason)); };
+      const r = { model: m.status === "fulfilled" ? m.value : err(m), station: s.status === "fulfilled" ? s.value : err(s) };
+      SUMLAST.set(k, r);
+      while (SUMLAST.size > 20) SUMLAST.delete(SUMLAST.keys().next().value);
+      if ((partial(r.model) || partial(r.station)) && SUM.get(k) === p) SUM.delete(k);
+      // each new reading here reaches the Overview's rows too (js/soilmaps.js "wg-smm": it takes lastSummary, no new read)
+      setTimeout(() => document.dispatchEvent(new Event("wg-smm")), 0);
+      return r;
+    });
+    SUM.set(k, p);
+    return p;
   }
   /* the same two rows on a past day d, the day the SMAP map shows (mapDay): ERA5-Land's daily means that day (ECMWF
      IFS's for a day ERA5-Land has not reached yet, within IFS's 92 days), and the nearest station's daily mean that day
-     at its shallowest sensor. Kept per location and day; a part that failed is read again next time. */
+     at its shallowest sensor; the same shapes as summary(), {none: "day", n} where the stations have no reading that day.
+     Kept per location and day; a part that failed (or stood in for one, .err) is read again next time. */
   const SUMD = new Map();
   function summaryOn(lat, lon, d) {
     const pt = ptKey(lat, lon), k = `${WG.state.token}|${pt}|${d}`;
@@ -524,25 +590,27 @@ WG.soilmoisture = (function () {
     const station = (async () => {
       const list = await Wx.once(`smm:near:${pt}`, () => nearest(lat, lon, 3));
       if (!list.length) return null;
-      const got = await Wx.once(`smm:st:${d}:${d}:${pt}`, () => readStations(list, d, d));
-      let read = false;
+      const got = await readStations(list, d, d);
       for (let n = 0; n < list.length; n++) {
         const s = list[n], r = got[n];
         if (r instanceof Error) continue;
-        read = true;
         for (const x of s.depths) {
-          const v = at(r.daily.get(x.key) || [], d);
+          const v = at(r.daily.get(x.key) || [], d), f = failedBefore(got, n);
           if (ok(v)) return { name: s.name, net: NET[s.net][0], id: s.src === "crn" ? `WBAN ${s.id}` : s.id.split(":")[0], lat: s.lat, lon: s.lon, km: s.km, dir: s.dir,
-            depth: x.label, depthCm: +x.cm.toFixed(1), depthIn: +(x.cm / 2.54).toFixed(1), value: v, time: `${iso(d)}, daily mean` };
+            depth: x.label, depthCm: +x.cm.toFixed(1), depthIn: +(x.cm / 2.54).toFixed(1), value: v, time: `${iso(d)}, daily mean`, ...standIn(f, list) };
         }
       }
-      if (!read) throw got.find(r => r instanceof Error) || new Error("the stations could not be read");
-      return { none: "day" }; // stations near, none with a reading that day
+      // none with a reading that day: a station that could not be read may have one (readStations asks it again next time)
+      const bad = got.find(r => r instanceof Error);
+      if (bad) throw bad;
+      return { none: "day", n: list.length }; // stations near, none with a reading that day
     })();
     const p = Promise.allSettled([model, station]).then(([m, s]) => {
-      [m, s].forEach(x => { if (x.status === "rejected") { console.warn("soil moisture on a past day", x.reason); if (SUMD.get(k) === p) SUMD.delete(k); } });
+      // a part that failed, or stood in for one that did, is asked again next time
+      [m, s].forEach(x => { if (x.status === "rejected") console.warn("soil moisture on a past day", x.reason); if ((x.status === "rejected" || partial(x.value)) && SUMD.get(k) === p) SUMD.delete(k); });
       if (m.status === "rejected" && s.status === "rejected") throw m.reason;
-      return { model: m.status === "fulfilled" ? m.value : null, station: s.status === "fulfilled" ? s.value : s.reason instanceof Error ? s.reason : new Error(String(s.reason)) };
+      const err = x => (x.reason instanceof Error ? x.reason : new Error(String(x.reason)));
+      return { model: m.status === "fulfilled" ? m.value : err(m), station: s.status === "fulfilled" ? s.value : err(s) };
     });
     SUMD.set(k, p);
     while (SUMD.size > 60) SUMD.delete(SUMD.keys().next().value);
@@ -586,9 +654,10 @@ WG.soilmoisture = (function () {
     const yearCtl = `<div class="form-grid"><label>Add a year<select data-smm-c="addyear" ${per.years.length >= YEAR_COLORS.length ? "disabled" : ""}><option value="">Choose…</option>${yOpts}</select></label>
         <label>Depth (ERA5-Land)<select data-smm-c="at">${OM_D.map(([a, b], k) => `<option value="${k}" ${k === per.at ? "selected" : ""}>${esc(D(a, b))}</option>`).join("")}</select></label></div>
       <div class="chips" id="smmYearChips"></div>`;
-    el.innerHTML = `${SM.mapCard ? SM.mapCard("wet", "Soil moisture on the map") : ""}<div class="card">${head("Soil moisture by depth", "", "model · satellite · station")}
-        <p class="fine" style="margin-top:0">Water in the soil at this point, in <b>m³/m³</b> (volume of water in a volume of soil: 0.25 = 25% by volume), from three kinds of source, each labelled: <b>models</b> (computed from weather and their own soil maps), <b>satellite</b> analyses (SMAP, merged into a model) and <b>station</b> measurements (sensors in the ground, the nearest may be tens of km away). Models and stations often differ by 0.1 or more: a model's soil is not the field's. Compare their changes more than their levels.</p></div>
-      <div id="smmToday">${W8("today's soil moisture here")}</div>
+    el.innerHTML = `${SM.mapCard ? SM.mapCard("wet", "Soil moisture on the map") : ""}<div class="card" id="smmToday">
+        <div class="card-h"><h3>Soil moisture by depth</h3><div class="card-tools"><span class="tag">today · model · station</span><button type="button" class="dl-btn" data-smm-reload hidden title="Read today's soil moisture again" aria-label="Read today's soil moisture again">${RELOAD}</button></div></div>
+        <div id="smmNow"><p class="fine" style="margin-top:0"><span class="skeleton" style="width:60%"></span></p><p class="fine">Reading today's soil moisture here…</p></div>
+        <p class="fine">Water in the soil at this point, in <b>m³/m³</b> (volume of water in a volume of soil: 0.25 = 25% by volume), from three kinds of source, each labelled: <b>models</b> (computed from weather and their own soil maps), <b>satellite</b> analyses (SMAP, merged into a model) and <b>station</b> measurements (sensors in the ground, the nearest may be tens of km away). Models and stations often differ by 0.1 or more: a model's soil is not the field's. Compare their changes more than their levels.</p></div>
       ${periodCard(len, s, A)}
       ${per.src.era5 || per.src.ifs ? figCard("smmDepth", `Models by depth, ${STEP_WORD[s][0].toLowerCase()} means`, tall(K.length * ((per.src.era5 ? 1 : 0) + (per.src.ifs && ifsDays ? 1 : 0))), { file: `soil_moisture_models_${s}`, x: xName, sub, bins: B }, { tag: "model", foot: `<p class="fine">All the chosen depths on one chart: ERA5-Land solid, ECMWF IFS dashed (the last ${ifsDays || 92} days and today, today partly forecast). Hover or tap for each step's values.</p>` }) : ""}
       <div id="smmModels">${per.src.era5 || per.src.ifs ? W8("the soil moisture models by depth (Open-Meteo: ERA5-Land, ECMWF IFS)") : ""}</div>
@@ -609,7 +678,7 @@ WG.soilmoisture = (function () {
         const a = q('[data-smm-c="from"]'), b = q('[data-smm-c="to"]');
         if (!a || !b || !a.value || !b.value || !a.validity.valid || !b.validity.valid) return; // a date still being typed waits
         const d0 = Math.max(dayOf(a.value), dayOf("1950-01-01")), d1 = Math.min(dayOf(b.value), today());
-        if (d1 < d0) { const p = q("#smmProg"); if (p) p.textContent = "The first day must come before the last."; return; }
+        if (d1 < d0) { badRange = true; draw(); return; } // said in the progress line (drawAll)
         Object.assign(per, { preset: "custom", d0, d1 });
         return redo();
       }
@@ -623,14 +692,35 @@ WG.soilmoisture = (function () {
       else return;
       redo();
     };
-    el.onclick = e => { const b = e.target.closest("[data-smm-drop]"); if (b) { e.preventDefault(); const y = +b.dataset.smmDrop; per.years = per.years.filter(x => x !== y); per.slot.delete(y); redo(); } };
+    /* the Soil moisture by depth card's ⟳, once today's values are in: they are read again (ECMWF IFS's recent days and the stations'
+       readings to now; ERA5-Land, a week behind, and SMAP, three days behind, are kept), with anything that could not be
+       read; the Overview's soil moisture rows follow when it is shown again */
+    const fresh = () => {
+      WG.say("Reloading");
+      Wx.once(`smm:near:${pt}`, () => nearest(lat, lon, 3)).catch(() => []).then(l => {
+        if (!mine()) return;
+        [`smm:ifs:31:${pt}`, `smm:ifs:92:${pt}`, ...stKeys(l, t1 - DAYS + 1, t1), ...(stB >= t1 - 2 ? stKeys(l, stA, stB) : [])].forEach(k => Wx.forget(k));
+        dropSummary(lat, lon);
+        const ov = document.getElementById("tab-soiloverview");
+        if (ov) ov.dataset.key = "";
+        redo();
+      });
+    };
+    el.onclick = e => {
+      if (e.target.closest("[data-smm-reload]")) { e.preventDefault(); fresh(); return; }
+      const b = e.target.closest("[data-smm-drop]");
+      if (b) { e.preventDefault(); const y = +b.dataset.smmDrop; per.years = per.years.filter(x => x !== y); per.slot.delete(y); redo(); }
+    };
 
     /* what is read: each kept for the location, so a new choice reads only what it adds */
-    let F = null, Ferr = null, Fnow = null, S = null, Serr = null, near = null, nearErr = null, got = null, gotErr = null, sumR = null, sumErr = null;
+    let F = null, Ferr = null, Fnow = null, S = null, Serr = null, Spart = null, near = null, nearErr = null, got = null, gotErr = null, sumR = null, sumErr = null, sumOld = lastSummary(lat, lon), badRange = false;
     const yP = yearsOf(per.d0, per.d1).filter(() => per.src.era5), yC = [...per.years.flatMap(plan.need), ...A], yAll = [...new Set([...yP, ...yC])];
     let busy = true, tq = false;
     const later = () => { if (tq) return; tq = true; Promise.resolve().then(() => { tq = false; draw(); }); }; // one drawing for all that came in at once
     function draw() { if (!mine()) return; redrawNow = draw; try { drawAll(); } catch (e) { console.warn("soil moisture tab", e); } }
+    // the comparison line's wilting point and field capacity come with the soil survey, which can land after this drawing
+    const soilIn = () => { if (!mine()) { document.removeEventListener("wg-soil", soilIn); return; } later(); };
+    document.addEventListener("wg-soil", soilIn);
 
     function drawAll() {
       const shown = []; // [label, value per step] of every line drawn over the period, for the table of what is shown
@@ -638,18 +728,38 @@ WG.soilmoisture = (function () {
       const p = q("#smmProg");
       if (p) {
         const inN = yAll.filter(y => E5.has(y)).length, bad = yAll.filter(y => E5X.has(y));
-        p.textContent = `${busy && inN + bad.length < yAll.length ? `Reading ERA5-Land: ${inN} of ${yAll.length} years in. ` : ""}${bad.length ? `ERA5-Land gave no answer for ${bad.length > 4 ? `${bad.length} years` : bad.join(", ")} (${(E5X.get(bad[0]) || {}).message || "error"}); change a choice or pick the location again to retry. ` : ""}`;
+        const html = `${badRange ? "The first day must come before the last. " : ""}${busy && inN + bad.length < yAll.length ? `Reading ERA5-Land: ${inN} of ${yAll.length} years in. ` : ""}${bad.length ? `${esc(`ERA5-Land gave no answer for ${bad.length > 4 ? `${bad.length} years` : bad.join(", ")} (${(E5X.get(bad[0]) || {}).message || "error"}).`)} ${RETRY}` : ""}`;
+        put(p, html);
       }
 
-      /* today at the point */
-      const tb = q("#smmToday");
-      if (tb && (sumR || sumErr)) {
-        const m = sumR && sumR.model, st = sumR && sumR.station;
-        tb.innerHTML = `<div class="card">${head("Today here", "", "model · station")}<div class="wx-kv">
-          <div><span>${esc(D(0, 7))}, ${m && m.date === iso(t1) ? "today" : "latest"}</span><b>${m ? v2(m.top) : "—"}</b><span>${m ? `m³/m³${pctW(num(m.top))} · ${esc(m.src)}, ${esc(m.date)}` : "the models did not answer"}</span></div>
-          <div><span>${esc(D(28, 100))}, ${m && m.date === iso(t1) ? "today" : "latest"}</span><b>${m ? v2(m.root) : "—"}</b><span>${m ? `m³/m³${pctW(num(m.root))} · ${esc(m.src)}` : ""}</span></div>
-          <div><span>Nearest station${st ? `, ${esc(st.depth)}` : ""}</span><b${st && ok(num(st.value)) ? ` title="m³/m³${pctW(num(st.value))}"` : ""}>${st ? v2(st.value) : "—"}</b><span>${st ? `${ptLink(st, stSub(st.net, st.id, st.km, st.dir))} (${esc(st.net)}), ${dist(st.km)} ${esc(st.dir)} · ${esc(st.time)}` : "no station reading within 400 km"}</span></div></div>
-          <p class="fine">Values are m³ of water per m³ of soil (0.27 = 27% water by volume); ${esc(soilRange())}. Models: ECMWF IFS's mean of today's hours (partly forecast), or ERA5-Land's latest day; station: its latest hourly reading at its shallowest sensor. The cards below give every depth over the period.</p></div>`;
+      /* today at the point, in the Soil moisture by depth card: the models and the nearest station, or why a part has none.
+         A part that could not be read, or was stood in for (.err), says so with a reload; once all is in, the card's ⟳
+         reads them again. Written only when it changes, so a reload button keeps its focus while other reads come in. */
+      // old: the last values read here, shown while this drawing's summary is read (a part asked again, or the ⟳)
+      const tb = q("#smmNow"), rb = q("[data-smm-reload]"), old = !sumR && !sumErr ? sumOld : null;
+      if (tb && (sumR || sumErr || old)) {
+        const R = sumR || old, m = R ? R.model : sumErr, st = R ? R.station : sumErr, mOk = !!m && !(m instanceof Error), sOk = !!st && !(st instanceof Error) && !st.none;
+        const when = mOk && m.date !== iso(t1) ? "latest" : "today", msg = e => esc((e && e.message) || String(e)), says = [];
+        if (old) { /* what failed is being asked again */ }
+        else if (sumErr) says.push(`Could not read today's soil moisture here (${msg(sumErr)}).`);
+        else {
+          if (m instanceof Error) says.push(`Could not read the models (${msg(m)}).`);
+          else if (mOk && m.err) says.push(`Could not read ECMWF IFS (${msg(m.err)}): ERA5-Land's latest day is shown.`);
+          if (st instanceof Error) says.push(`Could not read the stations (${msg(st)}).`);
+          else if (sOk && st.err) says.push(`Could not read ${st.errNearest ? "the nearest station" : "a nearer station"}${st.errName ? `, ${esc(st.errName)}` : ""} (${msg(st.err)}): the next one with a reading is shown.`);
+        }
+        const few = st && st.none ? (st.n === 1 ? "the nearest station" : `the ${st.n || 3} nearest`) : "";
+        const html = `<div class="wx-kv">
+          <div><span>${esc(D(0, 7))}, ${when}</span><b>${mOk ? v2(m.top) : "—"}</b><span>${mOk ? `m³/m³${pctW(num(m.top))} · ${esc(m.src)}, ${esc(m.date)}` : m instanceof Error ? "could not be read" : "no model value at this point"}</span></div>
+          <div><span>${esc(D(28, 100))}, ${when}</span><b>${mOk ? v2(m.root) : "—"}</b><span>${mOk ? `m³/m³${pctW(num(m.root))} · ${esc(m.src)}` : ""}</span></div>
+          <div><span>${sOk && st.err ? "Next station" : "Nearest station"}${sOk ? `, ${esc(st.depth)}` : ""}</span><b${sOk && ok(num(st.value)) ? ` title="m³/m³${pctW(num(st.value))}"` : ""}>${sOk ? v2(st.value) : "—"}</b><span>${sOk ? `${ptLink(st, stSub(st.net, st.id, st.km, st.dir))} (${esc(st.net)}), ${dist(st.km)} ${esc(st.dir)} · ${esc(st.time)}`
+            : st instanceof Error ? "could not be read" : st && st.none ? `no reading in the last 30 days at ${few}` : "none within 400 km"}</span></div></div>
+          <p class="fine">For comparison, ${esc(soilRange())}.</p>
+          ${old ? `<p class="fine">Reading today's values again…</p>` : ""}
+          ${says.length ? `<p class="fine">${says.join(" ")} ${RETRY}</p>` : ""}
+          <p class="fine">Values are m³ of water per m³ of soil (0.27 = 27% water by volume). Models: ECMWF IFS's mean of today's hours (partly forecast), or ERA5-Land's latest day; station: its latest hourly value at its shallowest sensor. The cards below give every depth over the period.</p>`;
+        put(tb, html);
+        if (rb) rb.hidden = says.length > 0 || !!old;
       }
 
       /* the models over the period: all the chosen depths on one chart, and their numbers */
@@ -676,10 +786,11 @@ WG.soilmoisture = (function () {
               ok(dif) ? `${dif >= 0 ? "+" : "−"}${fmt(Math.abs(dif), 2)}` : "—", rng(st)];
           });
           putTable(mine, "moisture_models", { title: "Soil moisture by depth, models (m3/m3)", header: ["Source", "Kind", "Top (cm)", "Bottom (cm)", "Date", "Soil moisture (m3/m3)", "Note"], rows: csv });
-          mb.innerHTML = `<div class="card">${head("Models by depth: the numbers", csv.length ? "moisture_models" : "", "model")}
+          put(mb, `<div class="card">${head("Models by depth: the numbers", csv.length ? "moisture_models" : "", "model")}
             ${K.length ? grid([th("Depth"), th("Today, ECMWF IFS", fT !== null ? iso(fT) : ""), th("ERA5-Land, latest", "in the period"), th("Period mean", "ERA5-Land"), th("Average", A.length ? `${A[0]}–${A[A.length - 1]}, same days` : "none chosen"), th("Difference", "mean − average"), th("Period range", "daily means")], rows) : `<p class="fine">Choose a depth above.</p>`}
-            <p class="fine">m³/m³, daily means of the local day; ERA5-Land's days in the period (it ends about a week before today). ${per.src.era5 && yP.some(y => E5X.has(y)) ? "<b>ERA5-Land did not answer.</b> " : ""}${per.src.ifs && Ferr ? "<b>ECMWF IFS did not answer.</b> " : ""}${!ifsDays && per.src.ifs ? "ECMWF IFS is read for the last 92 days only: none in this period. " : ""}
-            <b>ERA5-Land</b>: the Copernicus Climate Change Service's land reanalysis (ECMWF; Muñoz-Sabater et al. 2021), 0.1° (about 9–11 km), daily since 1950${e5cell ? `, cell at ${fmt(e5cell[0], 2)}, ${fmt(e5cell[1], 2)}` : ""}. <b>ECMWF IFS</b>: the operational forecast model's land surface (9 km), the same four layers (0–7, 7–28, 28–100, 100–255 cm), each past day from that day's runs. Both through Open-Meteo (CC BY 4.0; ECMWF and Copernicus data, CC BY 4.0). Models, not measurements: they use their own soil texture and rain, so their levels can sit far from a station's.</p></div>`;
+            ${(per.src.era5 && yP.some(y => E5X.has(y))) || (per.src.ifs && Ferr) ? `<p class="fine"><b>${per.src.era5 && yP.some(y => E5X.has(y)) ? "ERA5-Land did not answer. " : ""}${per.src.ifs && Ferr ? `ECMWF IFS did not answer (${esc(Ferr.message || String(Ferr))}).` : ""}</b> ${RETRY}</p>` : ""}
+            <p class="fine">m³/m³, daily means of the local day; ERA5-Land's days in the period (it ends about a week before today). ${!ifsDays && per.src.ifs ? "ECMWF IFS is read for the last 92 days only: none in this period. " : ""}
+            <b>ERA5-Land</b>: the Copernicus Climate Change Service's land reanalysis (ECMWF; Muñoz-Sabater et al. 2021), 0.1° (about 9–11 km), daily since 1950${e5cell ? `, cell at ${fmt(e5cell[0], 2)}, ${fmt(e5cell[1], 2)}` : ""}. <b>ECMWF IFS</b>: the operational forecast model's land surface (9 km), the same four layers (0–7, 7–28, 28–100, 100–255 cm), each past day from that day's runs. Both through Open-Meteo (CC BY 4.0; ECMWF and Copernicus data, CC BY 4.0). Models, not measurements: they use their own soil texture and rain, so their levels can sit far from a station's.</p></div>`);
         }
       }
 
@@ -692,8 +803,8 @@ WG.soilmoisture = (function () {
         ...yv.map(([y, v]) => line(`${y}`, v, YEAR_COLORS[per.slot.get(y)], { points: plan.months || plan.step === "week", w: y === ymd(per.d1)[0] ? 2.5 : 2 })),
         ...(aC ? [line(aL, aC, C.ink, { dash: [5, 4], points: plan.months })] : [])] }, options: opts() }));
       const chips = q("#smmYearChips");
-      if (chips) chips.innerHTML = per.years.map(y => { const v = yv.find(x => x[0] === y)[1], st = stats(v); return `<span class="chip"><i class="yr-sw" style="background:${YEAR_COLORS[per.slot.get(y)]}"></i>${y}${st ? ` · ${v2(st.mean)}` : yearIn(y) ? "" : " · …"} <button class="link" data-smm-drop="${y}" title="Take ${y} off the chart" aria-label="Take ${y} off the chart">✕</button></span>`; }).join("")
-        + (A.length ? `<span class="chip"><i class="yr-sw" style="background:${C.ink}"></i>${esc(aL)}${aC && stats(aC) ? ` · ${v2(stats(aC).mean)}` : " · …"}</span>` : "");
+      if (chips) put(chips, per.years.map(y => { const v = yv.find(x => x[0] === y)[1], st = stats(v); return `<span class="chip"><i class="yr-sw" style="background:${YEAR_COLORS[per.slot.get(y)]}"></i>${y}${st ? ` · ${v2(st.mean)}` : yearIn(y) ? "" : " · …"} <button class="link" data-smm-drop="${y}" title="Take ${y} off the chart" aria-label="Take ${y} off the chart">✕</button></span>`; }).join("")
+        + (A.length ? `<span class="chip"><i class="yr-sw" style="background:${C.ink}"></i>${esc(aL)}${aC && stats(aC) ? ` · ${v2(stats(aC).mean)}` : " · …"}</span>` : ""));
       const yHead = [plan.months ? "Month" : "Calendar day (step start)", ...per.years.map(y => `${y} (m3/m3)`), ...(A.length ? [`${aL} (m3/m3)`] : [])];
       const yRows = plan.x.map((x, i) => [x, ...yv.map(([, v]) => r3(v[i])), ...(A.length ? [aC ? r3(aC[i]) : null] : [])]);
       putTable(mine, "moisture_years", { title: `Soil moisture year against year, ERA5-Land ${OM_D[k0][0]}-${OM_D[k0][1]} cm (m3/m3)`, header: yHead, rows: yRows });
@@ -717,20 +828,20 @@ WG.soilmoisture = (function () {
         const vT = B.map(bn => agg(inMap(new Map(top)), bn)), vS = B.map(bn => agg(inMap(new Map(subL)), bn)), has = top.length || subL.length;
         if (has) shown.push(["SMAP L4 0-5 cm (m3/m3)", vT], ["SMAP L4 0-100 cm (m3/m3)", vS]);
         const why = smB < smA ? (per.d1 < SMAP_D0 ? "SMAP L4 begins on 31 March 2015: none in this period." : "No SMAP days in this period.")
-          : `${Serr ? `SMAP L4 could not be read from Crop-CASMA: ${esc(Serr.message || String(Serr))}. The map layer (NASA GIBS) still shows it. ` : ""}${smA > per.d0 ? `Read from ${iso(smA)}${smA === SMAP_D0 ? ", when SMAP begins" : `: the last ${SMAP_MAX} days of the period at most, as Crop-CASMA serves 200 days a request and takes up to half a minute for each`}. ` : ""}`;
+          : `${Serr ? `SMAP L4 could not be read from Crop-CASMA: ${esc(Serr.message || String(Serr))}. The map layer (NASA GIBS) still shows it. ${RETRY}` : ""}${Spart ? `SMAP L4's ${Spart.which} could not be read from Crop-CASMA: ${esc(Spart.e.message || String(Spart.e))}. ${RETRY}` : ""}${smA > per.d0 ? `Read from ${iso(smA)}${smA === SMAP_D0 ? ", when SMAP begins" : `: the last ${SMAP_MAX} days of the period at most, as Crop-CASMA serves 200 days a request and takes up to half a minute for each`}. ` : ""}`;
         const body = `${!has && !nw ? "" : grid([th("Source"), th("Kind"), th("Depth"), th("Latest", "m³/m³"), th("Date"), th("Period mean", "m³/m³"), th("Period range", "m³/m³")], rows.map(r => r.map((c, i) => (i < 3 || i === 4 ? esc(c) : c))))}
           ${why ? `<p class="fine">${why}</p>` : ""}`;
         const foot = `<p class="fine">${nw ? `National Water Model read ${esc(utcLabel(nw.valid))} (${fmt(nw.bytes / 1e6, 1)} MB).` : `<button class="link" data-smm-nwm data-lat="${lat}" data-lon="${lon}">Read the National Water Model here</button> (its four layers at the 1 km cell, the latest hour: about 2.5 MB from NOAA's files on AWS, which can take half a minute).`}
           ${csv.length ? `<button class="link" data-sm-csv="moisture_smap">This table, every day (CSV)</button>` : ""}</p>
           <p class="fine"><b>SMAP L4</b> (NASA GMAO, SPL4SMAU): the SMAP satellite's L-band readings of the top 5 cm assimilated into the Catchment land model, 9 km, about 3 days behind; the root zone (0–100 cm) is the model's, steered by the surface. Daily averages of its 3-hourly analyses at this 9 km cell from USDA NASS Crop-CASMA (George Mason University). <b>National Water Model</b> (NOAA Office of Water Prediction, version 3.0, Noah-MP, 1 km, hourly analysis): volumetric water in four layers (0–10, 10–40, 40–100, 100–200 cm) and the top 40 cm's fraction of saturation (what the NWM map shows). Public domain.</p>`;
-        xS.innerHTML = has ? figCard("smmSat", "Satellite (SMAP L4) and the National Water Model", 220, { file: `soil_moisture_smap_${s}`, x: xName, sub: `${Wx.siteLine()} · SMAP L4, ${STEP_WORD[s][0].toLowerCase()} means`, bins: B }, { tag: "satellite · model", top: body, foot })
-          : `<div class="card">${head("Satellite (SMAP L4) and the National Water Model", "", "satellite · model")}${body}${foot}</div>`;
+        put(xS, has ? figCard("smmSat", "Satellite (SMAP L4) and the National Water Model", 220, { file: `soil_moisture_smap_${s}`, x: xName, sub: `${Wx.siteLine()} · SMAP L4, ${STEP_WORD[s][0].toLowerCase()} means`, bins: B }, { tag: "satellite · model", top: body, foot })
+          : `<div class="card">${head("Satellite (SMAP L4) and the National Water Model", "", "satellite · model")}${body}${foot}</div>`);
         if (has) Ch.draw("smmSat", () => ({ data: { labels: xs, datasets: [line(`SMAP ${D(0, 5)}`, vT, COLS[0], { points: s !== "day" }), line(`SMAP ${D(0, 100)}`, vS, COLS[2], { points: s !== "day" })] }, options: opts(it => binText(B[it[0].dataIndex])) }));
       }
 
       /* the nearest stations over the period (their newest two years at most), at their own sensor depths */
       const xT = q("#smmSt");
-      if (xT && (nearErr || (near && !near.length))) xT.innerHTML = nearErr ? Wx.failed("the nearest soil moisture stations", nearErr) : `<div class="card">${head("Nearest soil moisture stations", "", "station")}<p class="fine" style="margin-top:0">No SCAN, SNOTEL or USCRN station within 400 km.</p></div>`;
+      if (xT && (nearErr || (near && !near.length))) put(xT, nearErr ? Wx.failed("the nearest soil moisture stations", nearErr) : `<div class="card">${head("Nearest soil moisture stations", "", "station")}<p class="fine" style="margin-top:0">No SCAN, SNOTEL or USCRN station within 400 km.</p></div>`);
       else if (xT && near && (got || gotErr)) {
         const labs = new Map();
         near.forEach(st => st.depths.forEach(d => labs.set(d.label, d.cm)));
@@ -739,7 +850,7 @@ WG.soilmoisture = (function () {
         const cards = near.map((st, n) => {
           const r = got ? got[n] : gotErr, net = NET[st.net], id = st.src === "crn" ? `WBAN ${st.id}` : st.id.split(":")[0];
           const where = `${dist(st.km)} ${esc(st.dir)} · ${esc(net[0])} ${esc(id)} · elevation ${UN.fmt("elev", st.ft * 0.3048, 0)}${st.since ? ` · since ${esc(st.since)}` : ""}`;
-          if (r instanceof Error) return `<div class="card">${head(st.name, "", "station")}<p class="fine" style="margin-top:0">${ptLink(st, stSub(net[0], id, st.km, st.dir))} · ${where}. Could not read its data: ${esc(r.message)}.</p></div>`;
+          if (r instanceof Error) return `<div class="card">${head(st.name, "", "station")}<p class="fine" style="margin-top:0">${ptLink(st, stSub(net[0], id, st.km, st.dir))} · ${where}. Could not read its data: ${esc(String(r.message || r).trim())}. ${RETRY}</p></div>`;
           const deps = st.depths.filter(d => !per.stOff.has(d.label));
           const rows = deps.map(d => {
             const pts = (r.daily.get(d.key) || []).filter(x => x[0] >= stA && x[0] <= stB), last = now ? r.latest.get(d.key) : null, ld = pts.length ? pts[pts.length - 1] : null, sd = stats(pts.map(x => x[1]));
@@ -755,8 +866,8 @@ WG.soilmoisture = (function () {
           return figCard(`smmSt${n}`, st.name, tall(series.length) - 20, { file: `soil_moisture_station_${n + 1}_${s}`, x: xName, sub: `${st.name} (${net[0]} ${id}) · ${STEP_WORD[s][0].toLowerCase()} means of the daily means`, bins: B }, { tag: "station", top });
         });
         putTable(mine, "moisture_stations", { title: "Soil moisture at the nearest stations (station measurements)", header: ["Station", "Network", "ID", "Distance (km)", "Sensor depth", "Sensor depth (cm)", "Date or time", "Soil moisture (m3/m3)", "Soil moisture (% by volume)", "Kind"], rows: csv });
-        xT.innerHTML = `<div class="card">${head("Nearest soil moisture stations", csv.length ? "moisture_stations" : "", "station")}${ctl}
-          <p class="fine">Measured in the ground by each station's sensors (volumetric water content; dielectric probes) at the depth shown, hourly; daily means over the station's local standard day (LST)${stA > per.d0 ? `, read from ${iso(stA)}: the last two years of the period at most` : ""}. <b>USDA NRCS SCAN and SNOTEL</b> (Air and Water Database, public domain) report % by volume at 2, 4, 8, 20 and 40 in (5, 10, 20, 51, 102 cm), shown here ÷ 100; SNOTEL sites are in the mountains, often under snow in winter. <b>NOAA USCRN</b> (public domain) reports m³/m³ at 5, 10, 20, 50 and 100 cm. A station reads its own soil: tens of km away, in another soil, it can differ a lot from this point. Sensors drift or fail: a flat or stepped line may be a sensor fault.</p></div>${cards.join("")}`;
+        put(xT, `<div class="card">${head("Nearest soil moisture stations", csv.length ? "moisture_stations" : "", "station")}${ctl}
+          <p class="fine">Measured in the ground by each station's sensors (volumetric water content; dielectric probes) at the depth shown, hourly; daily means over the station's local standard day (LST)${stA > per.d0 ? `, read from ${iso(stA)}: the last two years of the period at most` : ""}. <b>USDA NRCS SCAN and SNOTEL</b> (Air and Water Database, public domain) report % by volume at 2, 4, 8, 20 and 40 in (5, 10, 20, 51, 102 cm), shown here ÷ 100; SNOTEL sites are in the mountains, often under snow in winter. <b>NOAA USCRN</b> (public domain) reports m³/m³ at 5, 10, 20, 50 and 100 cm. A station reads its own soil: tens of km away, in another soil, it can differ a lot from this point. Sensors drift or fail: a flat or stepped line may be a sensor fault.</p></div>${cards.join("")}`);
         charts.forEach(([id, series]) => Ch.draw(id, () => ({ data: { labels: xs, datasets: series.map((x, i) => line(x.d.label, x.v, COLS[i % COLS.length], { points: s !== "day" })) }, options: opts(it => binText(B[it[0].dataIndex])) })));
       }
 
@@ -766,13 +877,13 @@ WG.soilmoisture = (function () {
         const hdr = ["From", "To", ...shown.map(x => x[0])], rows = B.map((bn, i) => [iso(bn.a), iso(bn.b), ...shown.map(x => r3(x[1][i]))]);
         putTable(mine, "moisture_shown", { title: `Soil moisture shown, ${STEP_WORD[s][0].toLowerCase()} means ${iso(per.d0)} to ${iso(per.d1)} (m3/m3)`, header: hdr, rows });
         const cell = v => (ok(v) ? fmt(v, 3) : "—");
-        sb.innerHTML = `<div class="card">${head("The values shown", "moisture_shown", `${B.length} ${STEP_WORD[s][1]}s`)}
+        put(sb, `<div class="card">${head("The values shown", "moisture_shown", `${B.length} ${STEP_WORD[s][1]}s`)}
             <details class="smm-tbl"><summary>Every line over the period, by ${STEP_WORD[s][1]} (${shown.length} series)</summary>
               ${grid([th(s === "day" ? "Date" : "From"), ...(s === "day" ? [] : [th("To")]), ...shown.map(x => esc(x[0].replace(/ \(m3\/m3\)$/, "")))], rows.map(r => [r[0], ...(s === "day" ? [] : [r[1]]), ...r.slice(2).map(cell)]))}</details>
             <div class="card-h smm-sub"><h3>Year against year: the values</h3><div class="card-tools"><button class="dl-btn" data-sm-csv="moisture_years" title="Download this table (CSV)" aria-label="Download the years table (CSV)">${DL}</button></div></div>
             <details class="smm-tbl"><summary>ERA5-Land ${esc(D(...OM_D[k0]))}, ${per.years.length} year${per.years.length === 1 ? "" : "s"}${A.length ? " and the average" : ""}</summary>
               ${grid([th(yHead[0]), ...yHead.slice(1).map(h => esc(h.replace(/ \(m3\/m3\)$/, "")))], yRows.map(r => [esc(r[0]), ...r.slice(1).map(cell)]))}</details>
-            <p class="fine">m³/m³, the mean of each step's days (blank where more than a tenth of them have no value). Each card's own button gives its table or figure alone; the button below gives every table of this tab in one file.</p></div>`;
+            <p class="fine">m³/m³, the mean of each step's days (blank where more than a tenth of them have no value). Each card's own button gives its table or figure alone; the button below gives every table of this tab in one file.</p></div>`);
       }
     }
 
@@ -784,8 +895,15 @@ WG.soilmoisture = (function () {
       e5Read(lat, lon, yC).then(later),
       per.src.ifs && ifsDays ? Wx.once(`smm:ifs:${ifsDays}:${pt}`, () => ifsAt(lat, lon, ifsDays)).then(x => { F = x; }, e => { Ferr = e; }).then(later) : null,
       Wx.once(`smm:ifs:31:${pt}`, () => ifsAt(lat, lon, 31)).then(x => { Fnow = x; }, () => {}).then(later), // today's values: the summary's read
-      per.src.smap && smB >= smA ? Wx.once(`smm:smap:${smA}:${smB}:${pt}`, () => smapAt(lat, lon, smA, smB)).then(x => { S = x; }, e => { console.warn("SMAP", e); Serr = e; }).then(later) : null,
-      per.src.st ? Wx.once(`smm:near:${pt}`, () => nearest(lat, lon, 3)).then(l => { near = l; later(); if (l.length) return Wx.once(`smm:st:${stA}:${stB}:${pt}`, () => readStations(l, stA, stB)).then(g => { got = g; }, e => { gotErr = e; }); }, e => { nearErr = e; }).then(later) : null,
+      // SMAP's two layers each kept on its own (a layer that failed is asked again alone)
+      per.src.smap && smB >= smA ? Promise.allSettled(["TOP", "SUB"].map(p => Wx.once(`smm:smap:${p}:${smA}:${smB}:${pt}`, () => smapLayer(lat, lon, p, smA, smB)))).then(([a, b]) => {
+        const bad = [a, b].filter(x => x.status === "rejected").map(x => x.reason);
+        bad.forEach(e => console.warn("SMAP", e));
+        if (bad.length === 2) { Serr = bad[0]; return; }
+        S = { top: a.status === "fulfilled" ? a.value : null, sub: b.status === "fulfilled" ? b.value : null };
+        if (bad.length) Spart = { which: a.status === "rejected" ? "surface layer (0–5 cm)" : "root zone (0–100 cm)", e: bad[0] };
+      }).then(later) : null,
+      per.src.st ? Wx.once(`smm:near:${pt}`, () => nearest(lat, lon, 3)).then(l => { near = l; later(); if (l.length) return readStations(l, stA, stB).then(g => { got = g; }, e => { gotErr = e; }); }, e => { nearErr = e; }).then(later) : null,
     ];
     await Promise.allSettled(jobs.filter(Boolean));
     busy = false;
@@ -802,5 +920,5 @@ WG.soilmoisture = (function () {
     } catch (e) { console.warn("NWM", e); b.disabled = false; b.textContent = "Read the National Water Model here (try again)"; WG.util.toast(`The National Water Model could not be read: ${e.message}`, 5000); }
   }
 
-  return { layers: LAYERS, pick, stations, nearest, readStations, era5At, era5Range, ifsAt, smapAt, nwmAt, summary, summaryOn, mapDay, soilRange, period: per };
+  return { layers: LAYERS, pick, stations, nearest, readStations, era5At, era5Range, ifsAt, smapAt, nwmAt, summary, summaryOn, lastSummary, mapDay, soilRange, period: per };
 })();

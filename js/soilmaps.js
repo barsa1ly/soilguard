@@ -907,13 +907,15 @@ WG.soilmaps = (function () {
         if (MS === undefined) { row("smm"); row("stn"); }
         else if (MS instanceof Error) ["smm", "stn"].forEach(k => row(k, MS));
         else {
-          const top0 = m ? num(m.top) : null, w = wetClass(top0), sv = s ? num(s.value) : null;
-          row("smm", ok(top0) ? u(fmt(top0, 2), "m³/m³") : "—", ok(top0) ? (w ? chip(w.name, w.color) : "") : aside("No value here"),
-            m ? `${ok(top0) ? `${fmt(100 * top0, 0)}% water by volume, top layer; ` : ""}root zone ${ok(num(m.root)) ? fmt(num(m.root), 2) : "—"} m³/m³${m.src ? ` · ${m.src}` : ""}${m.date ? `, ${m.date}` : ""}${w ? `. ${w.tip}` : ""}` : "");
+          const top0 = m && !(m instanceof Error) ? num(m.top) : null, w = wetClass(top0), sv = s && !(s instanceof Error) ? num(s.value) : null;
+          if (m instanceof Error) row("smm", m);
+          else row("smm", ok(top0) ? u(fmt(top0, 2), "m³/m³") : "—", ok(top0) ? (w ? chip(w.name, w.color) : "") : aside("No value here"),
+            m ? `${ok(top0) ? `${fmt(100 * top0, 0)}% water by volume, top layer; ` : ""}root zone ${ok(num(m.root)) ? fmt(num(m.root), 2) : "—"} m³/m³${m.src ? ` · ${m.src}` : ""}${m.date ? `, ${m.date}` : ""}${w ? `. ${w.tip}` : ""}${m.err ? `. ECMWF IFS could not be read (${m.err.message || m.err}), so this is ERA5-Land's latest day; the Soil moisture tab can read it again` : ""}` : "");
           if (s instanceof Error) row("stn", s);
-          else if (s && s.none) row("stn", "—", aside("No reading that day"), "The nearest stations have no daily mean for that day");
+          else if (s && s.none) row("stn", "—", aside(s.none === "day" ? "No reading that day" : "No recent reading"),
+            `${s.n === 1 ? "The nearest station has" : `The ${s.n || 3} nearest stations have`} ${s.none === "day" ? "no daily mean for that day" : "no reading in the last 30 days"}`);
           else row("stn", ok(sv) ? u(fmt(sv, 2), "m³/m³") : "—", s ? aside(ok(num(s.km)) ? `${dist(num(s.km))}${s.dir ? ` ${s.dir}` : ""}` : s.net || "") : aside("None within 400 km"),
-            s ? `${s.name || ""}${s.net ? `, ${s.net}` : ""}${ok(num(s.depthIn)) ? ` · ${UN.fmt("depth", num(s.depthIn) * 2.54)}` : ""}${s.time ? ` · ${s.time}` : ""}` : "");
+            s ? `${s.name || ""}${s.net ? `, ${s.net}` : ""}${ok(num(s.depthIn)) ? ` · ${UN.fmt("depth", num(s.depthIn) * 2.54)}` : ""}${s.time ? ` · ${s.time}` : ""}${s.err ? `; ${s.errNearest ? "the nearest station" : "a nearer station"}${s.errName ? `, ${s.errName},` : ""} could not be read (${s.err.message || s.err}), so this is the next one with a reading` : ""}` : "");
         }
       } else if (has("moisture")) {
         const M = T.moisture_models, ifs = M ? M.rows.filter(r => /^ECMWF IFS/.test(r[0])) : [], era = M ? M.rows.filter(r => /^ERA5/.test(r[0])) : [], use = ifs.length ? ifs : era;
@@ -944,6 +946,14 @@ WG.soilmaps = (function () {
         msDay = d; MS = undefined; draw(); readMS();
       });
       document.addEventListener("wg-mapdate", onDay);
+      // a newer reading here (the Soil moisture tab, its ⟳, a reload) replaces today's rows: js/soilmoisture.js's
+      // lastSummary, so no new read starts; a readMS still on its way is dropped (msSeq), and its own reading comes the same way
+      const onSum = () => {
+        if (!live()) { document.removeEventListener("wg-smm", onSum); return; }
+        const r = msDay === null && WG.soilmoisture.lastSummary ? WG.soilmoisture.lastSummary(lat, lon) : null;
+        if (r && r !== MS) { msSeq++; MS = r; draw(); }
+      };
+      document.addEventListener("wg-smm", onSum);
     }
     const pG = Promise.all([usgsNear(lat, lon), chemLegend().catch(() => null)]).then(v => { G = v; }, e => { G = e instanceof Error ? e : new Error(String(e)); }).then(draw);
     await Promise.allSettled([pS, pN, pM, pG, pTab, pE]);
