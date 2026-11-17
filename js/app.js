@@ -212,7 +212,7 @@
   };
 
   let baseKey = "plain"; // Plain (no base map) under the data layers by default; Satellite and the others are in Layers
-  let autoImg = false; // USGS imagery + topo put under the outlines by wholeView while no data layer is on (below)
+  let autoImg = false; // Satellite put under the outlines by wholeView while no data layer is on (below)
   bases[baseKey].layer.addTo(map);
   if (!bases[baseKey].labels) refs.labels.on = false; // the names overlay comes with the bases that carry it (setBase)
   Object.values(refs).forEach(r => r.on && r.layer.addTo(map));
@@ -564,23 +564,24 @@
   /* The whole state or the chosen states again (the map's reset button): the point and the area are put away (the
      panel's close, the area's Clear and its sheet, a USGS site's or pedon's pin; the Basin tab's watershed goes with the
      point), and the map fits the states. With no data layer on (no erosion overlay, no live layer of the theme, no land
-     cover), USGS imagery + topo comes under the outlines instead of the blank Plain base; the next data layer turned on
+     cover), Satellite (Esri World Imagery; USGS imagery + topo often loaded only in part) comes under the outlines instead
+     of the blank Plain base; the next data layer turned on
      brings Plain back (baseFollow), unless a base was chosen in Layers meanwhile. */
   const dataOn = () => Object.values(themes).some(t => t.on) || Object.values(live[state.theme] || {}).some(t => t.on) || soilLayers.nlcd.on;
-  function baseFollow() { if (autoImg && baseKey === "usgsimg" && dataOn()) { autoImg = false; setBase("plain"); } }
+  function baseFollow() { if (autoImg && baseKey === "sat" && dataOn()) { autoImg = false; setBase("plain"); } }
   function wholeView() {
     pickSeq++; map.getContainer().classList.remove("checking"); // a tap still being checked (buildings, roads, water) is dropped
     const open = !!state.site, resizes = open && (!app.classList.contains("map-big") || phone());
     if (open) $("#closePanelBtn").click();
     if (WG.soilmaps && WG.soilmaps.clearPin) WG.soilmaps.clearPin();
     if (WG.area && WG.area.reset) WG.area.reset();
-    if (!dataOn() && bases[baseKey].blank) { setBase("usgsimg"); autoImg = true; }
+    if (!dataOn() && bases[baseKey].blank) { setBase("sat"); autoImg = true; }
     // at once, and again once the map has its new size after the panel closed (settleMap)
     if (regionBounds) { map.fitBounds(regionBounds, { animate: !RM }); if (resizes) pendingFit = regionBounds; } else map.setView([32.2, -100.6], 6);
   }
   /* The logo: a soft reset of the view. The whole state or the chosen states with the point and the area put away
-     (wholeView), every data layer off (the theme's own, the erosion overlays, the land cover, the soil map units) and USGS
-     imagery + topo under the outlines; the reference layers (names, roads, rivers, county lines) stay as they were. The
+     (wholeView), every data layer off (the theme's own, the erosion overlays, the land cover, the soil map units) and
+     Satellite under the outlines; the reference layers (names, roads, rivers, county lines) stay as they were. The
      theme stays, its layers off until one is chosen in Layers; the next data layer brings the Plain base back, as after
      the reset button. */
   function softReset() {
@@ -588,12 +589,12 @@
     Object.entries(themes).forEach(([k, t]) => { if (t.on) setToggle("themes", k, false); });
     Object.entries(live[state.theme] || {}).forEach(([k, t]) => { if (t.on) setToggle("live", k, false); });
     Object.entries(soilLayers).forEach(([k, t]) => { if (t.on) setToggle("soilLayers", k, false); });
-    if (baseKey !== "usgsimg") setBase("usgsimg");
+    if (baseKey !== "sat") setBase("sat");
     autoImg = true;
-    // the names overlay, which setBase takes off with a base that has names of its own, kept as it was
+    // the names overlay, which setBase turns on with Satellite (or off with a base that has names of its own), kept as it was
     Object.entries(refsOn).forEach(([k, on]) => { if (refs[k].on !== on) setToggle("refs", k, on); });
     wholeView();
-    U.toast("Start view: no data layers, USGS imagery + topo. Choose layers in Layers.", 3500);
+    U.toast("Start view: no data layers, Satellite. Choose layers in Layers.", 3500);
   }
   $("#brandBtn").addEventListener("click", softReset);
   /* Statewide overlays are 1 km grids: fade them as you zoom in so imagery, roads and soil lines read through. */

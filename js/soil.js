@@ -102,7 +102,10 @@ WG.soil = (function () {
      (512 x 512 uint16 indices, zlib) and each map unit's rows as tablesAt gives them (gzipped JSON, by mukey % 1024).
      The point's state picks the copy (app.js stateAt). -> the record (with backup: true), null for no map unit there, or
      undefined where no copy covers the state. Each file is kept for the visit. */
-  const BACKUP = "https://barsa1ly.github.io/", BACKUP_REPO = { TX: "soildata" }; // more states as their copies are published
+  // the 48 states and DC by region, one GitHub Pages site each (each under Pages' 1 GB)
+  const BACKUP = "https://barsa1ly.github.io/", BACKUP_REPO = Object.fromEntries([
+    ["soildata", "TX OK NM LA AR"], ["soildata-west", "CA OR WA NV AZ UT ID MT WY CO"], ["soildata-central", "ND SD NE KS MN IA MO WI IL"],
+    ["soildata-east", "AL CT DC DE FL GA IN KY MA MD ME MI MS NC NH NJ NY OH PA RI SC TN VA VT WV"]].flatMap(([repo, sts]) => sts.split(" ").map(st => [st, repo])));
   const bkFiles = new Map();
   const bkGet = (u, f) => { if (!bkFiles.has(u)) { const p = f(u); bkFiles.set(u, p); p.catch(() => bkFiles.delete(u)); while (bkFiles.size > 80) bkFiles.delete(bkFiles.keys().next().value); } return bkFiles.get(u); };
   const bkBin = async (u, kind) => { const r = await WG.util.fetchQ(u, {}, 20000); if (!r.ok) throw new Error(`the backup copy answered ${r.status}`); return new Response(r.body.pipeThrough(new DecompressionStream(kind))).arrayBuffer(); };
