@@ -81,7 +81,7 @@ Every default source is read directly from the agency that produces it, except t
 | Airport observations | NWS/FAA ASOS/AWOS, NOAA NCEI GHCNh | NCEI Access Data Service, direct | Iowa Environmental Mesonet ASOS archive |
 | Daily precipitation, grass ET₀, temperature | gridMET 4 km (University of Idaho) | THREDDS OPeNDAP, direct; gridMET's yearly files on its file server (byte ranges) when THREDDS does not answer | NASA POWER daily, direct (Penman–Monteith ET₀ computed in the app), then ECMWF daily via Open-Meteo |
 | Soils, WEG, I, T, climatic factor C | USDA-NRCS SSURGO; the point's county from Census TIGERweb (2020 counties) | Soil Data Access, direct (the map unit, its components and their layers in one batched query a point); C for a county SSURGO gives no usable value: the pre-built NASA POWER estimate in the state's file | none |
-| Elevation and slope | USGS 3DEP (1–10 m) | Elevation Point Query Service, direct | Copernicus 90 m DEM via Open-Meteo |
+| Elevation and slope | USGS 3DEP (1 m lidar where flown, else about 3 or 10 m; the source line names which) | 3DEP elevation image service (getSamples: the Elevation Point Query Service's values), direct | Copernicus 90 m DEM via Open-Meteo |
 | Land cover | USGS/MRLC NLCD 2021 | MRLC WMS, direct (currently refuses browser requests) | Sentinel-2 10 m land cover (Impact Observatory, Microsoft, Esri) |
 | Land cover by year (time slider) | USGS Annual NLCD, Collection 1 (1985 on) | USGS EROS GeoServer WMS, a year each, direct | NLCD 2021 stays on the map |
 | Soil loss (Overview, Basin tab) | U.S. EPA EnviroAtlas: RUSLE by 30 m cell, summed by HUC12 (2011 land cover, P = 1) | EPA's ArcGIS Online, direct | the Basin tab's RUSLE estimation |

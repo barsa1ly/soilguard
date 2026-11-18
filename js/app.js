@@ -1304,7 +1304,7 @@
       fetchElevation(lat, lon).then(({ e, later }) => {
         const use = x => { if (x && live()) { state.elev = x; renderHeader(); renderSoilDetail(); } };
         use(e);
-        later.then(use); // USGS 3DEP (1 m), when it answers after the Copernicus DEM was shown
+        later.then(use); // USGS 3DEP (1–10 m), when it answers after the Copernicus DEM was shown
       }).catch(e => { if (live()) { state.elevErr = e; ovSlope(); } }), // both DEMs failed: kept for the slope row
       fetchNLCD(lat, lon).then(n => { if (live()) { state.nlcd = n; renderStats(); renderPractices(); } }).catch(() => { if (live()) { state.nlcd = { code: null }; renderStats(); renderPractices(); } }),
       // "wg-soil": the survey read (or its failure) and the surface edits, for the Soil maps theme's tabs (js/soilmaps.js, js/basins.js)
@@ -1474,7 +1474,7 @@
      same at Temple and Lubbock, 15 Nov 2026), kept in this browser for 15 days under the point. A point is looked up
      once while its answer is on its way (pickSite starts it while a tap is checked), and a 3DEP answer is kept for the
      last few points of the visit; the Copernicus stand-in or a failure is asked again next time. */
-  // how long the USGS 3DEP answer (1 m) is waited for before the Copernicus DEM (90 m, about a second) is used instead
+  // how long the USGS 3DEP answer (1–10 m) is waited for before the Copernicus DEM (90 m, about a second) is used instead
   const ELEV_WAIT = 4000;
   const DEP = "https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer/getSamples";
   const elevAsked = new Map(); // "lat,lon" -> promise of { e, later }
@@ -1493,9 +1493,15 @@
     }
     return p.then(({ e, later }) => ({ e: { ...e }, later: later.then(x => x && { ...x }) })); // copies: no caller sees another's changes
   }
-  // the five points' 3DEP values in one request; throws where 3DEP has none (NoData leaves a point out of the answer)
+  /* the DEM's cell size at the point, in metres, for the source label ("USGS 3DEP 3 m"): getSamples gives it in the
+     raster's own units, metres for the 1 m lidar DEMs and degrees for the arc-second ones (1/9″, 1/3″, 1″, 2″), which
+     are named by their usual size (3, 10, 30, 60 m; 1/9″ is 3.4 m north to south). Read as metres, a degree value
+     rounded to "0 m" (Temple: 0.0000309°, 1/9″; central Nevada: 0.0000926°, 1/3″). null without a size. */
+  const cellM = r => (!(r > 0) ? null : r >= 0.01 ? Math.max(1, Math.round(r)) : [3, 10, 30, 60].find(m => r * 111320 < m * 1.5) || Math.round(r * 111320));
+  // the five points' 3DEP values in one request; throws where 3DEP has none (NoData leaves a point out of the answer).
+  // Kept under "fg-pts2": what the older "fg-pts" kept was labelled "0 m" on an arc-second DEM
   async function dep(lats, lons) {
-    const key = `${DEP}?fg-pts=${lats[0].toFixed(6)},${lons[0].toFixed(6)}`, kept = await U.stashGet(key);
+    const key = `${DEP}?fg-pts2=${lats[0].toFixed(6)},${lons[0].toFixed(6)}`, kept = await U.stashGet(key);
     if (kept) return kept;
     const q = new URLSearchParams({ geometry: JSON.stringify({ points: lats.map((y, k) => [+lons[k].toFixed(6), +y.toFixed(6)]), spatialReference: { wkid: 4326 } }),
       geometryType: "esriGeometryMultipoint", returnFirstValueOnly: "true", interpolation: "RSP_NearestNeighbor", f: "json" });
@@ -1503,7 +1509,7 @@
     if (j.error) throw new Error(j.error.message || "3DEP refused the request");
     const by = new Map((j.samples || []).map(s => [s.locationId, s])), p = lats.map((y, k) => num((by.get(k) || {}).value));
     if (p.some(v => v === null || v < -1000)) throw new Error("no 3DEP coverage");
-    const v = { pts: p, src: `USGS 3DEP ${fmt(by.get(0).resolution, 0)} m` };
+    const c = cellM(num(by.get(0).resolution)), v = { pts: p, src: `USGS 3DEP${c ? ` ${c} m` : ""}` };
     U.stashPut(key, v);
     return v;
   }
@@ -1836,7 +1842,7 @@
   // the slope row: the DEM's slope at the point (renderHeader), or why there is none (state.elevErr, kept for the location)
   function ovSlope(err = state.elevErr) {
     const e = state.elev, flat = e && e.slope < 0.05; // level ground (0.0 %) faces no way
-    if (e) ovRow("slope", ovVal(fmt(e.slope, 1), "%"), ovSide(flat ? "level" : `facing ${U.compass(e.aspect)}`), `${e.src.replace(/ \d+ m$/, "")}: the ground's slope over about 200 m around the point (five elevations about 100 m apart)${flat ? "" : ", and the way it faces"}`);
+    if (e) ovRow("slope", ovVal(fmt(e.slope, 1), "%"), ovSide(flat ? "level" : `facing ${U.compass(e.aspect)}`), `${e.src.replace(/^USGS 3DEP (\d+) m$/, "USGS 3DEP, $1 m DEM")}: the ground's slope over about 200 m around the point (five elevations about 100 m apart)${flat ? "" : ", and the way it faces"}`);
     else if (err) ovRow("slope", "—", ovSide("could not be read"), `The elevation could not be read: ${err.message || err}`);
     else ovRow("slope");
   }
